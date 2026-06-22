@@ -28,7 +28,9 @@
 ## Gotchas
 
 - **`spawn()` vs `enqueue`** — use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work. Use `enqueue` for work that must survive restarts, has retry policy, or participates in a workflow.
-- **`scoped_task_registration`** (in `app.core.tasks.service`, not re-exported from the package) — required for test isolation when registering tasks dynamically; tests reach it via direct submodule import. See [patterns.md § `scoped_*` context managers](patterns.md).
+- **`scoped_task_registration`** (in `app.core.tasks.service`, not re-exported from the package) — required for test isolation when registering tasks dynamically; tests reach it via direct submodule import.
+- **`set_scheduler_for_tests()`** (exported from `app.core.tasks`) — context manager that snapshots the scheduler registry, clears it for the block, and restores on exit. Use when a test registers custom `@scheduled` entries to prevent cross-test pollution.
+- **`set_broker_for_tests(broker=None)`** (exported from `app.core.tasks`) — context manager that swaps the singleton broker for the block. Pass an `AsyncBroker` instance to test broker-dependent paths, or `None` to simulate an uninitialized broker.
 - **`shutdown()` does not drop the broker singleton** — task registrations set at import time remain intact.
 
 ## Data owned

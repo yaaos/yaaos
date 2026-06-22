@@ -16,7 +16,7 @@ from fastapi import Cookie
 from app.core.audit_log import ActorKind
 from app.core.auth import AuthFailure, actor_id_var, actor_kind_var, user_id_var
 from app.core.database import session as db_session
-from app.core.identity import repository as identity_repo
+from app.core.identity.repository import get_session_by_hash, hash_token
 
 
 async def require_session(
@@ -34,9 +34,9 @@ async def require_session(
     """
     if not yaaos_session:
         raise AuthFailure("unauthenticated")
-    token_hash = identity_repo.hash_token(yaaos_session)
+    token_hash = hash_token(yaaos_session)
     async with db_session() as s:
-        row = await identity_repo.get_session_by_hash(s, token_hash)
+        row = await get_session_by_hash(s, token_hash)
     if row is None or row.user_id is None:
         raise AuthFailure("unauthenticated")
     from datetime import UTC, datetime  # noqa: PLC0415

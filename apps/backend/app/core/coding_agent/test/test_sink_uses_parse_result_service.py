@@ -20,11 +20,11 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-import app.web  # noqa: F401 — registers all models so FK metadata resolves
 from app.core.coding_agent.models import CodingAgentActivityRow, CodingAgentRunRow
 from app.core.coding_agent.run_service import create_run
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.testing.fake_coding_agent import register_fake_coding_agent
+from app.web import app as _web_app  # noqa: F401 — registers all models so FK metadata resolves
 
 pytestmark = pytest.mark.service
 

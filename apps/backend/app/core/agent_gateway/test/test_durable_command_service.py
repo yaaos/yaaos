@@ -36,7 +36,7 @@ from app.core.agent_gateway.types import (
     WriteFilesCommand,
     WriteFilesEntry,
 )
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -76,11 +76,10 @@ def _make_cleanup_cmd(workspace_id: UUID) -> CleanupWorkspaceCommand:
     )
 
 
-async def _make_agent(db_session, *, org_id: UUID | None = None) -> UUID:
+async def _make_agent(*, org_id: UUID | None = None) -> UUID:
     """Seed a workspace agent row; return its id."""
     result = await seed_agent(
         org_id=org_id or uuid4(),
-        session=db_session,
     )
     return UUID(str(result["id"]))
 
@@ -97,7 +96,7 @@ async def test_claim_mints_completion_token_and_stores_only_hash(db_session) -> 
     import hashlib  # noqa: PLC0415
 
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -134,7 +133,7 @@ async def test_unconfigured_claim_carries_completion_token(db_session) -> None:
     goes through the normal token-mint path so the returned DTO carries a
     non-null `completion_token` that the agent can echo on the terminal event."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await db_session.flush()
 
@@ -178,7 +177,7 @@ async def test_enqueue_then_simulated_restart_command_still_claimable(db_session
     """Commands survive a backend restart: after the in-memory state is wiped
     the row remains in the DB and is claimable via claim_next."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -205,7 +204,7 @@ async def test_unconfigured_claim_returns_only_config_update(db_session) -> None
     """An unconfigured agent claims only a ConfigUpdate row; non-ConfigUpdate
     commands in the queue remain pending."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     ws_id = uuid7()
     cmd = _make_provision_cmd(ws_id)
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
@@ -242,7 +241,7 @@ async def test_unconfigured_claim_returns_only_config_update(db_session) -> None
 async def test_claim_next_returns_one_provision_workspace(db_session) -> None:
     """claim_next returns exactly one ProvisionWorkspace command per call."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     # Enqueue 3 creates.
     for _ in range(3):
         await enqueue_command(org_id=org_id, command=_make_provision_cmd(), session=db_session)
@@ -281,7 +280,7 @@ async def test_claim_next_returns_one_provision_workspace(db_session) -> None:
 async def test_claim_next_returns_one_pending_for_named_workspace(db_session) -> None:
     """claim_next returns one pending command for a named workspace_id per call."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     ws_a, ws_b = uuid4(), uuid4()
 
     cmd_a = _make_write_cmd(ws_a)
@@ -328,7 +327,7 @@ async def test_claim_next_returns_one_pending_for_named_workspace(db_session) ->
 async def test_claim_next_never_returns_excluded_workspace_command(db_session) -> None:
     """A workspace_id not in workspace_ids never yields a command."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     busy_ws = uuid4()
     idle_ws = uuid4()
 
@@ -363,7 +362,7 @@ async def test_claim_next_never_returns_excluded_workspace_command(db_session) -
 async def test_lease_received_event_flips_claimed_to_delivered(db_session) -> None:
     """A `received` event from the agent flips status claimed → delivered."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -390,7 +389,7 @@ async def test_lease_received_event_flips_claimed_to_delivered(db_session) -> No
 async def test_lease_no_received_within_30s_requeues_to_pending(db_session) -> None:
     """A claimed command with no received event after 30s is requeued to pending."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -418,7 +417,7 @@ async def test_lease_no_received_within_30s_requeues_to_pending(db_session) -> N
 async def test_lease_terminal_event_retires_command_to_done(db_session) -> None:
     """A terminal AgentEvent causes the command row to transition to done."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -445,7 +444,7 @@ async def test_lease_terminal_event_retires_command_to_done(db_session) -> None:
 async def test_lease_attempt_cap_raises_loud_terminal_failure(db_session) -> None:
     """When attempt reaches the cap, the reaper marks done (terminal failure)."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -482,7 +481,7 @@ async def test_lease_attempt_cap_raises_loud_terminal_failure(db_session) -> Non
 async def test_redelivered_received_event_is_idempotent(db_session) -> None:
     """Posting received twice for the same command is a no-op on the second call."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -520,7 +519,7 @@ async def test_claim_injects_workflow_execution_id_on_dto(db_session) -> None:
     expose the same value; when it is NULL the DTO field is None."""
     org_id = uuid4()
     wfx_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
 
     # Enqueue with a workflow_execution_id.
     cmd_with = _make_provision_cmd()
@@ -541,7 +540,7 @@ async def test_claim_injects_workflow_execution_id_on_dto(db_session) -> None:
     )
 
     # Enqueue without a workflow_execution_id (agent-scoped / no correlation).
-    agent_id2 = await _make_agent(db_session, org_id=org_id)
+    agent_id2 = await _make_agent(org_id=org_id)
     cmd_without = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd_without, session=db_session)
     await db_session.flush()

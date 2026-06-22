@@ -63,7 +63,7 @@ class SecretsScan:
         if not inputs.pr_external_id:
             return Outcome.success(outputs=SecretsScanOutputs(rule_id=None))
 
-        from app.core import vcs as _vcs  # noqa: PLC0415
+        import app.core.vcs as _vcs  # noqa: PLC0415
         from app.domain.reviewer.secrets_detection import (  # noqa: PLC0415
             detect_secrets,
             secrets_warning_body,

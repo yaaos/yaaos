@@ -19,8 +19,8 @@ from app.core.auth.cloudflare import CLOUDFLARE_INGRESS_HEADER, CloudflareIngres
 from app.core.auth.context import (
     actor_id_var,
     actor_kind_var,
-    bind_request_structlog_vars,
     command_id_var,
+    configure_structlog_context,
     current_actor_kind,
     current_org_id,
     current_user_id,
@@ -42,7 +42,7 @@ from app.core.auth.cookies import (
 )
 from app.core.auth.middleware import AuthMiddleware
 from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
-from app.core.auth.role_policy import _REQUIRED_ROLE, Role, required_role_for
+from app.core.auth.role_policy import Role, required_role_for
 from app.core.auth.types import (
     ORG_SCOPED_PREFIXES,
     PUBLIC_EXACT,
@@ -72,7 +72,6 @@ __all__ = [
     "USER_SCOPED_EXACT",
     "USER_SCOPED_METHOD_EXACT",
     "USER_SCOPED_PREFIXES",
-    "_REQUIRED_ROLE",
     "Action",
     "AuthFailure",
     "AuthMiddleware",
@@ -82,10 +81,10 @@ __all__ = [
     "actor_id_var",
     "actor_kind_var",
     "auth_failure_response",
-    "bind_request_structlog_vars",
     "classify_route",
     "clear_cookie_attrs",
     "command_id_var",
+    "configure_structlog_context",
     "csrf_cookie_attrs",
     "current_actor_kind",
     "current_org_id",

@@ -33,7 +33,7 @@ from app.core.workflow import (
     step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -117,7 +117,7 @@ async def test_local_command_writes_rollback_on_exception_service(db_session: An
         transitions={raise_step: {"failure": TerminalAction.FAIL_WORKFLOW}},
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(wf)
         async with org_context(org_id, ActorKind.SYSTEM):
             wfx_id = await eng.start(
@@ -175,7 +175,7 @@ async def test_local_command_writes_commit_atomically_service(db_session: Any) -
         transitions={pass_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(wf)
         async with org_context(org_id, ActorKind.SYSTEM):
             wfx_id = await eng.start(

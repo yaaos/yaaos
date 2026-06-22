@@ -8,12 +8,17 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import ProviderProfile
-from app.core.identity import repository as repo
-from app.core.sessions import web as auth_web  # noqa: F401 — ensures /api/auth routes register
-from app.domain.orgs import invite
-from app.domain.orgs import repository as orgs_repo
+from app.core.identity import (
+    ProviderProfile,
+    add_email,
+    create_user,
+    find_oauth_identity,
+    find_user_by_email,
+    link_oauth_identity,
+)
+from app.domain.orgs import insert_org, invite
 from app.plugins.oauth_test import set_next_profile
 
 
@@ -65,9 +70,9 @@ async def _begin_login_and_get_state() -> str:
 
 @pytest.mark.asyncio
 async def test_callback_existing_identity_issues_session(db_session) -> None:
-    user = await repo.insert_user(db_session, display_name="E")
-    await repo.add_email(db_session, user_id=user.id, email="e@example.com", verified=True)
-    await repo.add_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="ex-1")
+    user = await create_user(db_session, display_name="E")
+    await add_email(db_session, user_id=user.id, email="e@example.com", verified=True)
+    await link_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="ex-1")
     state = await _begin_login_and_get_state()
     set_next_profile(
         ProviderProfile(
@@ -116,15 +121,15 @@ async def test_callback_unknown_user_redirects_to_login_with_reason(db_session) 
     assert resp.headers["location"] == "/login?reason=not_provisioned"
     assert "yaaos_session" not in resp.cookies
     # No rows were written.
-    assert await repo.find_user_by_email(db_session, "nobody@example.com") is None
-    assert await repo.find_oauth_identity(db_session, provider="test", external_subject="ex-2") is None
+    assert await find_user_by_email(db_session, "nobody@example.com") is None
+    assert await find_oauth_identity(db_session, provider="test", external_subject="ex-2") is None
 
 
 @pytest.mark.asyncio
 async def test_callback_email_match_without_identity_autolinks(db_session) -> None:
-    user = await repo.insert_user(db_session)
-    await repo.add_email(db_session, user_id=user.id, email="dup@example.com", verified=True)
-    await repo.add_oauth_identity(db_session, user_id=user.id, provider="other", external_subject="o-1")
+    user = await create_user(db_session)
+    await add_email(db_session, user_id=user.id, email="dup@example.com", verified=True)
+    await link_oauth_identity(db_session, user_id=user.id, provider="other", external_subject="o-1")
     await db_session.commit()
     state = await _begin_login_and_get_state()
     set_next_profile(
@@ -146,7 +151,7 @@ async def test_callback_email_match_without_identity_autolinks(db_session) -> No
     assert resp.status_code in (302, 303)
     assert "yaaos_session" in resp.cookies
     # Identity row attached to the pre-existing user, no new user row.
-    linked = await repo.find_oauth_identity(db_session, provider="test", external_subject="ex-3")
+    linked = await find_oauth_identity(db_session, provider="test", external_subject="ex-3")
     assert linked is not None and linked.user_id == user.id
 
 
@@ -181,7 +186,7 @@ async def test_callback_invitation_alone_does_not_provision(db_session) -> None:
     Here we assert the legacy "invitation-on-first-login" pathway is gone."""
     from app.core.audit_log import Actor  # noqa: PLC0415
 
-    org = await orgs_repo.insert_org(db_session, slug="inviteorg")
+    org = await insert_org(db_session, slug="inviteorg")
     await invite(
         db_session,
         org_id=org.org_id,

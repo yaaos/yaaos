@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import text
 
-from app.core import database
+import app.core.database as database
 from app.core.database.service import (
     _coding_agent_activity_partition_ddl,
     _coding_agent_activity_week_start,

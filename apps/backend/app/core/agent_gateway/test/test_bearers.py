@@ -9,12 +9,12 @@ from sqlalchemy import select
 
 from app.core.agent_gateway import bearers
 from app.core.agent_gateway.models import BearerTokenRow, WorkspaceAgentRow
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 
 
 async def _fixture_org_and_agent(db_session) -> tuple:
     """Insert a configured org + an agent pod row. Returns (org_id, agent_id)."""
-    org = await orgs_repo.insert_org(db_session, slug=f"bearer-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"bearer-{uuid4().hex[:6]}")
     org.registered_iam_arn = f"arn:aws:iam::123456789012:role/test-{uuid4().hex[:6]}"
     org.aws_region = "us-east-1"
     agent = WorkspaceAgentRow(

@@ -17,8 +17,8 @@ from fastapi import FastAPI
 
 from app.core.agent_gateway import bearers
 from app.core.agent_gateway.models import WorkspaceAgentRow
-from app.domain.orgs import repository as orgs_repo
-from app.testing.seed import seed_workspace
+from app.domain.orgs import insert_org
+from app.testing.e2e_setup import seed_workspace
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ async def _two_agents_one_org(db_session) -> tuple[UUID, UUID, str]:
 
     Returns (agent_a_id, agent_b_id, bearer_for_a).
     """
-    org = await orgs_repo.insert_org(db_session, slug=f"authz-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"authz-{uuid4().hex[:6]}")
     org.registered_iam_arn = f"arn:aws:iam::123456789012:role/test-{uuid4().hex[:6]}"
     org.aws_region = "us-east-1"
     await db_session.commit()
@@ -177,7 +177,6 @@ async def test_workspace_event_rejects_foreign_owner(db_session) -> None:
         sha="deadbeef",
         current_command_id=cmd_id,
         agent_id=agent_b,
-        caller_session=db_session,
     )
     await db_session.commit()
     del agent_a
@@ -209,7 +208,6 @@ async def test_workspace_event_allows_owner(db_session) -> None:
         sha="deadbeef",
         current_command_id=cmd_id,
         agent_id=agent_a,
-        caller_session=db_session,
     )
     await db_session.commit()
     async with _client() as c:
@@ -240,7 +238,6 @@ async def test_command_event_rejects_foreign_owner(db_session) -> None:
         sha="deadbeef",
         current_command_id=cmd_id,
         agent_id=agent_b,
-        caller_session=db_session,
     )
     await db_session.commit()
     del agent_a

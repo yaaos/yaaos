@@ -10,15 +10,15 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.core.sessions import web as _auth_web  # noqa: F401 — triggers auth.dep load
+from app.core.identity import create_user, lookup_session, mint_session
+from app.domain.orgs import insert_membership, insert_org
 from app.domain.orgs import invite as invite_service
-from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs import web as _orgs_web  # noqa: F401 — registers /api/memberships
-from app.testing.seed import read_email_inbox
+
+# web is loaded by domain.orgs.__init__ — no explicit import needed
+from app.domain.orgs import read_sent_emails as read_email_inbox
 
 
 def _app() -> FastAPI:
@@ -37,18 +37,18 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
-    owner_user = await identity_repo.insert_user(db_session, display_name="Owner")
-    member_user = await identity_repo.insert_user(db_session, display_name="Member")
-    org = await orgs_repo.insert_org(db_session, slug="endpoints-org")
-    await orgs_repo.insert_membership(
+    owner_user = await create_user(db_session, display_name="Owner")
+    member_user = await create_user(db_session, display_name="Member")
+    org = await insert_org(db_session, slug="endpoints-org")
+    await insert_membership(
         db_session, user_id=owner_user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
     )
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session, user_id=member_user.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
 
-    owner_session = await session_lifecycle.create(db_session, user_id=owner_user.id, workspace_id=None)
-    member_session = await session_lifecycle.create(db_session, user_id=member_user.id, workspace_id=None)
+    owner_session = await mint_session(db_session, user_id=owner_user.id, workspace_id=None)
+    member_session = await mint_session(db_session, user_id=member_user.id, workspace_id=None)
     yield {
         "org": org,
         "owner_user": owner_user,
@@ -110,8 +110,8 @@ async def test_accept_invitation_happy_path(seeded, db_session) -> None:
         actor=Actor.user(user_id=owner_user.id),
     )
     # Acceptor needs a session cookie.
-    alice = await identity_repo.insert_user(db_session)
-    alice_session = await session_lifecycle.create(db_session, user_id=alice.id, workspace_id=None)
+    alice = await create_user(db_session)
+    alice_session = await mint_session(db_session, user_id=alice.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
@@ -145,8 +145,8 @@ async def test_accept_expired_returns_410(seeded, db_session) -> None:
         .where(InvitationRow.email == "ex@example.com")
         .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
     )
-    user = await identity_repo.insert_user(db_session)
-    s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session)
+    s = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
@@ -171,8 +171,8 @@ async def test_accept_used_returns_410(seeded, db_session) -> None:
         invited_by_user_id=owner_user.id,
         actor=Actor.user(user_id=owner_user.id),
     )
-    user = await identity_repo.insert_user(db_session)
-    s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session)
+    s = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
@@ -210,10 +210,10 @@ async def test_remove_member_revokes_sessions(seeded, db_session) -> None:
         )
     assert resp.status_code == 200
     from app.core.database import get_sessionmaker  # noqa: PLC0415
-    from app.testing.seed import delete_org as _delete_org_for_tests  # noqa: PLC0415
+    from app.core.tenancy import delete_org as _delete_org_for_tests  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
-        assert await session_lifecycle.lookup(s, member_session.raw_token) is None
+        assert await lookup_session(s, member_session.raw_token) is None
         await _delete_org_for_tests(s, org.org_id)
         await s.commit()
 
@@ -241,9 +241,9 @@ async def test_change_role_rotates_sessions(seeded, db_session) -> None:
     from app.core.database import get_sessionmaker  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
-        assert await session_lifecycle.lookup(s, member_session.raw_token) is None
+        assert await lookup_session(s, member_session.raw_token) is None
         # Cleanup the seeded org so other tests see a clean slate.
-        from app.testing.seed import delete_org as _delete_org_for_tests  # noqa: PLC0415
+        from app.core.tenancy import delete_org as _delete_org_for_tests  # noqa: PLC0415
 
         await _delete_org_for_tests(s, org.org_id)
         await s.commit()

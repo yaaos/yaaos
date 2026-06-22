@@ -8,12 +8,11 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
-from app.plugins.claude_code import web as _cc_web  # noqa: F401
+from app.core.identity import create_user, mint_session
+from app.domain.orgs import insert_membership, insert_org
+from app.plugins.claude_code import web as _cc_web  # noqa: F401  -- triggers route registration
 
 
 def _app() -> FastAPI:
@@ -32,17 +31,13 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    admin = await identity_repo.insert_user(db_session, display_name="A")
-    member = await identity_repo.insert_user(db_session, display_name="M")
-    org = await orgs_repo.insert_org(db_session, slug="cc-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
-    )
-    admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
-    member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
+    admin = await create_user(db_session, display_name="A")
+    member = await create_user(db_session, display_name="M")
+    org = await insert_org(db_session, slug="cc-org")
+    await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
+    await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")
+    admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)
+    member_sess = await mint_session(db_session, user_id=member.id, workspace_id=None)
     await db_session.commit()
     yield {"org": org, "admin_sess": admin_sess, "member_sess": member_sess}
 

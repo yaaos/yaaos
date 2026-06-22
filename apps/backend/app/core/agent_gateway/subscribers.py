@@ -23,11 +23,10 @@ at-most-once delivery.
 `subscriber_sweeper` is a `@scheduled` worker task that GCs stale ZSET
 entries every minute via `ZREMRANGEBYSCORE`.
 
-The active `SubscriberRegistry` instance is ContextVar-bound.
-`bind_subscriber_registry` is the production DI seam — the composition root
-calls it at startup; the `subscriber_registry_isolation` fixture in
-`app/testing/isolation` binds a fresh instance per test.
-`get_registry()` raises `RuntimeError` if called before any bind.
+The active `SubscriberRegistry` instance is held in a ContextVar with an eager
+default — production never calls a bind function. `set_subscriber_registry_for_tests`
+is the test seam; the `subscriber_registry_isolation` fixture in
+`app/testing/isolation` uses it to bind a fresh instance per test.
 """
 
 from __future__ import annotations
@@ -35,7 +34,8 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Literal
 from uuid import UUID
@@ -469,7 +469,7 @@ class SubscriberReconciler:
                 log.warning("subscribers.reconcile_error", err=str(exc))
 
     async def _reconcile_once(self) -> None:
-        registry = get_registry()
+        registry = _get()
         async with registry._lock:
             agent_ids = list(registry._senders.keys())
 
@@ -591,28 +591,28 @@ subscriber_sweeper = scheduled(
 _registry_var: ContextVar[SubscriberRegistry | None] = ContextVar("_registry_var", default=None)
 
 
-def bind_subscriber_registry(instance: SubscriberRegistry) -> None:
-    """Bind `instance` as the active subscriber registry for the current Context.
+def _get() -> SubscriberRegistry:
+    val = _registry_var.get()
+    if val is None:
+        val = SubscriberRegistry()
+        _registry_var.set(val)
+    return val
 
-    Called once at process startup (composition root) and once per test
-    (isolation fixture). Subsequent calls in the same Context replace the
-    prior binding.
+
+@contextmanager
+def set_subscriber_registry_for_tests() -> Iterator[SubscriberRegistry]:
+    """Context manager: bind a fresh `SubscriberRegistry` for the duration.
+
+    Unlike plugin registries, does NOT copy the current default — subscriber
+    registries hold asyncio state (running WS connections) that tests must not
+    share. Each test gets a clean slate. Restores the prior binding on exit.
     """
-    _registry_var.set(instance)
-
-
-def get_registry() -> SubscriberRegistry:
-    """Return the active subscriber registry. Raises `RuntimeError` if
-    `bind_subscriber_registry` has not been called — fail-fast so forgotten
-    startup binds surface immediately rather than silently producing wrong state.
-    """
-    instance = _registry_var.get()
-    if instance is None:
-        raise RuntimeError(
-            "subscriber registry not bound: call bind_subscriber_registry(SubscriberRegistry()) "
-            "at process startup or use the subscriber_registry_isolation fixture in tests."
-        )
-    return instance
+    instance = SubscriberRegistry()
+    token = _registry_var.set(instance)
+    try:
+        yield instance
+    finally:
+        _registry_var.reset(token)
 
 
 # ── Module lifecycle ──────────────────────────────────────────────────────────
@@ -647,7 +647,6 @@ async def shutdown() -> None:
             pass
         except Exception:
             pass
-    _registry_var.set(None)
 
 
 register_web_shutdown_hook(shutdown)

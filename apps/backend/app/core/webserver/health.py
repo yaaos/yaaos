@@ -12,8 +12,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.core import database
-from app.core import redis as redis_client
+import app.core.database as database
+import app.core.redis as redis_client
 from app.core.config import get_settings
 
 health_router = APIRouter()

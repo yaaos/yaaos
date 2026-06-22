@@ -14,7 +14,6 @@ from app.domain.integrations.service import (
     validate,
 )
 from app.domain.integrations.types import (
-    _REGISTRY,
     BrokenCredentialsError,
     IntegrationError,
     IntegrationNotConnectedError,
@@ -24,10 +23,10 @@ from app.domain.integrations.types import (
     get_provider,
     known_providers,
     register_provider,
+    set_providers_for_tests,
 )
 
 __all__ = [
-    "_REGISTRY",
     "BrokenCredentialsError",
     "IntegrationError",
     "IntegrationNotConnectedError",
@@ -46,6 +45,7 @@ __all__ = [
     "list_broken_credentials_for_org",
     "mark_last_used",
     "register_provider",
+    "set_providers_for_tests",
     "update_allowlist",
     "validate",
 ]

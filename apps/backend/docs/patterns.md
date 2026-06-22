@@ -68,13 +68,33 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
 - **No `*Row` types in `__all__`.** SQLAlchemy Row/mapped classes never appear in any module's `__all__` or `tach expose` list. Every public API that surfaces persisted state returns the module's Pydantic value object, not the Row. Foreign table access via an imported Row name fails tach `check --interfaces` — the intended path is the owning module's public service API.
 - **No circular module dependencies.** `forbid_circular_dependencies = true` is emitted by `bin/sync_modules` into `tach.toml`; tach rejects any new cycle under `tach check --interfaces` (the CI command). Canary `test_injected_cycle_is_rejected` in `apps/backend/bin/test_module_boundaries.py` verifies the guard fires.
 - **Layer ordering: `core < domain < plugins < testing`.** Enforced by `check_layering()` in `bin/sync_modules` — tach's `--interfaces` mode silently ignores tach-native `layers` config, so the Python check is the sole enforcer. The allowlist `PERMITTED_CROSS_LAYER_EDGES` is empty (`frozenset()`); no permitted cross-layer edges exist. Canary `test_injected_core_to_domain_is_rejected` in `apps/backend/bin/test_module_boundaries.py` verifies the guard fires.
-- **`bin/sync_modules` enforces three AST-level rules at every CI run:**
-  - **Rule-1** — a name in `__all__` that resolves to a SQLAlchemy mapped/Row class (class inheriting from `*Base*`, or any name imported `from <any>.models`) is rejected with exit 2.
-  - **Rule-5** — a function listed in `__all__` whose return annotation or parameter annotations reference a Row type is rejected with exit 2.
-  - **Test-seam export rule** — a `core`/`domain`/`plugins` `__all__` symbol is rejected iff its name matches a test-seam pattern (`reset_*`, `clear_*`, `scoped_*`, `*_for_tests`, `_seed_*`, `set_*_override`, `set_test_*`, `get_test_*`) AND it has zero production importers (no importer outside `*/test/`, `app/testing/`, and the top-level `conftest.py`; `app/web.py` and `app/worker.py` always count as production). The intersection is precise: name-only would false-positive on real production APIs (`clear_cookie_attrs`, `clear_vcs`); usage-only would false-positive on public types tests construct. No allowlist — a symbol matching both conditions is a test seam that leaked. Canary `test_test_helper_export_is_rejected` in `apps/backend/bin/test_module_boundaries.py` verifies the guard fires; `test_clean_tree_has_no_test_helper_exports` verifies zero real violations on the clean tree.
-  - All three rules are AST-based (import-free, env-free, `# noqa`-immune). `apps/backend/bin/test_module_boundaries.py` carries canary tests that inject real violations and assert non-zero exit.
+- **`bin/sync_modules` enforces a full ladder of AST-level rules at every CI run.** Every rule is import-free, env-free, `# noqa`-immune. Each has at least one canary in `apps/backend/bin/test_module_boundaries.py` (typically an injection test + a "clean-tree-stays-clean" test).
+  - **Rule-1** — a name in `__all__` that resolves to a SQLAlchemy mapped/Row class (inherits *directly* from `Base` — the project's single declarative base in `app/core/database/service.py` — or any name imported `from <any>.models`) is rejected. The base-class match is exact, so Pydantic `BaseModel` / `BaseSettings` subclasses are not false-flagged. Canary: `test_row_readded_to_all_is_rejected`.
+  - **Rule-5** — a function listed in `__all__` whose return annotation or parameter annotations reference a Row type is rejected. The check follows `from app.<m> import X` re-exports back to the definition site (depth-bounded at 8 hops, cycle-safe) before inspecting annotations, so a Row-returning helper defined in a sibling submodule and re-exported from `__init__.py` is caught at the package boundary. Per-file Row-name resolution closes transitively over: module-level type aliases (`X = Y`, `X: TypeAlias = Y`, PEP 695 `type X = Y`, including subscripted RHS like `list[Y]`); ClassDef inheritance chains (`class Sub(SomeRow)` joins the set); aliased Row imports (`from .models import UserRow as UserResult`); and cross-file Row imports (`from app.<other> import X` where X resolves to a Row in `<other>`). Renaming a Row at the boundary cannot launder past the gate. Canaries: `test_row_in_public_signature_is_rejected` (inline) + the `test_rule5_*` family covering 1-hop, 2-hop, aliased re-export, local/PEP-695/TypeAlias/chained/subscripted aliases, subclass-of-Row, aliased Row import, parameter annotations, clean re-export, and cycle safety.
+  - **Test-seam export rule** — a `core`/`domain`/`plugins` `__all__` symbol is rejected iff its name matches a test-seam pattern (`reset_*`, `clear_*`, `scoped_*`, `*_for_tests`, `_seed_*`, `set_*_override`, `set_test_*`, `get_test_*`) AND it has zero production importers (no importer outside `*/test/`, `app/testing/`, and the top-level `conftest.py`; `app/web.py` and `app/worker.py` always count as production). The intersection is precise: name-only would false-positive on real production APIs (`clear_cookie_attrs`); usage-only would false-positive on public types tests construct. Sanctioned exception: `set_*_for_tests` names (`_SANCTIONED_TEST_BINDER_PATTERN`) are exempt from the production-importer check — a registry module may export `set_X_for_tests` without any production caller because its only callers are autouse isolation fixtures in `app/testing/`. Canary: `test_test_helper_export_is_rejected` + `test_clean_tree_has_no_test_helper_exports` + `test_set_for_tests_export_is_allowed_without_production_importer` + `test_other_seam_names_still_require_production_importer`.
+  - **Rule-6** — cross-module submodule imports are rejected. A file in module A may import only `app.B` (the module's package root) from module B — not `app.B.<sub>`. Three shapes: `import app.B.sub`, `from app.B.sub import X`, and `from app.B import sub` when `sub` is a submodule namespace (disambiguated by the AST classifier — see Rule-9). Composition roots (`app/web.py`, `app/worker.py`) are exempt; they side-effect-import submodules to wire bootstrap. Canary: `test_injected_submodule_import_is_rejected` + `test_injected_submodule_from_import_is_rejected` + `test_case_collision_actor_is_not_flagged`.
+  - **Rule-7** — private-attribute reach on cross-module receivers is rejected. Taint-based AST visitor covers four receiver shapes: bare alias (`alias._private`), call return (`cross_mod_call()._private`), walrus (`(eng := cross_mod_call())._private`), and subscript (`cross_mod_call()["x"]._private`). Dunders are exempt (Python protocol, not module-private state). Canary: `test_injected_private_attr_via_alias_is_rejected` + `test_injected_private_attr_via_return_taint_is_rejected` + `test_injected_walrus_private_reach_is_rejected` + `test_injected_subscript_private_reach_is_rejected`.
+  - **Rule-9** — submodule namespace handles in `__all__` are rejected. The AST classifier reads `__init__.py` and tags each entry as `symbol_reexport` (OK — `from app.X.sub import name`), `inline_def` (OK — `def`/`class`/value in the file), or `namespace_handle` (REJECT — `from app.X import sub` where `sub` is a sibling submodule). Re-exported functions/classes whose name matches a sibling file (`Actor`, `spawn`, `set_if_absent`) are correctly classified as `symbol_reexport` and pass. Canary: `test_injected_namespace_handle_in_all_is_rejected`.
+  - **Rule-10** — `ContextVar(...)` bindings in `__all__` are rejected. A ContextVar IS the storage of the owned singleton — exporting it defeats the Cardinal rule (§ Module structure). Canary: `test_injected_contextvar_in_all_is_rejected` + `test_clean_tree_has_no_contextvar_in_all`.
+  - **Rule-12** — module-level instance-literal bindings in `__all__` are rejected (`engine = WorkflowEngine()` exported). Data-type instance literals (Pydantic `BaseModel`, `Enum`, `Workflow`, `dataclass`, `TypedDict`) are exempt — they are vocabulary, not state. Canary: `test_injected_instance_literal_in_all_is_rejected` + `test_data_type_literal_in_all_is_allowed` + `test_clean_tree_has_no_instance_literal_in_all`.
+  - **Rule-15** — factory functions in `__all__` whose body is just `return <module-singleton>` or `return <ContextVar>.get()` are rejected. Catches `def get_pubsub(): return _pubsub_var.get()` — the "export the live singleton" Cardinal-rule violation. Canary: `test_injected_factory_returns_singleton_is_rejected` + `test_clean_tree_has_no_factory_returns_singleton`.
+  - **Rule-16** — mutable container literals in `__all__` are rejected (`REGISTRY: dict = {}`, `CACHE = []`, `KEYS = set()`). Shared mutable state across module boundaries is the same Cardinal-rule violation as an instance export. Tuples, frozensets, `Final[<frozen>]` exempt. Canary: `test_injected_mutable_container_in_all_is_rejected` + `test_clean_tree_has_no_mutable_container_in_all`.
+  - **Rule-17** — `bind_*` entries in `__all__` are rejected. Production composition roots use the eager-default ContextVar pattern (or lazy `_get()` for settings-dependent singletons); the only legitimate binding swap is the test-only `set_*_for_tests` context manager. `register_*` is NOT covered — it's the plugin Protocol entry-point pattern. Canary: `test_injected_bind_in_all_is_rejected`.
+  - **Rule-18** — `def` and `class` declarations in `__init__.py` are rejected. All implementation lives in named submodules. Allowed in `__init__.py`: imports, `__all__`, docstring, `if TYPE_CHECKING:` blocks, bare side-effect calls (`register_routes(...)`), simple variable bindings (data-type instance literals). Canary: `test_injected_def_in_init_is_rejected`.
+  - **Rule-19** — dynamically-computed `__all__` is rejected. Must be a literal `list` or `tuple` of string constants — concatenation, comprehensions, function calls all fail. The static gate can't validate a runtime-computed `__all__`. Canary: `test_injected_dynamic_all_is_rejected` + `test_clean_tree_has_no_dynamic_all`.
+  - **Private name in `__all__`** — underscore-prefixed entries (excluding dunders) are rejected. The public surface is public by name; `_private` in `__all__` is a contradiction. Canary: `test_injected_private_name_in_all_is_rejected`.
+  - **`__getattr__` in `__init__.py`** — PEP 562 module-level `__getattr__` lets a module return attributes that aren't in `__all__`. Banned outright. Canary: `test_injected_dunder_getattr_in_init_is_rejected` + `test_clean_tree_has_no_dunder_getattr_in_init`.
+  - **Anchor imports** — 1- and 2-segment `app.*` imports (`import app`, `from app import core`, `from app.core import identity`) are rejected. Composition roots exempt. They bypass `_resolve_module_target` (which requires 3 segments) and tach's interface check. Canary: `test_injected_anchor_import_is_rejected` + `test_injected_bare_app_import_is_rejected`.
+  - **Relative imports** — `from .foo` / `from ..bar` anywhere under `app/` is rejected. Absolute imports are mandatory per § Imports above. Canary: `test_injected_relative_import_is_rejected` + `test_clean_tree_has_no_relative_imports`.
+  - **Dynamic imports** — every literal call to `importlib.import_module`, `__import__`, `exec`, `eval` is rejected anywhere under `app/`. Any of these can construct an import string at runtime, bypassing every static check. No exemptions; replace the call site with a static `import`. Canary: `test_injected_importlib_call_is_rejected` + `test_injected_dunder_import_call_is_rejected`.
+  - **Star imports** — `from X import *` is rejected anywhere under `app/`. Star imports defeat `__all__`-based static analysis (the target's `__all__` resolves at runtime). Replace with explicit re-exports. Canary: `test_injected_star_import_is_rejected` + `test_clean_tree_has_no_star_imports`.
+  - **`no_dynamic_attr_access` semgrep rule** — `getattr(obj, non_literal)` and `setattr(obj, non_literal, val)` with a non-literal name are rejected. Dynamic attribute access bypasses type checking and module-boundary rules; use explicit typed keyword arguments or a typed model. Exception: `core/observability/service.py` (path-excluded) uses `setattr` for stdlib `logging.LogRecord` fields — a framework-required pattern.
+  - **`no_bind_call_outside_composition_root` semgrep rule** — `bind_*($INSTANCE)` calls may appear only in `web.py` and `worker.py` (path-excluded). Calling a registry binder outside the composition roots re-binds a singleton in a non-startup context — a Cardinal-rule violation. `app/testing/` is excluded via the `--exclude` CLI flag in `bin/ci`.
+  - **`no_test_only_imports_outside_tests` semgrep rule** — importing a test-seam symbol (`set_*_for_tests`, `_reset_*`, `_*_for_tests`) in production code is rejected. Test scaffolding must not appear in the production or worker modules. `app/testing/` and `test_*.py` are exempt via the `--exclude` CLI flag in `bin/ci`; `**/__init__.py` (re-export barrels — separately gated by `bin/sync_modules` Rule-17) is exempt via the rule's own `paths.exclude`.
+  - **Semgrep invocation split** — `bin/ci` runs the third-party rule packs (`p/python`, `p/owasp-top-ten`) and the project's own `.semgrep/` rules in two separate invocations. Both invocations pass the same `--exclude app/testing --exclude test_*.py` CLI flags. The split exists so a future project rule can opt in to scanning `app/testing/` independently of the third-party packs (which always false-positive on test fixtures); today no project rule needs that, so both invocations carry identical excludes. Per-rule `paths.exclude` for the same paths is unreliable — semgrep strips the target arg (`app`) from the path it matches against, so a glob like `**/app/testing/**` never fires.
+  - **Runtime layer** — the static checks above cover what source code says. `apps/backend/bin/import_audit.py` is a meta-path finder installed by `apps/backend/conftest.py` that catches dynamic-Python bypasses at runtime: `importlib.import_module(constructed_string)`, `getattr`-triggered lazy submodule loads, plugin registries built from strings. Recorded violations are dumped to `tmp/import_audit_violations.json` and fail `bin/ci` via the sentinel. Two carve-ins: composition roots (D1) and targets whose dotted path contains the segment `"test"` (D2 — pytest discovery + fixture lookup of test files are structurally within-module).
 - **`bin/check_table_access` enforces two additional rules that tach cannot see:**
-  - **Raw-SQL ownership** — AST-parses every `app/**/models.py` to build `table_name → owning_module`, then scans every production `.py` under `app/` (excluding `test/` dirs) for `text(...)` / `sa_text(...)` calls. Any call that references a table owned by a different module fails. Non-literal args (f-strings, variables) also fail — all auditable raw SQL must be a string literal.
+  - **Raw-SQL ownership** — AST-parses every `app/**/models.py` to build `table_name → owning_module`, then scans every production `.py` under `app/` (excluding `test/` dirs and `app/testing/`) for `text(...)` / `sa_text(...)` calls. Any call that references a table owned by a different module fails. Non-literal args (f-strings, variables) also fail — all auditable raw SQL must be a string literal.
   - **Suppression guard** — fails on any `# tach-ignore` directive in any `.py` under `app/` (prod + tests). One suppression reopens the import hole the tach interface check depends on.
   - Only `app/core/database/**` is allowlisted (owns `Base`, runs migrations, advisory locks, schema introspection). No other module may use raw SQL against a foreign table.
   - `apps/backend/bin/test_check_table_access.py` carries four canary tests asserting non-zero exit for each violation kind.
@@ -108,19 +128,43 @@ Each subdirectory of a layer is a module. Standard files:
 - Call `register_routes(RouteSpec(...))` at the bottom; one prefix per module, enforced at boot.
 - See [core_webserver.md](core_webserver.md) for the full `RouteSpec` registry contract.
 
+### Side-effect-only `web` / `*_web` submodules
+
+- `web.py`, `user_web.py`, `org_settings_web.py`, `sso_web.py`, `audit_web.py`, `coding_agents_web.py`, `vcs_web.py`, `byok_routes.py` are **side-effect-only** route-registration modules — never imported for their symbols.
+- They are NOT exported in their owning module's `__all__`. Adding them violates Rule-9 (submodule namespace handle in `__all__`).
+- Route registration fires via a bare body-level import inside the owning `__init__.py`: `import app.<layer>.<module>.<web_file>  # noqa: F401`. The `noqa: F401` tags the import as intentional-side-effect; the `__init__.py` body's import order keeps composition deterministic.
+- Cross-module callers (tests + production) that need a `*_web` module's routes loaded use the same shape — `import app.<layer>.<module>  # noqa: F401` (the package's `__init__.py` side-effect already triggers every `*_web` registration). Never `from app.<layer>.<module> import <web_file>` — that's the Rule-6 violation the C9 sweep retired.
+
 ### `bin/sync_modules` workflow
 
-Runs the full module-sync sequence:
+Runs the full module-sync sequence. All checks run in one pass and accumulate violations — every rule that fires is reported in the same exit-2 output, so a contributor sees the full surface in one run.
 
 1. Discover modules under each layer.
 2. Write `tach.toml` — `[[modules]]` entries + `[[interfaces]]` blocks (expose lists from `__all__`).
-3. Check internal imports (no relative imports across boundaries, no `__init__` self-imports).
-4. Check layering.
-5. Check `__all__` boundary violations (Rule-1: no Row class in `__all__`; Rule-5: no Row type in a public function's annotations).
-6. Check test-seam exports (seam-name AND zero production importers — see rule below).
-7. Run `tach check --interfaces`.
+3. Run all rule checks (full list under § Imports above): `__init__.py` syntax errors, layering, Rule-1/5/6/7/9/10/12/15/16/17/18/19, test-seam exports, private name in `__all__`, `__getattr__` in `__init__.py`, anchor imports, relative imports, dynamic imports, star imports.
+4. If any rule fires, print one section per rule with its violation count + per-violation details, then a `<total> total violations across all rules.` footer; exit 2.
+5. If clean, run `tach check --interfaces` and inherit its exit code.
+
+Fail-loud behaviors: `parse_module_interface` prints a diagnostic to stderr and returns a sentinel on `SyntaxError` (so a broken `__init__.py` is surfaced as a gate error, not silently skipped); `run_tach_check` returns exit 2 and prints an install hint when `uv` is not on PATH (previously returned 0 and skipped the tach check silently). Canaries: `test_parse_module_interface_fails_loud_on_syntax_error` + `test_run_tach_check_fails_when_uv_missing`.
 
 Never hand-edit `tach.toml`. Re-run `bin/sync_modules` after adding or changing a module interface.
+
+### Cardinal rule — NEVER EXPORT THE INSTANCE
+
+A module **MUST NOT** export a class instance, a `ContextVar`, an accessor function that returns the live singleton (`get_X()`, `current_X()`, `default_X()`), or any other handle to internal state. The public interface is **behavior-only**: free functions that act on the module's internal state. Callers operate through the module's functions; they never hold a reference to the thing the module owns.
+
+Mechanically enforced by Rules 10 (no ContextVar in `__all__`), 12 (no instance literal in `__all__`), 15 (no factory-returns-singleton in `__all__`), 16 (no mutable container in `__all__`), and 17 (no `bind_*` in `__all__`).
+
+The one explicit carve-out is `set_X_for_tests` — a context manager exported in `__all__` that yields the bound instance for the test's use (assert state, drive behavior — both valid). The carve-out is permitted because the yielded instance is scoped to the `with` block, auto-restored on exit, and reachable only from test scope (seam name matches the test-seam glob).
+
+Registry-shape pattern for any singleton-owning module:
+
+- Module-private `_X_var: ContextVar[X] = ContextVar("_X_var", default=X())` (eager default; lazy `_get()` for settings-dependent singletons like the DB engine + taskiq broker).
+- Module-private `_get() -> X` accessor.
+- Module-level free functions delegating to `_get()` — these are the public surface.
+- One `set_X_for_tests(*, scenario: Literal[...] = "default")` context manager in `__all__`.
+
+Production composition roots do nothing — the registry is usable the moment the module is imported. Autouse fixtures in `app/testing/isolation.py` are one `with set_X_for_tests(): yield` block per registry.
 
 ### Adding a new module
 
@@ -197,6 +241,17 @@ Pick shape (a) only when callers genuinely compose with sibling writes. Don't ad
 `app/testing/e2e_setup` chains real public service-layer calls — no `*Row` constructors, no cross-module model imports. Deliberate consequence: seeds emit the same audit rows and events as production writes, acting as a free smoke test for the full call path.
 
 The only DB-wide primitive is `core.database.truncate_all_tables(session)`. Call it from within an `async with db_session() as s:` block followed by `await s.commit()`.
+
+### `/api/testing/*` shim pattern
+
+`app/testing/e2e_setup` exposes thin HTTP shims under `/api/testing/*` (mounted only on non-prod; see bootstrap steps 9–10 in § Bootstrap composition order). Each endpoint is a one-liner that calls a corresponding `service.py` function and returns a JSON dict with the seeded object's identity fields.
+
+- `POST /api/testing/seed-agent` → `seed_agent(org_id=...)`: inserts a `workspace_agents` row via `agent_gateway.ensure_agent_row`. Returns `{"id": ..., "instance_id": ..., "org_id": ...}`.
+- `POST /api/testing/seed-workspace` → `seed_workspace(...)`: inserts a `workspaces` row via raw SQL. Returns `{"workspace_id": ...}`.
+- `DELETE /api/testing/user/{user_id}/artifacts` → `delete_user(user_id)`: deletes the user row and cascades to child rows owned by `core/identity`.
+- Other seed helpers (`seed_github_install`, `seed_lesson`, etc.) follow the same shape.
+
+All `service.py` functions open their own session and commit — each seed call is an independent committed write. Playwright specs that need isolation call the `DELETE /api/testing/reset` endpoint (via `truncate_all_tables`) at the start of each spec. Service tests drive `service.py` directly (not via HTTP) and use the `db_session` fixture for transactional rollback.
 
 ### Idempotent migrations
 
@@ -405,7 +460,7 @@ Naming: `test_<flow>_service.py` in the owning module's `test/` directory. Owner
 
 Marker: every service test is decorated `@pytest.mark.service`. Run only the service tier with `pytest -m service`; run the fast unit-only loop with `pytest -m "not service"`. The default `bin/ci` invocation runs both — the marker is for developer ergonomics, not a CI skip.
 
-Assert on the **durable state production reads** — audit rows by kind, posted-comment count via the stub vcs plugin, finding state in the aggregate, `last_refresh_status`, the email inbox (via `app.testing.seed.read_email_inbox()`), event-bus publications. Don't assert on intermediate log lines unless the log is the contract.
+Assert on the **durable state production reads** — audit rows by kind, posted-comment count via the stub vcs plugin, finding state in the aggregate, `last_refresh_status`, the email inbox (via `app.domain.orgs.read_sent_emails()`), event-bus publications. Don't assert on intermediate log lines unless the log is the contract.
 
 ### Integration test pattern
 
@@ -420,7 +475,7 @@ Assert on the **durable state production reads** — audit rows by kind, posted-
 Tests obey the **same import rules as production code** — enforced by `tach check --interfaces` in CI, which covers `app/testing/` as well as production code. Violations fail CI.
 
 - Import only `__all__` exports — `from app.<module> import X`, never `from app.<module>.<submodule> import X` across module boundaries. Within a module's own test directory, direct submodule imports are allowed.
-- No `*Row` types in cross-module imports. If a test in module B needs to inspect persisted state owned by module A, use module A's targeted public read function (e.g. `get_token_by_hash`, `get_session_by_hash`) or assert on the observable outcome instead.
+- No `*Row` types in cross-module imports. If a test in module B needs to inspect persisted state owned by module A, use module A's targeted public read function (e.g. `get_token_by_hash`, `find_session_by_hash`) or assert on the observable outcome instead.
 - No test-only seams that bypass module interfaces. If a seam is needed, it belongs in `app/testing/` — but `app/testing/` is itself tach-governed; it may only import from `__all__`-gated module paths.
 - Service tests of multi-hop pipelines are sliced per-hop: each service test exercises one entry point end-to-end; chain tests by asserting on the durable state that the next hop reads, not by calling internal functions of the next module.
 - Singleton reset for test isolation: never poke private state via a submodule attribute (`mod._svc._singleton = None`). Use a named helper instead.
@@ -498,19 +553,19 @@ The three plugin registries (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceReg
 
 Session-scoped `_canonical_registries` fixture (in `app/testing/isolation.py`): imports the three plugin packages (triggering import-time bootstrap), optionally wraps with stubs, then snapshots the bound registries via `.copy()`. Runs once per session.
 
-Function-scoped autouse `plugin_registries_isolation` fixture: calls `bind_*()` with a `.copy()` of each canonical snapshot before each test. A test that mutates a registry only affects its own copy; the next test rebinds canonical — no restore, no leak, no order dependence.
+Function-scoped autouse `plugin_registries_isolation` fixture: calls `set_X_for_tests()` with a `.copy()` of each canonical snapshot before each test. A test that mutates a registry only affects its own copy; the next test gets a fresh canonical copy — no restore, no leak, no order dependence.
 
-Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `bind_shutdown_event(asyncio.Event())` before each test so every test starts with a fresh unset event. A test that calls `shutdown()` cannot leak a stale set-event into the next test.
+Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `set_shutdown_event_for_tests()` (from `app.core.sse`) before each test so every test starts with a fresh unset event. A test that calls `shutdown()` cannot leak a stale set-event into the next test.
 
-`app.testing.isolation.scoped_vcs_plugin(plugin)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy with the plugin replaced and restores the prior binding on exit. Import from `app.testing.isolation`.
+`core.vcs.set_vcs_for_tests(plugin=X)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy of the current registry with the plugin replaced and restores the prior binding on exit. Import from `app.core.vcs`.
 
-`app.testing.workflow_harness.scoped_engine(engine=None)` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh (or supplied) engine, restores the prior process-singleton on exit — even on exception. Supply an `engine` argument to install a pre-built subclass (e.g. a recording engine). Import from `app.testing.workflow_harness`, not from `core.workflow`. `scoped_workflow` follows the same contract and lives in the same harness module.
+`app.core.workflow.set_engine_for_tests(scenario=...)` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh engine (or the built-in `"recording"` scenario engine), restores the prior process-singleton on exit — even on exception. Import from `app.core.workflow` or `app.testing.workflow_harness`. Pass `scenario="recording"` to get a `_RecordingWorkflowEngine` that captures `start()` calls without DB access.
 
 `core.tasks.service.scoped_task_registration(task_ref)` — intra-module helper; lives in `service.py`, not re-exported from the package `__all__`. Tests inside `core/tasks/test/` import it via direct submodule import. Call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
 
 Rules:
 - No wholesale-wipe or `unregister_*` loop between tests. The autouse fixture handles isolation structurally.
-- `scoped_vcs_plugin` / `scoped_engine` / `scoped_workflow` bind on entry, restore prior binding on exit. The yielded value is the same object passed in.
+- `set_vcs_for_tests` / `set_engine_for_tests` bind on entry, restore prior singleton on exit. The yielded value is the bound instance.
 - Never alias the canonical registry dict in a helper — always `.copy()` to prevent leakage.
 
 ## Subscription self-cleanup (async generator pattern)
@@ -570,7 +625,9 @@ Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["pytho
 4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.coding_agent`, `app.core.vcs`, `app.core.workspace`.
 5. Domain modules in dependency order — types first (lessons), then leaf domain modules, then dependents.
 6. Plugins — `claude_code`, `github`.
-7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `is_non_prod`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
+7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`.
 8. Build the FastAPI app — `webserver.create_app()`.
+9. Test-mode HTTP surface (conditional, non-prod only) — `webserver.mount_testing_endpoints(app, settings)` (production-safety gate; raises if `is_production`), then `e2e_setup.mount(app)` (direct `app.include_router` call — registers `/api/testing/*` routes immediately so they appear in `app.routes` before the liveness check). `core/webserver` cannot import `app.testing` (layering: `core < testing`), so the actual registration happens here in the composition root.
+10. Defense-in-depth — `webserver.assert_no_testing_routes_in_prod(app, settings)` sweeps `app.routes` and raises if a `/api/testing/` path is present while `is_production=True`.
 
 Each module imported in steps 2–6 appends its `shutdown()` hook to the relevant process registry as a side effect of import. By step 8, all hooks are registered before `create_app()` wires them into the lifespan.

@@ -9,6 +9,7 @@ from app.core.database.service import (
     migrate,
     ping,
     session,
+    set_db_session_for_tests,
     shutdown,
     truncate_all_tables,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "migrate",
     "ping",
     "session",
+    "set_db_session_for_tests",
     "shutdown",
     "truncate_all_tables",
 ]

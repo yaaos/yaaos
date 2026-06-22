@@ -20,13 +20,13 @@ import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers /api/auth/me route registration
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, AuthMiddleware, Role, register_handler
-from app.core.identity import repository as identity_repo
+from app.core.identity import create_user, hash_token, mint_session
 from app.core.sessions import require
-from app.core.sessions import web as _auth_web  # noqa: F401  -- registers /api/auth/me
-from app.domain.orgs import repository as orgs_repo
-from app.testing.seed import set_session_last_seen as _set_session_last_seen_for_tests
+from app.domain.orgs import insert_membership, insert_org
+from app.testing.e2e_setup import set_session_last_seen as _set_session_last_seen_for_tests
 
 
 def _make_app() -> FastAPI:
@@ -60,25 +60,17 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     """Owner with a valid session + a writable org. Tests that need a
     stale `last_seen_at` mutate the row in-place."""
-    user = await identity_repo.insert_user(db_session, display_name="Owner")
-    org = await orgs_repo.insert_org(db_session, slug=f"af-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
+    user = await create_user(db_session, display_name="Owner")
+    org = await insert_org(db_session, slug=f"af-{uuid.uuid4().hex[:8]}")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own")
 
-    raw_token = f"af-owner-{uuid.uuid4().hex[:8]}"
-    await identity_repo.insert_session(
+    created = await mint_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw_token),
         user_id=user.id,
         workspace_id=None,
-        csrf_token="csrf-af",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     await db_session.commit()
-    yield {"org": org, "user": user, "token": raw_token}
+    yield {"org": org, "user": user, "token": created.raw_token}
 
 
 def _assert_cookies_cleared(resp: httpx.Response) -> None:
@@ -137,7 +129,7 @@ async def test_org_scoped_idle_timeout_clears_cookies_and_writes_audit(seeded, d
     # Force the session's last_seen_at far enough in the past that the
     # default idle window has elapsed. SESSION_IDLE_TIMEOUT default is
     # measured in minutes; 1 day back is comfortably stale.
-    token_hash = identity_repo.hash_token(seeded["token"])
+    token_hash = hash_token(seeded["token"])
     await _set_session_last_seen_for_tests(
         db_session,
         token_hash=token_hash,

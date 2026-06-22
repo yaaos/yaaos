@@ -35,7 +35,7 @@ from app.core.workflow import (
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.observability import span_capture
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -105,7 +105,7 @@ async def test_local_command_span_carries_step_id_and_attempt(db_session) -> Non
     )
 
     with span_capture() as exporter:
-        with scoped_engine() as eng:
+        with set_engine_for_tests() as eng:
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="step-attr-local-test",
@@ -146,7 +146,7 @@ async def test_workspace_command_span_carries_step_id_and_attempt(db_session) ->
     )
 
     with span_capture() as exporter:
-        with scoped_engine() as eng:
+        with set_engine_for_tests() as eng:
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="step-attr-ws-test",

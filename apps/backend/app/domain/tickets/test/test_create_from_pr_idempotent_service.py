@@ -17,12 +17,11 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.database import get_sessionmaker
 from app.domain.tickets import create_from_pr
 from app.domain.tickets.models import TicketRow
-from app.testing.seed import delete_ticket
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
@@ -33,7 +32,7 @@ async def _clean(ticket_ids: list[UUID]) -> None:
     sessionmaker = get_sessionmaker()
     for tid in ticket_ids:
         async with sessionmaker() as s:
-            await delete_ticket(tid, session=s)
+            await s.execute(delete(TicketRow).where(TicketRow.id == tid))
             await s.commit()
 
 

@@ -1,10 +1,7 @@
 """core/vcs — vendor-neutral VCS abstraction: transport types, Protocol, registry, exception hierarchy."""
 
 from app.core.vcs.registry import (
-    VCSRegistry,
-    bind_vcs_registry,
     clone_url,
-    current_vcs_registry,
     detect_force_push,
     fetch_diff,
     fetch_pr,
@@ -23,6 +20,7 @@ from app.core.vcs.registry import (
     post_finding,
     register_vcs_plugin,
     registered_plugin_ids,
+    set_vcs_for_tests,
     validate_settings,
 )
 from app.core.vcs.types import (
@@ -74,13 +72,10 @@ __all__ = [
     "VCSPlugin",
     "VCSPullRequest",
     "VCSRateLimitError",
-    "VCSRegistry",
     "VCSTransientError",
     "VCSValidationError",
     "VcsInstallNotFound",
-    "bind_vcs_registry",
     "clone_url",
-    "current_vcs_registry",
     "detect_force_push",
     "fetch_diff",
     "fetch_pr",
@@ -99,5 +94,6 @@ __all__ = [
     "post_finding",
     "register_vcs_plugin",
     "registered_plugin_ids",
+    "set_vcs_for_tests",
     "validate_settings",
 ]

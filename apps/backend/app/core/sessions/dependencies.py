@@ -27,7 +27,7 @@ from app.core.auth import (
     user_id_var,
 )
 from app.core.database import session as db_session
-from app.core.identity import repository as identity_repo
+from app.core.identity import find_session_by_hash, hash_token
 from app.core.tenancy import AuthOrg, resolve_auth_org
 
 
@@ -46,17 +46,13 @@ async def _current_session_user_id(
     """
     if not yaaos_session:
         return None
-    token_hash = identity_repo.hash_token(yaaos_session)
+    token_hash = hash_token(yaaos_session)
     async with db_session() as s:
-        row = await identity_repo.get_session_by_hash(s, token_hash)
-    if row is None or row.user_id is None:
+        sess = await find_session_by_hash(s, token_hash)
+    if sess is None or sess.user_id is None:
         return None
-    from datetime import UTC, datetime  # noqa: PLC0415
-
-    if row.expires_at < datetime.now(UTC):
-        return None
-    user_id_var.set(row.user_id)
-    return row.user_id
+    user_id_var.set(sess.user_id)
+    return sess.user_id
 
 
 def require(action: Action) -> Callable[..., None]:
@@ -117,9 +113,9 @@ def require(action: Action) -> Callable[..., None]:
 
         token = request.cookies.get("yaaos_session")
         if token:
-            token_hash = identity_repo.hash_token(token)
+            token_hash = hash_token(token)
             async with db_session() as s:
-                sess_row = await identity_repo.get_session_by_hash(s, token_hash)
+                sess_row = await find_session_by_hash(s, token_hash)
             if sess_row is not None and sess_row.last_seen_at is not None:
                 minutes = auth_org.session_timeout_override
                 idle = _timedelta(minutes=minutes) if minutes else SESSION_IDLE_TIMEOUT
@@ -153,16 +149,19 @@ def require(action: Action) -> Callable[..., None]:
         # have `sso_satisfied_for_org_id == org_id` within the 8h TTL.
         # Break-glass: the exempt Owner bypasses this AND must have a
         # verified TOTP secret.
-        from app.core.identity import has_verified_totp  # noqa: PLC0415
-        from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
+        from app.core.identity import (  # noqa: PLC0415
+            has_verified_totp,
+            is_sso_satisfied,
+            lookup_session,
+        )
 
         if auth_org.sso_enabled:
             session_token = request.cookies.get("yaaos_session")
             sso_ok = False
             if session_token:
                 async with db_session() as s:
-                    sess = await session_lifecycle.lookup(s, session_token)
-                if sess is not None and session_lifecycle.is_sso_satisfied(sess, org_id=auth_org.org_id):
+                    sess = await lookup_session(s, session_token)
+                if sess is not None and is_sso_satisfied(sess, org_id=auth_org.org_id):
                     sso_ok = True
             if not sso_ok:
                 is_exempt = auth_org.sso_exempt_owner_user_id == user_id and role == Role.OWNER
@@ -199,17 +198,17 @@ def require(action: Action) -> Callable[..., None]:
         route_security_resolved.set("org_scoped")
         # Bind structlog so log lines + the inner handler carry the identity.
         # Middleware unbinds at request end.
-        from app.core.auth import bind_request_structlog_vars  # noqa: PLC0415
+        from app.core.auth import configure_structlog_context  # noqa: PLC0415
 
-        bind_request_structlog_vars()
+        configure_structlog_context()
         # Best-effort: touch the session row so `last_seen_at` reflects
         # actual usage. Single-write per authenticated request; cheap.
         session_cookie = request.cookies.get("yaaos_session")
         if session_cookie:
-            from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
+            from app.core.identity import touch_session  # noqa: PLC0415
 
             async with db_session() as s:
-                await session_lifecycle.touch(s, session_cookie)
+                await touch_session(s, session_cookie)
                 await s.commit()
         # Return the resolved authz projection. The dep is consumed for its
         # side-effects (contextvars, role/SSO checks); callers that capture the

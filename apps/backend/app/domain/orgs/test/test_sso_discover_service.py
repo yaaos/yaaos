@@ -14,9 +14,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs import sso_web as _sso_web  # noqa: F401 — mounts /api/sso/*
-from app.domain.orgs import upsert_config
+from app.domain.orgs import insert_org, upsert_config
+
+# sso_web is loaded by domain.orgs.__init__ — no explicit import needed
 
 
 def _sso_app() -> FastAPI:
@@ -34,7 +34,7 @@ def _sso_client() -> httpx.AsyncClient:
 
 def _sessions_app() -> FastAPI:
     """Auth-only app — verify /api/auth/sso/discover is gone."""
-    from app.core.sessions import web as _sessions_web  # noqa: PLC0415, F401
+    import app.core.sessions  # noqa: PLC0415  -- triggers auth route registration
     from app.core.webserver import mount_specs  # noqa: PLC0415
 
     app = FastAPI()
@@ -73,7 +73,7 @@ async def test_sso_discover_no_longer_on_auth_prefix() -> None:
 
 @pytest_asyncio.fixture
 async def claimed_org(db_session):
-    org = await orgs_repo.insert_org(db_session, slug="discover-acme", display_name="Acme")
+    org = await insert_org(db_session, slug="discover-acme", display_name="Acme")
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -100,7 +100,7 @@ async def test_sso_discover_served_by_orgs(claimed_org) -> None:
 
 @pytest.mark.asyncio
 async def test_sso_discover_skips_disabled_config(db_session) -> None:
-    org = await orgs_repo.insert_org(db_session, slug="discover-off", display_name="Off")
+    org = await insert_org(db_session, slug="discover-off", display_name="Off")
     await upsert_config(
         db_session,
         org_id=org.org_id,

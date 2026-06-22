@@ -288,13 +288,13 @@ async def broken_summary(
     from fastapi.responses import JSONResponse as _JSONResponse  # noqa: PLC0415
 
     from app.core.auth import auth_failure_response as _auth_failure  # noqa: PLC0415
-    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
+    from app.core.identity import lookup_session  # noqa: PLC0415
     from app.core.tenancy import list_memberships_for_user as _list_memberships  # noqa: PLC0415
 
     if not yaaos_session:
         return _auth_failure("unauthenticated")
     async with db_session() as s:
-        session = await session_lifecycle.lookup(s, yaaos_session)
+        session = await lookup_session(s, yaaos_session)
         if session is None or session.user_id is None:
             return _auth_failure("unauthenticated")
         memberships = await _list_memberships(s, session.user_id)

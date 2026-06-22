@@ -36,9 +36,9 @@ from app.core.workflow import (
     get_execution_summary,
     step,
 )
-from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
-from app.testing.seed import seed_workspace as _seed_workspace_for_tests
-from app.testing.workflow_harness import scoped_engine
+from app.core.workspace import register_workspace_provider
+from app.testing.e2e_setup import seed_workspace as _seed_workspace_for_tests
+from app.testing.workflow_harness import set_engine_for_tests
 
 
 class _MinimalWorkspaceProvider:
@@ -86,19 +86,18 @@ def _make_provision_command() -> ProvisionWorkspaceCommand:
 
 async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dict:
     from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
-    from app.testing.seed import seed_agent  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_agent  # noqa: PLC0415
 
     cmd_id = uuid7()
     wfx_id = uuid4()
     org_id = uuid4()
-    agent = await seed_agent(org_id=org_id, session=db_session)
+    agent = await seed_agent(org_id=org_id)
     ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
         provider_id="remote_agent",
         sha="deadbeef",
         current_command_id=cmd_id if claimed_by_command else None,
         agent_id=agent["id"],
-        caller_session=db_session,
     )
     if claimed_by_command:
         # Persist the matching `agent_commands` row pre-stamped with the
@@ -159,7 +158,7 @@ async def test_heartbeat_with_no_workspaces_returns_empty_forget_list(db_session
 
 
 @pytest.mark.asyncio
-async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
+async def test_terminal_event_advances_workflow_to_done(db_session, workspace_providers_isolation) -> None:
     """A terminal AgentEvent for a Workspace step causes the workflow to
     advance: record_agent_event enqueues handle_agent_event, and draining
     that task drives the workflow to DONE."""
@@ -190,7 +189,7 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             return cmd.command_id
 
     _noop_ws = step(_NoopWs)
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             Workflow(
                 name="gw-terminal-test",
@@ -201,7 +200,6 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
             )
         )
 
-        bind_workspace_registry(WorkspaceRegistry())
         register_workspace_provider(_MinimalWorkspaceProvider())
 
         exec_id = await eng.start(
@@ -235,17 +233,16 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
         # engine stamps `workflow_execution_id` on the agent_commands row at
         # dispatch time, and `record_agent_event` resolves the workflow via
         # that column rather than via the workspace.
-        from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
+        from app.testing.e2e_setup import seed_agent as _seed_agent  # noqa: PLC0415
 
         _ws_org_id = uuid4()
-        _ws_agent = await _seed_agent(org_id=_ws_org_id, session=db_session)
+        _ws_agent = await _seed_agent(org_id=_ws_org_id)
         seeded_ws_id = await _seed_workspace_for_tests(
             org_id=_ws_org_id,
             provider_id="remote_agent",
             sha="deadbeef",
             current_command_id=cmd_id,
             agent_id=_ws_agent["id"],
-            caller_session=db_session,
         )
 
         event = AgentEvent(
@@ -279,7 +276,7 @@ async def test_terminal_event_advances_workflow_to_done(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_progress_event_does_not_advance_workflow(db_session) -> None:
+async def test_progress_event_does_not_advance_workflow(db_session, workspace_providers_isolation) -> None:
     """A PROGRESS AgentEvent does not advance the workflow — the execution
     stays in AWAITING_AGENT after the event is processed."""
     from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
@@ -309,7 +306,7 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
             return cmd.command_id
 
     _noop_ws2 = step(_NoopWs2)
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(
             Workflow(
                 name="gw-progress-test",
@@ -320,7 +317,6 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
             )
         )
 
-        bind_workspace_registry(WorkspaceRegistry())
         register_workspace_provider(_MinimalWorkspaceProvider())
 
         exec_id = await eng.start(
@@ -348,16 +344,15 @@ async def test_progress_event_does_not_advance_workflow(db_session) -> None:
         cmd_id = wfx.pending_agent_command_id
         assert cmd_id is not None
 
-        from app.testing.seed import seed_agent as _seed_agent2  # noqa: PLC0415
+        from app.testing.e2e_setup import seed_agent as _seed_agent2  # noqa: PLC0415
 
-        _ws_agent2 = await _seed_agent2(org_id=ws_org_id, session=db_session)
+        _ws_agent2 = await _seed_agent2(org_id=ws_org_id)
         await _seed_workspace_for_tests(
             org_id=ws_org_id,
             provider_id="remote_agent",
             sha="deadbeef",
             current_command_id=cmd_id,
             agent_id=_ws_agent2["id"],
-            caller_session=db_session,
         )
 
         # Post a PROGRESS event — workflow must stay in AWAITING_AGENT.
@@ -393,14 +388,13 @@ async def test_progress_event_publishes_to_sse(db_session, redis_or_skip) -> Non
     workspace-activity channel so the SPA's live-tail picks them up."""
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-    from app.core.redis import RedisPubsub, bind_pubsub  # noqa: PLC0415
     from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import subscribe_workspace_activity  # noqa: PLC0415
 
     await redis_shutdown()
-    # redis_shutdown() clears the ContextVar binding; restore it so
-    # subscribe_workspace_activity (which calls get_pubsub()) does not raise.
-    bind_pubsub(RedisPubsub())
+    # pubsub_isolation (autouse) already bound a fresh instance; redis_shutdown
+    # just called aclose() on it (which clears local subscriber counts). The
+    # instance is still usable for new subscriptions after aclose().
 
     ws = await _seed_workspace(db_session)
     cmd_id = ws["command_id"]

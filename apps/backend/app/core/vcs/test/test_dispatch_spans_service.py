@@ -21,13 +21,12 @@ import httpx
 import pytest
 from opentelemetry.trace import StatusCode
 
-from app.core import vcs as _vcs
+import app.core.vcs as _vcs
 from app.core.vcs import (
     Comment,
     Diff,
     VCSPullRequest,
-    bind_vcs_registry,
-    current_vcs_registry,
+    set_vcs_for_tests,
 )
 from app.testing.observability import span_capture
 
@@ -135,14 +134,8 @@ class _RaisingVCSPlugin:
 def _bind_raising_plugin() -> Iterator[_RaisingVCSPlugin]:
     """Bind a raising-plugin copy into the current registry; restore on exit."""
     plugin = _RaisingVCSPlugin()
-    prior = current_vcs_registry()
-    fresh = prior.copy()
-    fresh.replace(plugin)  # type: ignore[arg-type]
-    bind_vcs_registry(fresh)
-    try:
+    with set_vcs_for_tests(plugin=plugin):  # type: ignore[arg-type]
         yield plugin
-    finally:
-        bind_vcs_registry(prior)
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -218,10 +211,6 @@ async def test_httpx_outbound_call_produces_child_span(httpx_mock) -> None:  # t
             return str(resp.json().get("id", "httpx-stub-id"))
 
     plugin = _HttpxPlugin()
-    prior = current_vcs_registry()
-    fresh = prior.copy()
-    fresh.replace(plugin)  # type: ignore[arg-type]
-    bind_vcs_registry(fresh)
 
     httpx_mock.add_response(url="https://stub.test/comments", method="POST", json={"id": "c1"})
 
@@ -237,19 +226,19 @@ async def test_httpx_outbound_call_produces_child_span(httpx_mock) -> None:  # t
         instrumentor.uninstrument()
     instrumentor.instrument()
     try:
-        with span_capture() as exporter:
-            await _vcs.post_comment(
-                "test_httpx_vcs",
-                org_id,
-                "owner/repo#1",
-                body="hello",
-            )
+        with set_vcs_for_tests(plugin=plugin):  # type: ignore[arg-type]
+            with span_capture() as exporter:
+                await _vcs.post_comment(
+                    "test_httpx_vcs",
+                    org_id,
+                    "owner/repo#1",
+                    body="hello",
+                )
     finally:
         instrumentor.uninstrument()
         if was_instrumented:
             # Restore global instrumentation that was active before this test.
             instrumentor.instrument()
-        bind_vcs_registry(prior)
 
     spans = exporter.get_finished_spans()
     span_names = [s.name for s in spans]

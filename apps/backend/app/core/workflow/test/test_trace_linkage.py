@@ -35,11 +35,11 @@ from app.core.workflow import (
     TerminalAction,
     Workflow,
     WorkflowState,
-    get_engine,
     step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
-from app.core.workspace import WorkspaceRegistry, bind_workspace_registry, register_workspace_provider
+from app.core.workflow.service import _get_engine
+from app.core.workspace import register_workspace_provider
 
 
 @pytest.fixture(autouse=True)
@@ -112,7 +112,7 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
     """Workflow task bodies emit spans within the upstream trace when drained
     under the upstream span context.  Drive a two-Local-step workflow and
     assert the custom spans emitted share the upstream trace_id."""
-    eng = get_engine()
+    eng = _get_engine()
     a_step = step(_NoopA)
     b_step = step(_NoopB)
     workflow = Workflow(
@@ -173,12 +173,14 @@ async def test_workflow_task_body_spans_share_trace_id(in_memory_spans, db_sessi
         )
 
 
-async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_session) -> None:  # type: ignore[no-untyped-def]
+async def test_handle_agent_event_span_shares_trace_id(
+    in_memory_spans, db_session, workspace_providers_isolation
+) -> None:  # type: ignore[no-untyped-def]
     """The `handle_agent_event` task body also nests under the upstream
     `traceparent` — the agent's terminal-event ingestion is part of the
     same trace, not a new one. Drive a Workspace step and inject the
     terminal event under the upstream span."""
-    eng = get_engine()
+    eng = _get_engine()
 
     class _MinimalProvider:
         plugin_id = "trace_test_stub"
@@ -201,7 +203,6 @@ async def test_handle_agent_event_span_shares_trace_id(in_memory_spans, db_sessi
         async def write_text(self, path, content):  # type: ignore[no-untyped-def]
             return None
 
-    bind_workspace_registry(WorkspaceRegistry())
     register_workspace_provider(_MinimalProvider())
 
     class _NoopWs(AgentDispatchCommand):

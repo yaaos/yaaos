@@ -7,11 +7,10 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor, list_for_org
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.core.sessions import web as _auth_web  # noqa: F401
+from app.core.identity import create_user, mint_session
 from app.domain.orgs import (
     CodingAgentAlreadyInstalledError,
     CodingAgentNotInstalledError,
@@ -20,9 +19,8 @@ from app.domain.orgs import (
     uninstall_coding_agent,
     update_coding_agent_settings,
 )
-from app.domain.orgs import (
-    coding_agents_web as _ca_web,  # noqa: F401
-)
+
+# coding_agents_web is loaded by domain.orgs.__init__ — no explicit import needed
 from app.domain.orgs import (
     repository as orgs_repo,
 )
@@ -55,9 +53,9 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    owner = await identity_repo.insert_user(db_session, display_name="O")
-    admin = await identity_repo.insert_user(db_session, display_name="A")
-    member = await identity_repo.insert_user(db_session, display_name="M")
+    owner = await create_user(db_session, display_name="O")
+    admin = await create_user(db_session, display_name="A")
+    member = await create_user(db_session, display_name="M")
     org = await orgs_repo.insert_org(db_session, slug="ca-org")
     await orgs_repo.insert_membership(
         db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
@@ -68,8 +66,8 @@ async def seeded(db_session):
     await orgs_repo.insert_membership(
         db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
-    admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
-    member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
+    admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)
+    member_sess = await mint_session(db_session, user_id=member.id, workspace_id=None)
     await db_session.commit()
     yield {
         "org": org,
@@ -240,26 +238,28 @@ async def test_endpoint_rejects_invalid_settings(seeded) -> None:
     Binds the real ClaudeCodePlugin (not the stub) so validation actually runs.
     The stub's validate_settings is a no-op pass-through by design.
     """
-    from app.core.coding_agent import CodingAgentRegistry, bind_coding_agent_registry  # noqa: PLC0415
+    from app.core.coding_agent import set_coding_agents_for_tests  # noqa: PLC0415
     from app.plugins.claude_code import ClaudeCodePlugin  # noqa: PLC0415
 
-    real_registry = CodingAgentRegistry()
-    real_registry.replace(ClaudeCodePlugin())
-    bind_coding_agent_registry(real_registry)
+    with set_coding_agents_for_tests() as reg:
+        reg.replace(ClaudeCodePlugin())
 
-    async with _client() as c:
-        r = await c.post(
-            "/api/coding-agents",
-            json={"plugin_id": "claude_code", "settings": {"rogue": "value"}},
-            cookies={
-                "yaaos_session": seeded["admin_sess"].raw_token,
-                "yaaos_csrf": seeded["admin_sess"].csrf_token,
-            },
-            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": seeded["admin_sess"].csrf_token},
-        )
-    assert r.status_code == 422
-    body = r.json()
-    assert body["detail"]["error"] == "invalid_settings"
+        async with _client() as c:
+            r = await c.post(
+                "/api/coding-agents",
+                json={"plugin_id": "claude_code", "settings": {"rogue": "value"}},
+                cookies={
+                    "yaaos_session": seeded["admin_sess"].raw_token,
+                    "yaaos_csrf": seeded["admin_sess"].csrf_token,
+                },
+                headers={
+                    "X-Yaaos-Org-Slug": seeded["org"].slug,
+                    "X-CSRF-Token": seeded["admin_sess"].csrf_token,
+                },
+            )
+        assert r.status_code == 422
+        body = r.json()
+        assert body["detail"]["error"] == "invalid_settings"
 
 
 @pytest.mark.asyncio

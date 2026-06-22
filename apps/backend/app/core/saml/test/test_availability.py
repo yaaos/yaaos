@@ -8,8 +8,8 @@ availability.
 
 from __future__ import annotations
 
-from app.core import saml as saml_core
-from app.domain.orgs import sso as sso_service
+import app.core.saml as saml_core
+from app.domain.orgs import run_assertion_verifier
 
 
 def test_is_available_returns_bool() -> None:
@@ -22,7 +22,7 @@ def test_register_pushes_verifier_into_registry() -> None:
     """domain/orgs/sso imports + registers the core/saml verifier at module
     load. A roundtrip through `run_assertion_verifier` confirms both this
     one + any test-only verifier (`plugins/saml_test`) live in the list."""
-    result = sso_service.run_assertion_verifier("not-saml-xml", "<EntityDescriptor/>")
+    result = run_assertion_verifier("not-saml-xml", "<EntityDescriptor/>")
     assert result is None or isinstance(result, dict)
 
 

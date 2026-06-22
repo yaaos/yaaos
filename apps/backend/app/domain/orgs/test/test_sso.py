@@ -9,14 +9,19 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import Action, AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.core.identity import totp as totp_lifecycle
+from app.core.identity import (
+    add_email,
+    create_user,
+    enroll_totp,
+    find_user_by_email,
+    mark_sso_satisfied,
+    mint_session,
+    verify_totp,
+)
 from app.core.sessions import require
-from app.domain.orgs import audit_web as _audit_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs import sso_web as _sso_web  # noqa: F401
-from app.domain.orgs import upsert_config
+from app.domain.orgs import insert_membership, insert_org, upsert_config
+
+# audit_web and sso_web are loaded by domain.orgs.__init__ — no explicit import needed
 from app.plugins.saml_test import sign_assertion
 
 
@@ -44,12 +49,10 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def sso_org(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="SSO User")
-    await identity_repo.add_email(db_session, user_id=user.id, email="ssouser@example.com", verified=True)
-    org = await orgs_repo.insert_org(db_session, slug="sso-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="sso"
-    )
+    user = await create_user(db_session, display_name="SSO User")
+    await add_email(db_session, user_id=user.id, email="ssouser@example.com", verified=True)
+    org = await insert_org(db_session, slug="sso-org")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="sso")
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -84,7 +87,7 @@ async def test_acs_with_invalid_assertion_returns_400(sso_org) -> None:
 @pytest.mark.asyncio
 async def test_acs_happy_path_marks_session_sso_satisfied(sso_org, db_session) -> None:
     token = sign_assertion({"email": "ssouser@example.com", "name_id": "ssouser"})
-    s = await session_lifecycle.create(db_session, user_id=sso_org["user"].id, workspace_id=None)
+    s = await mint_session(db_session, user_id=sso_org["user"].id, workspace_id=None)
     await db_session.commit()
     async with _client() as c:
         r = await c.post(
@@ -98,7 +101,7 @@ async def test_acs_happy_path_marks_session_sso_satisfied(sso_org, db_session) -
 
 @pytest.mark.asyncio
 async def test_acs_jit_creates_user_when_enabled(db_session) -> None:
-    org = await orgs_repo.insert_org(db_session, slug="jit-org")
+    org = await insert_org(db_session, slug="jit-org")
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -120,13 +123,13 @@ async def test_acs_jit_creates_user_when_enabled(db_session) -> None:
     from app.core.database import session as factory  # noqa: PLC0415
 
     async with factory() as s:
-        u = await identity_repo.find_user_by_email(s, "newjit@example.com")
+        u = await find_user_by_email(s, "newjit@example.com")
         assert u is not None
 
 
 @pytest.mark.asyncio
 async def test_acs_no_jit_rejects_unknown_user(db_session) -> None:
-    org = await orgs_repo.insert_org(db_session, slug="nojit-org")
+    org = await insert_org(db_session, slug="nojit-org")
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -143,7 +146,7 @@ async def test_acs_no_jit_rejects_unknown_user(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_middleware_blocks_without_sso_satisfaction(sso_org, db_session) -> None:
-    s = await session_lifecycle.create(db_session, user_id=sso_org["user"].id, workspace_id=None)
+    s = await mint_session(db_session, user_id=sso_org["user"].id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
@@ -158,8 +161,8 @@ async def test_middleware_blocks_without_sso_satisfaction(sso_org, db_session) -
 
 @pytest.mark.asyncio
 async def test_middleware_allows_when_sso_satisfied(sso_org, db_session) -> None:
-    s = await session_lifecycle.create(db_session, user_id=sso_org["user"].id, workspace_id=None)
-    await session_lifecycle.mark_sso_satisfied(db_session, s.raw_token, org_id=sso_org["org"].org_id)
+    s = await mint_session(db_session, user_id=sso_org["user"].id, workspace_id=None)
+    await mark_sso_satisfied(db_session, s.raw_token, org_id=sso_org["org"].org_id)
     await db_session.commit()
 
     async with _client() as c:
@@ -173,14 +176,12 @@ async def test_middleware_allows_when_sso_satisfied(sso_org, db_session) -> None
 
 @pytest.mark.asyncio
 async def test_exempt_owner_bypasses_sso_when_totp_verified(db_session) -> None:
-    owner = await identity_repo.insert_user(db_session, display_name="Owner")
-    await identity_repo.add_email(db_session, user_id=owner.id, email="owner@example.com", verified=True)
-    org = await orgs_repo.insert_org(db_session, slug="exempt-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="ow"
-    )
-    seed, _ = await totp_lifecycle.enroll(db_session, user_id=owner.id)
-    await totp_lifecycle.verify(db_session, user_id=owner.id, code=pyotp.TOTP(seed).now())
+    owner = await create_user(db_session, display_name="Owner")
+    await add_email(db_session, user_id=owner.id, email="owner@example.com", verified=True)
+    org = await insert_org(db_session, slug="exempt-org")
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="ow")
+    seed, _ = await enroll_totp(db_session, user_id=owner.id)
+    await verify_totp(db_session, user_id=owner.id, code=pyotp.TOTP(seed).now())
     await upsert_config(
         db_session,
         org_id=org.org_id,
@@ -188,7 +189,7 @@ async def test_exempt_owner_bypasses_sso_when_totp_verified(db_session) -> None:
         enabled=True,
         exempt_owner_user_id=owner.id,
     )
-    s = await session_lifecycle.create(db_session, user_id=owner.id, workspace_id=None)
+    s = await mint_session(db_session, user_id=owner.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:

@@ -5,20 +5,35 @@ relay the operator configured. Synchronous `smtplib` wrapped in
 `asyncio.to_thread` — invitation volume is low and `aiosmtplib` would only
 add a dep for no real win.
 
-The active `_Inbox` instance is ContextVar-bound. `bind_email_inbox` is the
-production DI seam — the composition root calls it at startup; the
-`email_inbox_isolation` fixture in `app/testing/isolation` binds a fresh
-instance per test and exposes a `read_email_inbox` accessor. `send_plain`
-writes to the ContextVar-bound inbox in test env instead of hitting SMTP.
-`get_email_inbox()` raises `RuntimeError` if called before any bind in test env.
+In test env (`APP_MODE=test`), `send_plain` writes to an in-memory inbox
+instead of hitting SMTP.  Two layers determine which inbox a given call sees:
+
+1. **ContextVar override** (`_inbox_var`): `set_email_inbox_for_tests` installs
+   a fresh `_Inbox` per unit test so tests are fully isolated from each other.
+   The autouse `email_inbox_isolation` fixture in `app/testing/isolation` uses
+   it.
+
+2. **Module-global fallback** (`_global_inbox`): when no ContextVar override is
+   set (e.g. in the e2e test stack where HTTP requests run in independent
+   asyncio tasks), all callers fall back to the same module-global instance.
+   Each HTTP request task inherits a copy of the root context where
+   `_inbox_var` is unset, so without the global fallback different request
+   tasks would each create their own isolated inbox and the e2e reader would
+   never see the invite's email.
+
+`read_sent_emails` returns the list from whichever inbox is active.
+`clear_global_inbox` resets the module-global so the e2e reset endpoint can
+guarantee a clean slate between test runs.
 """
 
 from __future__ import annotations
 
 import asyncio
 import smtplib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from email.message import EmailMessage
 
 from app.core.config import get_settings
@@ -31,37 +46,60 @@ class SentEmail:
     body: str
 
 
-@dataclass
 class _Inbox:
     """Captures emails in `test` env."""
 
-    messages: list[SentEmail] = field(default_factory=list)
+    def __init__(self) -> None:
+        self.messages: list[SentEmail] = []
 
 
+# Shared inbox for the e2e / test-stack path where no ContextVar override is
+# installed.  Request tasks inherit a copy of the root context where
+# `_inbox_var` is unset; the global fallback makes cross-request sharing work.
+_global_inbox: _Inbox = _Inbox()
+
+# Per-test override: `set_email_inbox_for_tests` binds a fresh instance here
+# so unit tests are isolated from each other and from the global inbox.
 _inbox_var: ContextVar[_Inbox | None] = ContextVar("_inbox_var", default=None)
 
 
-def bind_email_inbox(instance: _Inbox) -> None:
-    """Bind `instance` as the active email inbox for the current Context.
+def _get() -> _Inbox:
+    """Return the active inbox: ContextVar override → global fallback."""
+    val = _inbox_var.get()
+    return val if val is not None else _global_inbox
 
-    Called once at process startup (composition root) and once per test
-    (isolation fixture). Subsequent calls in the same Context replace the
-    prior binding.
+
+def clear_global_inbox() -> None:
+    """Clear the module-global inbox.
+
+    Called by the e2e reset endpoint at the start of each test run to prevent
+    emails from a previous (possibly failed) test from polluting the next run.
     """
-    _inbox_var.set(instance)
+    _global_inbox.messages.clear()
 
 
-def get_email_inbox() -> _Inbox:
-    """Return the active email inbox. Raises `RuntimeError` if
-    `bind_email_inbox` has not been called — fail-fast so forgotten startup
-    binds surface immediately rather than silently dropping emails."""
-    instance = _inbox_var.get()
-    if instance is None:
-        raise RuntimeError(
-            "email inbox not bound: call bind_email_inbox(_Inbox()) at process "
-            "startup or use the email_inbox_isolation fixture in tests."
-        )
-    return instance
+@contextmanager
+def set_email_inbox_for_tests() -> Iterator[_Inbox]:
+    """Context manager: bind a fresh email inbox for the duration.
+
+    Each unit test gets a clean inbox isolated from the module-global and from
+    every other test. Restores the prior binding on exit.
+    """
+    instance = _Inbox()
+    token = _inbox_var.set(instance)
+    try:
+        yield instance
+    finally:
+        _inbox_var.reset(token)
+
+
+def read_sent_emails() -> list[SentEmail]:
+    """Return the live messages list from the current inbox.
+
+    Mutable — callers may call `.clear()` to reset between assertions
+    within a single test body.
+    """
+    return _get().messages
 
 
 def _send_blocking(msg: EmailMessage) -> None:
@@ -81,11 +119,11 @@ def _send_blocking(msg: EmailMessage) -> None:
 
 async def send_plain(*, to: str, subject: str, body: str) -> None:
     """Send a plain-text email. In `test` env, append to the ContextVar-bound
-    inbox and skip the SMTP round-trip; tests read the inbox via the
-    `email_inbox_isolation` fixture's accessor."""
+    inbox and skip the SMTP round-trip; tests read the inbox via
+    `read_sent_emails()`."""
     settings = get_settings()
     if settings.is_test:
-        get_email_inbox().messages.append(SentEmail(to=to, subject=subject, body=body))
+        _get().messages.append(SentEmail(to=to, subject=subject, body=body))
         return
     msg = EmailMessage()
     msg["From"] = settings.smtp_from
@@ -95,4 +133,4 @@ async def send_plain(*, to: str, subject: str, body: str) -> None:
     await asyncio.to_thread(_send_blocking, msg)
 
 
-__all__ = ["SentEmail", "_Inbox", "bind_email_inbox", "get_email_inbox", "send_plain"]
+__all__ = ["SentEmail", "clear_global_inbox", "read_sent_emails", "send_plain", "set_email_inbox_for_tests"]

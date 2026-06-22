@@ -11,10 +11,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import app.web  # noqa: F401  — registers the reviewer router
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import create_user, mint_session
 from app.core.workflow import (
     CommandContext,
     Empty,
@@ -24,9 +22,10 @@ from app.core.workflow import (
     get_execution_summary,
     step,
 )
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import get_org_full_by_slug, insert_membership, insert_org
 from app.domain.tickets import create_from_pr as create_ticket
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
+from app.web import app as _web_app  # noqa: F401  — registers the reviewer router
 
 
 def _app() -> FastAPI:
@@ -51,15 +50,15 @@ _ORG_SLUG = "dual-write-test"
 async def _seed_ticket(db_session) -> tuple:  # type: ignore[return]
     """Insert a ticket + a Builder session so the cancel endpoint can
     authenticate. Returns (ticket_id, session)."""
-    existing = await orgs_repo.get_org_by_slug(db_session, _ORG_SLUG)
+    existing = await get_org_full_by_slug(db_session, _ORG_SLUG)
     if existing is None:
-        org = await orgs_repo.insert_org(db_session, slug=_ORG_SLUG)
+        org = await insert_org(db_session, slug=_ORG_SLUG)
         existing = org
-    user = await identity_repo.insert_user(db_session, display_name="Builder")
-    await orgs_repo.insert_membership(
+    user = await create_user(db_session, display_name="Builder")
+    await insert_membership(
         db_session, user_id=user.id, org_id=existing.org_id, role=Role.BUILDER, handle="b"
     )
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
 
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(
@@ -110,7 +109,7 @@ async def test_cancel_endpoint_sets_cancel_requested_on_workflow_executions(  # 
         transitions={_noop_cmd_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
     )
 
-    with scoped_engine() as engine:
+    with set_engine_for_tests() as engine:
         engine.register_workflow(_stub_wf)
         # Create two workflow executions for the ticket.
         wfx_id_running = await engine.start(

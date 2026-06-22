@@ -151,7 +151,7 @@ depends_on = ["app.core.config", "app.domain.orgs"]
 
 [[modules]]
 path = "app.testing.e2e_setup"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.sse", "app.core.tenancy", "app.core.webserver", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test", "app.testing.seed"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.sse", "app.core.tenancy", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
@@ -206,7 +206,6 @@ expose = [
   "RefreshWorkspaceAuthCommand",
   "RepoRef",
   "StaleClaimError",
-  "SubscriberRegistry",
   "TERMINAL_EVENT_KINDS",
   "UnauthorizedError",
   "WorkspaceAgentReportSink",
@@ -217,7 +216,6 @@ expose = [
   "WriteFilesCommand",
   "WriteFilesEntry",
   "acknowledge_command_received",
-  "bind_subscriber_registry",
   "claim_next",
   "clear_byok_secrets_provider",
   "clear_run_sink",
@@ -234,7 +232,6 @@ expose = [
   "get_command_workflow_execution_id",
   "get_report_sink",
   "get_run_sink",
-  "get_subscriber_registry",
   "has_any_reachable_agent",
   "list_agents_for_org",
   "lookup_org_by_arn",
@@ -252,6 +249,9 @@ expose = [
   "revoke_all_for_agent",
   "revoke_all_for_arn",
   "revoke_all_for_org",
+  "set_bearer_verify_for_tests",
+  "set_sts_verify_for_tests",
+  "set_subscriber_registry_for_tests",
   "shutdown",
   "stale_agent_ids",
 ]
@@ -300,14 +300,13 @@ expose = [
   "USER_SCOPED_EXACT",
   "USER_SCOPED_METHOD_EXACT",
   "USER_SCOPED_PREFIXES",
-  "_REQUIRED_ROLE",
   "actor_id_var",
   "actor_kind_var",
   "auth_failure_response",
-  "bind_request_structlog_vars",
   "classify_route",
   "clear_cookie_attrs",
   "command_id_var",
+  "configure_structlog_context",
   "csrf_cookie_attrs",
   "current_actor_kind",
   "current_org_id",
@@ -352,7 +351,6 @@ expose = [
   "CodingAgentCommand",
   "CodingAgentError",
   "CodingAgentPlugin",
-  "CodingAgentRegistry",
   "Effort",
   "Invocation",
   "InvokeCodingAgent",
@@ -360,14 +358,15 @@ expose = [
   "RunResult",
   "RunStatus",
   "Usage",
-  "bind_coding_agent_registry",
   "build_byok_secrets_for_org",
   "create_run",
-  "current_coding_agent_registry",
   "dispatch_invocation",
   "get_plugin",
   "get_step_activity",
+  "list_plugins",
   "register_plugin",
+  "replace_plugin",
+  "set_coding_agents_for_tests",
 ]
 from = ["app.core.coding_agent"]
 
@@ -385,6 +384,7 @@ expose = [
   "migrate",
   "ping",
   "session",
+  "set_db_session_for_tests",
   "shutdown",
   "truncate_all_tables",
 ]
@@ -392,6 +392,7 @@ from = ["app.core.database"]
 
 [[interfaces]]
 expose = [
+  "CreatedSession",
   "EmailAlreadyLinkedError",
   "OAuthIdentity",
   "ProviderError",
@@ -402,21 +403,40 @@ expose = [
   "User",
   "UserEmail",
   "UserNotFoundError",
+  "add_email",
   "can_be_sso_exempt_owner",
-  "create_email",
-  "create_oauth_identity",
-  "create_session",
+  "change_display_name",
+  "cleanup_expired_sessions",
+  "count_verified_emails",
   "create_user",
+  "delete_email",
+  "delete_user",
+  "enroll_totp",
+  "find_oauth_identity",
+  "find_session_by_hash",
+  "find_user_by_email",
   "get_provider",
+  "get_user",
   "has_verified_totp",
+  "hash_token",
+  "is_sso_satisfied",
+  "link_oauth_identity",
+  "list_emails_for_user",
   "list_providers",
   "login_via_oauth",
+  "lookup_session",
+  "mark_sso_satisfied",
+  "mint_session",
   "register_provider",
-  "repository",
   "require_session",
-  "sessions",
-  "totp",
-  "user_web",
+  "revoke_all_sessions_for_user",
+  "revoke_session",
+  "rotate_session",
+  "set_session_for_tests",
+  "set_session_last_seen_for_tests",
+  "touch_session",
+  "update_github_handle",
+  "verify_totp",
 ]
 from = ["app.core.identity"]
 
@@ -496,8 +516,6 @@ from = ["app.core.observability"]
 
 [[interfaces]]
 expose = [
-  "RedisPubsub",
-  "bind_pubsub",
   "delete_keys_with_prefix",
   "hash_delete",
   "hash_get_all",
@@ -508,6 +526,7 @@ expose = [
   "set_add",
   "set_if_absent",
   "set_members",
+  "set_pubsub_for_tests",
   "set_remove",
   "shutdown",
   "sliding_window_hit",
@@ -541,18 +560,17 @@ expose = [
   "public_route",
   "require",
   "required_role_for",
-  "web",
 ]
 from = ["app.core.sessions"]
 
 [[interfaces]]
 expose = [
   "GeneralEventKind",
-  "bind_shutdown_event",
   "publish_general",
   "publish_general_after_commit",
   "publish_workspace_activity",
   "serialize_for_sse",
+  "set_shutdown_event_for_tests",
   "shutdown",
   "sse_prelude",
   "subscribe_general",
@@ -575,6 +593,8 @@ expose = [
   "schedule_task",
   "scheduled",
   "scheduler_loop",
+  "set_broker_for_tests",
+  "set_scheduler_for_tests",
   "shutdown",
   "task",
   "tick_once",
@@ -594,6 +614,7 @@ expose = [
   "clear_vcs_state",
   "create_membership",
   "create_org",
+  "delete_org",
   "get_member_role",
   "get_membership_info",
   "get_org",
@@ -637,13 +658,10 @@ expose = [
   "VCSPlugin",
   "VCSPullRequest",
   "VCSRateLimitError",
-  "VCSRegistry",
   "VCSTransientError",
   "VCSValidationError",
   "VcsInstallNotFound",
-  "bind_vcs_registry",
   "clone_url",
-  "current_vcs_registry",
   "detect_force_push",
   "fetch_diff",
   "fetch_pr",
@@ -662,6 +680,7 @@ expose = [
   "post_finding",
   "register_vcs_plugin",
   "registered_plugin_ids",
+  "set_vcs_for_tests",
   "validate_settings",
 ]
 from = ["app.core.vcs"]
@@ -672,11 +691,13 @@ expose = [
   "CSP_POLICY",
   "RouteSpec",
   "ShutdownHook",
+  "assert_no_testing_routes_in_prod",
   "create_app",
   "get_specs",
   "iter_web_shutdown_hooks",
   "iter_worker_shutdown_hooks",
   "mount_specs",
+  "mount_testing_endpoints",
   "register_routes",
   "register_web_shutdown_hook",
   "register_worker_shutdown_hook",
@@ -716,9 +737,8 @@ expose = [
   "WorkflowState",
   "WorkflowTerminalCallback",
   "WorkflowValidationError",
-  "bind_engine",
   "get_awaiting_human_execution",
-  "get_engine",
+  "get_command",
   "get_execution_summary",
   "get_step_output",
   "handle_agent_event",
@@ -727,12 +747,15 @@ expose = [
   "list_run_views_for_ticket",
   "list_workflow_states",
   "register_workflow",
+  "registered_command_kinds",
+  "registered_workflow_names",
   "request_cancel",
   "resume_hitl",
   "route_workflow",
+  "set_engine_for_tests",
+  "start",
   "start_step",
   "step",
-  "unregister_workflow",
   "workflow_input",
 ]
 from = ["app.core.workflow"]
@@ -769,12 +792,9 @@ expose = [
   "WorkspaceOwner",
   "WorkspaceProvider",
   "WorkspaceProvisionError",
-  "WorkspaceRegistry",
   "WorkspaceSpec",
   "WorkspaceStatus",
-  "bind_workspace_registry",
   "close_workspace",
-  "current_workspace_registry",
   "dispatch_via_workspace",
   "get_provider",
   "get_workspace_claim_state",
@@ -788,6 +808,8 @@ expose = [
   "register_workspace_provider",
   "register_workspace_providers",
   "release_claim",
+  "replace_workspace_provider",
+  "set_workspace_providers_for_tests",
   "try_claim",
   "update_workspace_status",
 ]
@@ -803,7 +825,6 @@ expose = [
   "McpCredentialSecret",
   "ProviderConfig",
   "ProviderNotRegisteredError",
-  "_REGISTRY",
   "clear",
   "connect_callback",
   "create_credential",
@@ -814,6 +835,7 @@ expose = [
   "list_broken_credentials_for_org",
   "mark_last_used",
   "register_provider",
+  "set_providers_for_tests",
   "update_allowlist",
   "validate",
 ]
@@ -844,7 +866,6 @@ expose = [
   "mint_token",
   "record_broken_creds",
   "revoke_token",
-  "web",
 ]
 from = ["app.domain.mcp_proxy"]
 
@@ -853,6 +874,7 @@ expose = [
   "CodingAgentAlreadyInstalledError",
   "CodingAgentInstall",
   "CodingAgentNotInstalledError",
+  "ExemptOwnerWithoutTotpError",
   "InsufficientRoleError",
   "Invitation",
   "InvitationError",
@@ -870,38 +892,43 @@ expose = [
   "VcsClearHook",
   "VcsState",
   "accept_invitation",
-  "audit_web",
   "change_role",
+  "clear_global_inbox",
   "clear_vcs",
   "create_membership",
   "create_org",
   "delete_expired_invitations",
   "find_saml_org_slug_for_domain",
   "get_config",
+  "get_membership",
   "get_onboarding_status",
   "get_org",
   "get_org_by_slug",
+  "get_org_full",
+  "get_org_full_by_slug",
   "get_vcs",
+  "hash_token",
+  "insert_membership",
+  "insert_org",
   "install_coding_agent",
   "invite",
   "list_active_member_ids",
   "list_coding_agents",
-  "org_settings_web",
+  "list_memberships_for_org",
+  "read_sent_emails",
   "register_assertion_verifier",
   "register_onboarding_contributor",
   "register_vcs_clear_hook",
   "remove_member",
-  "repository",
   "run_assertion_verifier",
   "send_plain",
+  "set_email_inbox_for_tests",
   "set_vcs",
   "sp_metadata_xml",
-  "sso",
-  "sso_web",
   "uninstall_coding_agent",
   "update_coding_agent_settings",
+  "update_role",
   "upsert_config",
-  "web",
 ]
 from = ["app.domain.orgs"]
 
@@ -995,7 +1022,12 @@ expose = [
 from = ["app.domain.tickets"]
 
 [[interfaces]]
-expose = ["ClaudeCodePlugin", "bootstrap", "set_repo_skill"]
+expose = [
+  "ClaudeCodePlugin",
+  "bootstrap",
+  "set_claude_code_plugin_for_tests",
+  "set_repo_skill",
+]
 from = ["app.plugins.claude_code"]
 
 [[interfaces]]
@@ -1005,20 +1037,20 @@ expose = [
   "GithubIntakeType",
   "bootstrap",
   "bootstrap_oauth",
-  "get_plugin",
   "mark_webhook_processed",
   "record_app_install",
   "record_webhook_event",
+  "set_github_plugin_for_tests",
   "verify_webhook_signature",
 ]
 from = ["app.plugins.github"]
 
 [[interfaces]]
-expose = ["LinearProvider", "bootstrap"]
+expose = ["LinearProvider", "bootstrap", "set_linear_provider_for_tests"]
 from = ["app.plugins.linear"]
 
 [[interfaces]]
-expose = ["NotionProvider", "bootstrap"]
+expose = ["NotionProvider", "bootstrap", "set_notion_provider_for_tests"]
 from = ["app.plugins.notion"]
 
 [[interfaces]]
@@ -1036,6 +1068,10 @@ from = ["app.testing.fake_coding_agent"]
 [[interfaces]]
 expose = ["shutdown_runtime"]
 from = ["app.testing.lifecycle"]
+
+[[interfaces]]
+expose = ["span_capture"]
+from = ["app.testing.observability"]
 
 [[interfaces]]
 expose = ["StubCodingAgentPlugin", "wrap_all_registered_plugins"]

@@ -132,8 +132,13 @@ async def sso_acs(
     matches the user by verified email, optionally JIT-creates a membership,
     marks the session SSO-satisfied for this org."""
     from app.core.auth import Role  # noqa: PLC0415
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
-    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
+    from app.core.identity import (  # noqa: PLC0415
+        add_email,
+        create_user,
+        find_user_by_email,
+        mark_sso_satisfied,
+        mint_session,
+    )
     from app.core.tenancy import create_membership as _create_membership  # noqa: PLC0415
     from app.core.tenancy import get_membership_info  # noqa: PLC0415
     from app.core.tenancy import get_org_full_by_slug as _get_org_by_slug  # noqa: PLC0415
@@ -153,13 +158,13 @@ async def sso_acs(
         email = payload["email"].lower()
 
         # Match by verified email.
-        user_row = await identity_repo.find_user_by_email(s, email)
+        user_row = await find_user_by_email(s, email)
         jit_created = False
         if user_row is None:
             if not cfg.jit_enabled:
                 raise _err(403, "user_not_provisioned")
-            user_row = await identity_repo.insert_user(s, display_name=email.split("@")[0])
-            await identity_repo.add_email(s, user_id=user_row.id, email=email, is_primary=True, verified=True)
+            user_row = await create_user(s, display_name=email.split("@")[0])
+            await add_email(s, user_id=user_row.id, email=email, is_primary=True, verified=True)
             await _create_membership(
                 s,
                 user_id=user_row.id,
@@ -177,15 +182,15 @@ async def sso_acs(
         # mint a fresh session.
         if yaaos_session:
             try:
-                updated = await session_lifecycle.mark_sso_satisfied(s, yaaos_session, org_id=org.org_id)
+                updated = await mark_sso_satisfied(s, yaaos_session, org_id=org.org_id)
                 created = None
             except Exception:
                 updated = None
-                created = await session_lifecycle.create(s, user_id=user_row.id, workspace_id=None)
-                await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.org_id)
+                created = await mint_session(s, user_id=user_row.id, workspace_id=None)
+                await mark_sso_satisfied(s, created.raw_token, org_id=org.org_id)
         else:
-            created = await session_lifecycle.create(s, user_id=user_row.id, workspace_id=None)
-            await session_lifecycle.mark_sso_satisfied(s, created.raw_token, org_id=org.org_id)
+            created = await mint_session(s, user_id=user_row.id, workspace_id=None)
+            await mark_sso_satisfied(s, created.raw_token, org_id=org.org_id)
             updated = None
 
         await audit_write(

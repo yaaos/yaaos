@@ -43,13 +43,15 @@ from app.core.auth import (
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.identity import (
+    CreatedSession,
     ProviderError,
     get_provider,
     list_providers,
     login_via_oauth,
-)
-from app.core.identity import (
-    sessions as session_lifecycle,
+    lookup_session,
+    mint_session,
+    revoke_all_sessions_for_user,
+    revoke_session,
 )
 from app.core.sessions.dependencies import public_route
 from app.core.webserver import RouteSpec, register_routes
@@ -134,7 +136,7 @@ async def _revoke_pre_auth_session(s, request: Request) -> None:
     pre-auth session from being silently promoted into an authed one."""
     cookie = request.cookies.get("yaaos_session")
     if cookie:
-        await session_lifecycle.revoke(s, cookie)
+        await revoke_session(s, cookie)
 
 
 @router.get("/callback/{provider}", dependencies=[Depends(public_route)])
@@ -184,11 +186,9 @@ async def callback(
         # Step-up: if the user has a verified TOTP secret and the provider
         # didn't satisfy MFA, defer session creation and send the user
         # through `/totp-challenge`.
-        from app.core.identity import totp as totp_lifecycle  # noqa: PLC0415
+        from app.core.identity import has_verified_totp  # noqa: PLC0415
 
-        needs_step_up = not profile.mfa_satisfied and await totp_lifecycle.has_verified_totp(
-            s, login_result.user.id
-        )
+        needs_step_up = not profile.mfa_satisfied and await has_verified_totp(s, login_result.user.id)
         if needs_step_up:
             await s.commit()
             signed = _totp_challenge_serializer().dumps(
@@ -207,7 +207,7 @@ async def callback(
             return resp
 
         await _revoke_pre_auth_session(s, request)
-        created = await session_lifecycle.create(
+        created = await mint_session(
             s,
             user_id=login_result.user.id,
             workspace_id=None,
@@ -239,10 +239,10 @@ async def logout(
 ) -> Response:
     if yaaos_session:
         async with db_session() as s:
-            session = await session_lifecycle.lookup(s, yaaos_session)
+            session = await lookup_session(s, yaaos_session)
             if session and session.user_id is not None:
                 await _emit_logout_audit(s, user_id=session.user_id, kind="logout")
-            await session_lifecycle.revoke(s, yaaos_session)
+            await revoke_session(s, yaaos_session)
             await s.commit()
     resp = JSONResponse(content={"ok": True})
     resp.set_cookie(**clear_cookie_attrs(SESSION_COOKIE_NAME))
@@ -264,11 +264,11 @@ async def logout_all(
         resp.set_cookie(**clear_cookie_attrs(CSRF_COOKIE_NAME))
         return resp
     async with db_session() as s:
-        session = await session_lifecycle.lookup(s, yaaos_session)
+        session = await lookup_session(s, yaaos_session)
         if session and session.user_id is not None:
-            await session_lifecycle.revoke_all_for_user(s, session.user_id)
+            await revoke_all_sessions_for_user(s, session.user_id)
         else:
-            await session_lifecycle.revoke(s, yaaos_session)
+            await revoke_session(s, yaaos_session)
         await s.commit()
     resp = JSONResponse(content={"ok": True})
     resp.set_cookie(**clear_cookie_attrs(SESSION_COOKIE_NAME))
@@ -291,17 +291,17 @@ async def me(
     Lives on the public allowlist because the SPA hits it before any org
     URL is selected. 401 when there's no session.
     """
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
+    from app.core.identity import get_user, list_emails_for_user  # noqa: PLC0415
     from app.core.tenancy import list_memberships_for_user as _list_memberships  # noqa: PLC0415
 
     if not yaaos_session:
         return auth_failure_response("unauthenticated")
     async with db_session() as s:
-        session = await session_lifecycle.lookup(s, yaaos_session)
+        session = await lookup_session(s, yaaos_session)
         if session is None or session.user_id is None:
             return auth_failure_response("unauthenticated")
-        user_row = await identity_repo.get_user(s, session.user_id)
-        emails = await identity_repo.list_emails_for_user(s, session.user_id)
+        user_row = await get_user(s, session.user_id)
+        emails = await list_emails_for_user(s, session.user_id)
         membership_views = await _list_memberships(s, session.user_id)
         memberships_view = [
             {
@@ -354,17 +354,15 @@ async def totp_enroll(
     `{seed, otpauth_uri}`. The SPA renders the URI as a QR code; users on
     devices without a camera type the seed. Verify must be called with a
     current code before `verified_at` flips."""
-    from app.core.identity import totp as totp_lifecycle  # noqa: PLC0415
+    from app.core.identity import enroll_totp  # noqa: PLC0415
 
     if not yaaos_session:
         return auth_failure_response("unauthenticated")
     async with db_session() as s:
-        session = await session_lifecycle.lookup(s, yaaos_session)
+        session = await lookup_session(s, yaaos_session)
         if session is None or session.user_id is None:
             return auth_failure_response("unauthenticated")
-        seed, uri = await totp_lifecycle.enroll(
-            s, user_id=session.user_id, account_label=str(session.user_id)
-        )
+        seed, uri = await enroll_totp(s, user_id=session.user_id, account_label=str(session.user_id))
         await s.commit()
     return JSONResponse(content={"seed": seed, "otpauth_uri": uri})
 
@@ -380,7 +378,7 @@ async def totp_challenge(
     by the OAuth callback when the user needs MFA, verify the supplied
     TOTP code, then mint the real session and redirect to the original
     `next` path."""
-    from app.core.identity import totp as totp_lifecycle  # noqa: PLC0415
+    from app.core.identity import verify_totp  # noqa: PLC0415
 
     if not yaaos_totp_challenge:
         return JSONResponse(status_code=400, content={"error": "no_challenge_cookie"})
@@ -400,12 +398,12 @@ async def totp_challenge(
     raw_next = _safe_next(payload.get("next"))
 
     async with db_session() as s:
-        ok = await totp_lifecycle.verify(s, user_id=user_id, code=body.code)
+        ok = await verify_totp(s, user_id=user_id, code=body.code)
         if not ok:
             return JSONResponse(status_code=400, content={"error": "totp_invalid"})
         next_path = await _safe_next_for_user(s, raw_next, user_id=user_id)
         await _revoke_pre_auth_session(s, request)
-        created = await session_lifecycle.create(
+        created = await mint_session(
             s,
             user_id=user_id,
             workspace_id=None,
@@ -431,22 +429,22 @@ async def totp_verify(
     """Verify a TOTP code against the user's enrolled secret. On success the
     row's `verified_at` stamp flips and step-up login starts demanding a
     code on every signin that wasn't satisfied by the IdP."""
-    from app.core.identity import totp as totp_lifecycle  # noqa: PLC0415
+    from app.core.identity import verify_totp  # noqa: PLC0415
 
     if not yaaos_session:
         return auth_failure_response("unauthenticated")
     async with db_session() as s:
-        session = await session_lifecycle.lookup(s, yaaos_session)
+        session = await lookup_session(s, yaaos_session)
         if session is None or session.user_id is None:
             return auth_failure_response("unauthenticated")
-        ok = await totp_lifecycle.verify(s, user_id=session.user_id, code=body.code)
+        ok = await verify_totp(s, user_id=session.user_id, code=body.code)
         await s.commit()
     if not ok:
         return JSONResponse(status_code=400, content={"error": "totp_invalid"})
     return JSONResponse(content={"ok": True})
 
 
-def _set_session_cookies(resp: Response, created: session_lifecycle.CreatedSession) -> None:
+def _set_session_cookies(resp: Response, created: CreatedSession) -> None:
     max_age = get_settings().yaaos_session_lifetime_seconds
     resp.set_cookie(value=created.raw_token, **session_cookie_attrs(max_age_seconds=max_age))
     resp.set_cookie(value=created.csrf_token, **csrf_cookie_attrs(max_age_seconds=max_age))

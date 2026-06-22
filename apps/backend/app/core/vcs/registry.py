@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from uuid import UUID
 
@@ -59,35 +61,52 @@ class VCSRegistry:
 
 
 _registry_var: ContextVar[VCSRegistry | None] = ContextVar("_vcs_registry_var", default=None)
-# Import-time default: plugins that call register_vcs_plugin() at module-import
-# time (bootstrap()) land here when no per-test binding is active. Production
-# never calls bind_vcs_registry(); the ContextVar exists solely for per-test
-# isolation.
-_default_registry = VCSRegistry()
 
 
-def bind_vcs_registry(instance: VCSRegistry) -> None:
-    _registry_var.set(instance)
+def _get() -> VCSRegistry:
+    val = _registry_var.get()
+    if val is None:
+        val = VCSRegistry()
+        _registry_var.set(val)
+    return val
 
 
-def current_vcs_registry() -> VCSRegistry:
-    return _registry_var.get() or _default_registry
+@contextmanager
+def set_vcs_for_tests(
+    *,
+    plugin: VCSPlugin | None = None,
+) -> Iterator[VCSRegistry]:
+    """Context manager: bind an isolated copy of the current VCS registry.
+
+    With `plugin=None` each test gets a copy of the module default (preserving
+    any production-registered plugins). With `plugin=X` the copy also has X
+    added/replaced — use this to install a stub for the duration of a block
+    (replaces `scoped_vcs_plugin`). Restores the prior binding on exit.
+    """
+    instance = _get().copy()
+    if plugin is not None:
+        instance.replace(plugin)
+    token = _registry_var.set(instance)
+    try:
+        yield instance
+    finally:
+        _registry_var.reset(token)
 
 
 def register_vcs_plugin(plugin: VCSPlugin) -> None:
-    current_vcs_registry().register(plugin)
+    _get().register(plugin)
 
 
 def get_plugin(plugin_id: str) -> VCSPlugin:
-    return current_vcs_registry().get(plugin_id)
+    return _get().get(plugin_id)
 
 
 def is_registered(plugin_id: str) -> bool:
-    return current_vcs_registry().is_registered(plugin_id)
+    return _get().is_registered(plugin_id)
 
 
 def registered_plugin_ids() -> list[str]:
-    return current_vcs_registry().ids()
+    return _get().ids()
 
 
 async def get_installation_token(plugin_id: str, org_id: UUID) -> str:

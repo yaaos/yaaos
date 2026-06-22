@@ -79,20 +79,12 @@ def register_fake_coding_agent(plugin_id: str = "claude_code"):  # type: ignore[
     Binds a fresh registry copy with the fake substituted; restores the prior
     binding on exit. Never mutates the canonical registry dict.
     """
-    from app.core.coding_agent import (  # noqa: PLC0415
-        bind_coding_agent_registry,
-        current_coding_agent_registry,
-    )
+    from app.core.coding_agent import set_coding_agents_for_tests  # noqa: PLC0415
 
     fake = FakeCodingAgentPlugin(plugin_id=plugin_id)
-    prior = current_coding_agent_registry()
-    fresh = prior.copy()
-    fresh.replace(fake)  # type: ignore[arg-type]
-    bind_coding_agent_registry(fresh)
-    try:
+    with set_coding_agents_for_tests() as reg:
+        reg.replace(fake)  # type: ignore[arg-type]
         yield fake
-    finally:
-        bind_coding_agent_registry(prior)
 
 
 __all__ = ["FakeCodingAgentPlugin", "register_fake_coding_agent"]

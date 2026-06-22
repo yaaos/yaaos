@@ -48,8 +48,8 @@ from app.core.workflow import (
 )
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import WorkspaceStatus
-from app.testing.seed import seed_agent
-from app.testing.workflow_harness import scoped_engine
+from app.testing.e2e_setup import seed_agent
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -199,7 +199,7 @@ async def test_lean_row_created_on_first_workspace_event(db_session) -> None:
     with `owning_agent_id` from the bearer and `org_id`/`spec` from the
     originating `agent_commands` row — no pre-created row needed."""
     org_id = uuid4()
-    agent_result = await seed_agent(org_id=org_id, session=db_session)
+    agent_result = await seed_agent(org_id=org_id)
     agent_id = UUID(str(agent_result["id"]))
     await db_session.flush()
 
@@ -273,7 +273,7 @@ async def test_lean_row_org_id_from_command_row(db_session) -> None:
     """The lean row's `org_id` must match the `agent_commands` row's `org_id`,
     not the agent's `org_id` (which matches here but the test checks the exact join)."""
     org_id = uuid4()
-    agent_result = await seed_agent(org_id=org_id, session=db_session)
+    agent_result = await seed_agent(org_id=org_id)
     agent_id = UUID(str(agent_result["id"]))
     await db_session.flush()
 
@@ -333,7 +333,7 @@ async def test_provision_success_completion_token_verified(db_session) -> None:
     from app.core.agent_gateway import claim_next  # noqa: PLC0415
 
     org_id = uuid4()
-    agent_result = await seed_agent(org_id=org_id, session=db_session)
+    agent_result = await seed_agent(org_id=org_id)
     agent_id = UUID(str(agent_result["id"]))
 
     workspace_id = uuid7()
@@ -415,7 +415,7 @@ async def test_provision_success_materialises_lean_row(db_session) -> None:
     from datetime import timedelta  # noqa: PLC0415
 
     org_id = uuid4()
-    agent_result = await seed_agent(org_id=org_id, session=db_session)
+    agent_result = await seed_agent(org_id=org_id)
     agent_id = UUID(str(agent_result["id"]))
 
     workspace_id = uuid7()
@@ -465,7 +465,7 @@ async def test_provision_success_idempotent(db_session) -> None:
     from app.core.auth import org_context  # noqa: PLC0415
 
     org_id = uuid4()
-    agent_result = await seed_agent(org_id=org_id, session=db_session)
+    agent_result = await seed_agent(org_id=org_id)
     agent_id = UUID(str(agent_result["id"]))
 
     workspace_id = uuid7()
@@ -513,7 +513,7 @@ async def test_release_claim_before_next_try_claim(db_session) -> None:
     # Seed a workspace row that holds the current command claim.
     from datetime import timedelta  # noqa: PLC0415
 
-    agent_result = await seed_agent(org_id=org_id, session=db_session)
+    agent_result = await seed_agent(org_id=org_id)
     ws = WorkspaceRow(
         id=workspace_id,
         org_id=org_id,
@@ -598,7 +598,7 @@ async def test_finalizer_fires_once_on_terminal_fail(db_session) -> None:
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-once-test",
@@ -668,7 +668,7 @@ async def test_finalizer_does_not_refire_on_success(db_session) -> None:
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-no-refire-test",
@@ -734,7 +734,7 @@ async def test_failure_reason_and_audit_written_on_terminal_fail(db_session) -> 
     )
 
     ticket_id = str(uuid4())
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="failure-record-test",
@@ -808,7 +808,7 @@ async def test_failure_reason_without_structured_key_uses_label(db_session) -> N
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="failure-label-fallback-test",
@@ -872,7 +872,7 @@ async def test_finalizer_original_failure_reason_preserved(db_session) -> None:
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="finalizer-failure-context-test",

@@ -55,4 +55,4 @@
 
 `app/core/workspace/test/test_dispatch_via_workspace_service.py` (service tier) covers `dispatch_via_workspace`: returns `command_id`, `claim_workspace=False` leaves the row unclaimed, `claim_workspace=True` atomically sets `current_command_id`, `WorkspaceNotFoundError` on missing row, `WorkspaceClaimFailed` on busy row, `WorkspaceClaimFailed` on inactive (expired) row. `app/core/workspace/test/test_dispatch_discipline_semgrep_canary.py` (unit, no DB) verifies `dispatch_helper_discipline.yaml` fires on direct `enqueue_command` calls in reviewer-commands files and passes clean Layer-2 callers.
 
-Cross-module tests that need a workspace row without the full provision flow use `seed_workspace` from `app.testing.seed`.
+Cross-module tests that need a workspace row without the full provision flow use `seed_workspace` from `app.testing.e2e_setup`.

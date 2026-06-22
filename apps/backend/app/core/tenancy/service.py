@@ -426,6 +426,14 @@ async def _delete_org_for_tests(session: AsyncSession, org_id: UUID) -> None:
     await _delete_org_row(session, org_id)
 
 
+async def delete_org(session: AsyncSession, org_id: UUID) -> None:
+    """Hard-delete an org row. Cascades at the DB level to memberships,
+    invitations, and all child rows. Used by the `/api/testing/*` cleanup
+    surface and by tests that commit rows outside the transactional rollback
+    fixture."""
+    await _delete_org_row(session, org_id)
+
+
 async def get_org_full_by_iam_arn(session: AsyncSession, canonical_arn: str) -> OrgFullView | None:
     """Return the full org view for the org registered with *canonical_arn*, or None.
 

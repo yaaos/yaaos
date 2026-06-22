@@ -19,7 +19,7 @@ from app.core.secrets import encrypt
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 from app.testing.observability import span_capture
 
 pytestmark = pytest.mark.service
@@ -55,7 +55,7 @@ async def test_integrations_failure_catch_records_on_span(db_session) -> None:  
     prov = _RaisingProvider()
     _REGISTRY["stub_raising"] = prov
     try:
-        org = await orgs_repo.insert_org(db_session, slug="integrations-span-test-org")
+        org = await insert_org(db_session, slug="integrations-span-test-org")
         row = McpCredentialRow(
             org_id=org.org_id,
             provider="stub_raising",

@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import Actor, audit
 from app.core.auth import Role
 from app.core.config import get_settings
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import revoke_all_sessions_for_user
 from app.core.tenancy import (
     change_role as _tenancy_change_role,
 )
@@ -38,7 +38,7 @@ from app.core.tenancy import (
     remove_member as _tenancy_remove_member,
 )
 from app.domain.orgs import email as org_email
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs.repository import get_invitation_by_token_hash, insert_invitation
 from app.domain.orgs.service import Invitation, Membership
 from app.domain.orgs.types import InvitationError
 
@@ -99,7 +99,7 @@ async def invite(
     expires_at = datetime.now(UTC) + timedelta(seconds=settings.yaaos_invitation_lifetime_seconds)
     raw_token = _serializer().dumps({"org_id": str(org_id), "email": email.lower()})
 
-    row = await orgs_repo.insert_invitation(
+    row = await insert_invitation(
         db,
         org_id=org_id,
         email=email.lower(),
@@ -155,7 +155,7 @@ async def accept_invitation(
     except BadSignature as exc:
         raise InvitationInvalidError("token signature invalid") from exc
 
-    row = await orgs_repo.get_invitation_by_token_hash(db, _hash(raw_token))
+    row = await get_invitation_by_token_hash(db, _hash(raw_token))
     if row is None:
         raise InvitationInvalidError("no invitation matches the token")
     if row.accepted_at is not None:
@@ -217,7 +217,7 @@ async def remove_member(
         return
     from_role = existing.role
     await _tenancy_remove_member(db, user_id=user_id, org_id=org_id)
-    await session_lifecycle.revoke_all_for_user(db, user_id)
+    await revoke_all_sessions_for_user(db, user_id)
 
     await audit(
         "membership",
@@ -249,7 +249,7 @@ async def change_role(
         raise LookupError("membership not found")
     from_role = existing.role
     await _tenancy_change_role(db, user_id=user_id, org_id=org_id, role=new_role)
-    await session_lifecycle.revoke_all_for_user(db, user_id)
+    await revoke_all_sessions_for_user(db, user_id)
 
     await audit(
         "membership",

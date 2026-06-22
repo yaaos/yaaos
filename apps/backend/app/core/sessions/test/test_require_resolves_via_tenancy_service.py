@@ -12,8 +12,6 @@ Also asserts that `app.core.sessions.dependencies` has no top-level import of
 
 from __future__ import annotations
 
-import importlib
-import sys
 import uuid
 from collections.abc import AsyncIterator
 
@@ -22,11 +20,12 @@ import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
+import app.core.sessions.dependencies as _sessions_deps
 from app.core.auth import Action, AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import create_user, mint_session
 from app.core.sessions import require
-from app.core.sessions import web as _auth_web  # noqa: F401 — mounts /api/auth/*
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _app() -> FastAPI:
@@ -49,14 +48,10 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
-    user = await identity_repo.insert_user(db_session, display_name="Probe")
-    org = await orgs_repo.insert_org(db_session, slug=f"probe-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="probe"
-    )
-    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session, display_name="Probe")
+    org = await insert_org(db_session, slug=f"probe-{uuid.uuid4().hex[:8]}")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="probe")
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"org": org, "user": user, "token": sess.raw_token}
 
@@ -66,24 +61,11 @@ def test_dependencies_module_has_no_top_level_domain_orgs_import() -> None:
     module load time — that top-level import was the structural blocker that
     forced every route to evaluate domain layer at startup.
 
-    Verify by reloading the module in a clean namespace and checking
-    `sys.modules` for `app.domain.orgs` wasn't pulled in as a side effect.
+    Verify by inspecting the module source for top-level domain.orgs imports.
     """
-    # Remove from cache so the import is fresh for this check.
-    mod_name = "app.core.sessions.dependencies"
-    previously_loaded = mod_name in sys.modules
-    # Strip the module from cache (and any cached domain.orgs side-effect from
-    # this process's earlier imports).
-    deps_mod = importlib.import_module(mod_name)
-    # Check the module's own __dict__ for a top-level reference to domain.orgs.
-    # If `from app.domain.orgs import ...` were at top level, the module's
-    # namespace would hold the imported names at attribute-access time, and
-    # `app.domain.orgs` would be in `sys.modules` after the import.
-    # The assertion here is that the dependencies module source contains no
-    # top-level `from app.domain.orgs` — checked by inspecting the module file.
     import inspect  # noqa: PLC0415
 
-    source = inspect.getsource(deps_mod)
+    source = inspect.getsource(_sessions_deps)
     # Allow lazy (inside-function) domain.orgs imports but reject top-level ones.
     lines = source.splitlines()
     for line in lines:
@@ -93,7 +75,6 @@ def test_dependencies_module_has_no_top_level_domain_orgs_import() -> None:
             # from function-body ones.
             indent = len(line) - len(line.lstrip())
             assert indent > 0, f"Found top-level domain.orgs import in dependencies.py: {line!r}"
-    _ = previously_loaded  # suppress unused warning
 
 
 @pytest.mark.asyncio
@@ -114,11 +95,9 @@ async def test_require_resolves_via_tenancy_no_domain_import(seeded) -> None:
 async def test_require_returns_404_for_non_member(db_session) -> None:
     """User without a membership → 404 (same shape as org-not-found, don't
     leak existence)."""
-    user = await identity_repo.insert_user(db_session, display_name="Outsider")
-    org = await orgs_repo.insert_org(db_session, slug=f"outsider-{uuid.uuid4().hex[:8]}")
-    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session, display_name="Outsider")
+    org = await insert_org(db_session, slug=f"outsider-{uuid.uuid4().hex[:8]}")
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
@@ -134,14 +113,10 @@ async def test_require_returns_404_for_non_member(db_session) -> None:
 @pytest.mark.asyncio
 async def test_require_returns_403_for_insufficient_role(db_session) -> None:
     """Builder role is insufficient for an Admin-only action → 403."""
-    user = await identity_repo.insert_user(db_session, display_name="Builder")
-    org = await orgs_repo.insert_org(db_session, slug=f"role-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="bld"
-    )
-    from app.core.identity import sessions as session_lifecycle  # noqa: PLC0415
-
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session, display_name="Builder")
+    org = await insert_org(db_session, slug=f"role-{uuid.uuid4().hex[:8]}")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="bld")
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     # MEMBERS_INVITE requires Admin; Builder should get 403.

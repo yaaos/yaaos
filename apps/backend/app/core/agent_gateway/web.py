@@ -65,7 +65,7 @@ from app.core.agent_gateway.subscribers import (
     SubscriberReconciler,
 )
 from app.core.agent_gateway.subscribers import (
-    get_registry as _get_subscriber_registry,
+    _get as _get_subscriber_registry,
 )
 from app.core.agent_gateway.types import (
     AgentEvent,

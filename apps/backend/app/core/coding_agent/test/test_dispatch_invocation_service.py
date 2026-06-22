@@ -16,7 +16,6 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-import app.web  # noqa: F401 — registers all models so FK metadata resolves correctly
 from app.core.coding_agent import (
     Invocation,
     dispatch_invocation,
@@ -25,8 +24,9 @@ from app.core.coding_agent.models import CodingAgentRunRow
 from app.core.coding_agent.run_service import get_run_id_for_command
 from app.core.workflow import CommandContext
 from app.core.workspace import WorkspaceClaimFailed, WorkspaceNotFoundError
+from app.testing.e2e_setup import seed_agent, seed_workspace
 from app.testing.fake_coding_agent import FakeCodingAgentPlugin
-from app.testing.seed import seed_agent, seed_workspace
+from app.web import app as _web_app  # noqa: F401 — registers all models so FK metadata resolves correctly
 
 pytestmark = pytest.mark.service
 
@@ -52,15 +52,14 @@ def _invocation(workspace_id: UUID) -> Invocation:
     )
 
 
-async def _seed_active_workspace(org_id: UUID, session) -> UUID:  # type: ignore[no-untyped-def]
+async def _seed_active_workspace(org_id: UUID) -> UUID:
     """Insert a workspace row owned by a fresh agent; return its UUID."""
-    agent = await seed_agent(org_id=org_id, session=session)
+    agent = await seed_agent(org_id=org_id)
     ws_id_str = await seed_workspace(
         org_id=org_id,
         provider_id="remote_agent",
         sha="abc123",
         agent_id=agent["id"],
-        caller_session=session,
     )
     return UUID(ws_id_str)
 
@@ -70,7 +69,7 @@ async def test_dispatch_invocation_returns_uuid(db_session) -> None:
     """dispatch_invocation returns a UUID (the minted command_id)."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
-    ws_id = await _seed_active_workspace(org_id, db_session)
+    ws_id = await _seed_active_workspace(org_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
@@ -87,7 +86,7 @@ async def test_dispatch_invocation_inserts_run_row(db_session) -> None:
     """A `coding_agent_runs` row with status=running lands in the DB."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
-    ws_id = await _seed_active_workspace(org_id, db_session)
+    ws_id = await _seed_active_workspace(org_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
@@ -112,7 +111,7 @@ async def test_dispatch_invocation_run_row_correlates_via_get_run_id_for_command
     """get_run_id_for_command resolves the run by the returned command_id."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
-    ws_id = await _seed_active_workspace(org_id, db_session)
+    ws_id = await _seed_active_workspace(org_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
@@ -130,7 +129,7 @@ async def test_dispatch_invocation_run_row_step_id(db_session) -> None:
     """`step_id` on the run row matches the CommandContext's step_id."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
-    ws_id = await _seed_active_workspace(org_id, db_session)
+    ws_id = await _seed_active_workspace(org_id)
     ctx = CommandContext(
         workflow_execution_id=str(wfe_id),
         ticket_id=str(uuid.uuid4()),
@@ -159,7 +158,7 @@ async def test_dispatch_invocation_idempotent_command_id_is_uuidv7(db_session) -
     """The returned command_id is a UUIDv7 (required by the FK check constraint on agent_commands)."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
-    ws_id = await _seed_active_workspace(org_id, db_session)
+    ws_id = await _seed_active_workspace(org_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
@@ -178,7 +177,7 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
     """Each dispatch mints a fresh command_id."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
-    ws_id = await _seed_active_workspace(org_id, db_session)
+    ws_id = await _seed_active_workspace(org_id)
 
     id1 = await dispatch_invocation(
         invocation=_invocation(ws_id),
@@ -189,14 +188,13 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
 
     # Second dispatch must fail: workspace is now claimed from the first call.
     # Use a fresh workspace row so we can verify distinct IDs are minted.
-    agent2 = await seed_agent(org_id=org_id, session=db_session)
+    agent2 = await seed_agent(org_id=org_id)
     ws_id2 = UUID(
         await seed_workspace(
             org_id=org_id,
             provider_id="remote_agent",
             sha="def456",
             agent_id=agent2["id"],
-            caller_session=db_session,
         )
     )
     wfe_id2 = uuid.uuid4()
@@ -229,7 +227,7 @@ async def test_dispatch_invocation_busy_workspace_raises_claim_failed(db_session
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
     # Seed a workspace that's already claimed (current_command_id pre-set).
-    agent = await seed_agent(org_id=org_id, session=db_session)
+    agent = await seed_agent(org_id=org_id)
     ws_id = UUID(
         await seed_workspace(
             org_id=org_id,
@@ -237,7 +235,6 @@ async def test_dispatch_invocation_busy_workspace_raises_claim_failed(db_session
             sha="abc",
             agent_id=agent["id"],
             current_command_id=uuid.uuid4(),  # pre-claimed
-            caller_session=db_session,
         )
     )
 

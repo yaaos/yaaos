@@ -213,7 +213,7 @@ async def _post_findings_via_vcs(
     Passes named primitive args — no value object crosses the `vcs` boundary.
     Each finding is posted independently; the plugin renders per-platform.
     """
-    from app.core import vcs  # noqa: PLC0415
+    import app.core.vcs as vcs  # noqa: PLC0415
 
     for f in findings:
         try:

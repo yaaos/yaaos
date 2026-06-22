@@ -22,15 +22,15 @@ from app.core.sse.service import (
     subscribe_general,
     subscribe_workspace_activity,
 )
-from app.core.sse.web import bind_shutdown_event, shutdown
+from app.core.sse.web import set_shutdown_event_for_tests, shutdown
 
 __all__ = [
     "GeneralEventKind",
-    "bind_shutdown_event",
     "publish_general",
     "publish_general_after_commit",
     "publish_workspace_activity",
     "serialize_for_sse",
+    "set_shutdown_event_for_tests",
     "shutdown",
     "sse_prelude",
     "subscribe_general",

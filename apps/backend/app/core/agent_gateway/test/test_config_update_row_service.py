@@ -26,6 +26,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+import app.core.agent_gateway.service as _ag_service_module
 from app.core.agent_gateway import bearers, enqueue_command
 from app.core.agent_gateway.models import AgentCommandRow, WorkspaceAgentRow
 from app.core.agent_gateway.service import (
@@ -34,7 +35,7 @@ from app.core.agent_gateway.service import (
 )
 from app.core.agent_gateway.sts_verifier import (
     VerifiedIdentity,
-    set_verify_identity_override,
+    set_sts_verify_for_tests,
 )
 from app.core.agent_gateway.types import (
     AgentCommandKind,
@@ -43,8 +44,8 @@ from app.core.agent_gateway.types import (
     RepoRef,
 )
 from app.core.tenancy import update_org_fields
-from app.domain.orgs import repository as orgs_repo
-from app.testing.seed import seed_agent
+from app.domain.orgs import insert_org
+from app.testing.e2e_setup import seed_agent
 
 _IDENTITY_ENDPOINT = "/api/v1/agent/identity"
 _SIGNED_PAYLOAD = (
@@ -78,8 +79,8 @@ def _client(ip: str | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, base_url="http://test")
 
 
-async def _make_agent(db_session, *, org_id: UUID | None = None) -> UUID:
-    result = await seed_agent(org_id=org_id or uuid4(), session=db_session)
+async def _make_agent(*, org_id: UUID | None = None) -> UUID:
+    result = await seed_agent(org_id=org_id or uuid4())
     return UUID(str(result["id"]))
 
 
@@ -102,10 +103,7 @@ def _make_provision_cmd(org_id: UUID, workspace_id: UUID | None = None) -> Provi
     )
 
 
-@pytest.fixture(autouse=True)
-def _reset_sts_verifier():
-    yield
-    set_verify_identity_override(None)
+# sts_verify_isolation autouse fixture (in app/testing/isolation.py) handles reset.
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────
@@ -118,7 +116,7 @@ async def test_identity_exchange_enqueues_config_update_row(db_session) -> None:
     status='pending', non-null completion_token_hash, scoped to the new agent_id."""
     canonical_arn = "arn:aws:iam::123456789012:role/yaaos-agent-cu"
     raw_arn = "arn:aws:sts::123456789012:assumed-role/yaaos-agent-cu/task-cu-01"
-    org = await orgs_repo.insert_org(db_session, slug=f"cu-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"cu-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -130,17 +128,16 @@ async def test_identity_exchange_enqueues_config_update_row(db_session) -> None:
     async def _stub(_payload: str) -> VerifiedIdentity:
         return _verified(canonical_arn, raw_arn=raw_arn)
 
-    set_verify_identity_override(_stub)
-
-    async with _client() as c:
-        resp = await c.post(
-            _IDENTITY_ENDPOINT,
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.0.0",
-                "payload": _SIGNED_PAYLOAD,
-            },
-        )
+    with set_sts_verify_for_tests(callback=_stub):
+        async with _client() as c:
+            resp = await c.post(
+                _IDENTITY_ENDPOINT,
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.0.0",
+                    "payload": _SIGNED_PAYLOAD,
+                },
+            )
     assert resp.status_code == 200, resp.text
     agent_id = UUID(resp.json()["agent_id"])
 
@@ -171,7 +168,7 @@ async def test_claim_next_unconfigured_returns_row_backed_config_update(db_sessi
     """lifecycle='unconfigured' claim returns the ConfigUpdate row (not a
     ProvisionWorkspace even when new_workspaces > 0)."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     provision_cmd = _make_provision_cmd(org_id)
     await enqueue_command(org_id=org_id, command=provision_cmd, session=db_session)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
@@ -208,7 +205,7 @@ async def test_claim_next_configured_returns_config_update_first_when_both_pendi
     workspace spawn injects per-process env (e.g. ANTHROPIC_API_KEY at
     ExecSpawn time, which lives for the workspace's whole life)."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     provision_cmd = _make_provision_cmd(org_id)
     await enqueue_command(org_id=org_id, command=provision_cmd, session=db_session)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
@@ -240,9 +237,9 @@ async def test_claim_next_configured_returns_config_update_first_when_both_pendi
 async def test_duplicate_enqueue_both_claimed_idempotently(db_session) -> None:
     """Two enqueue_config_update_for_agent calls produce two separate rows that
     are both claimed in FIFO order and their terminal events ack 200."""
-    org = await orgs_repo.insert_org(db_session, slug=f"dup-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"dup-{uuid4().hex[:6]}")
     org_id = org.org_id
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
 
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
@@ -345,7 +342,7 @@ async def test_duplicate_enqueue_both_claimed_idempotently(db_session) -> None:
 async def test_events_handler_returns_410_on_missing_row(db_session) -> None:
     """POST /api/v1/commands/{random-uuid}/events with kind=completed_success
     returns 410 with {"error": "stale_claim"} when the command_id has no row."""
-    org = await orgs_repo.insert_org(db_session, slug=f"sc-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"sc-{uuid4().hex[:6]}")
     agent = WorkspaceAgentRow(
         id=uuid4(),
         org_id=org.org_id,
@@ -387,10 +384,7 @@ async def test_events_handler_returns_410_on_missing_row(db_session) -> None:
 async def test_build_config_update_function_removed(_db_session=None) -> None:
     """_build_config_update must not be importable from service.py — regression
     guard against accidental restoration of the synthesize-on-demand path."""
-    import importlib  # noqa: PLC0415
-
-    service = importlib.import_module("app.core.agent_gateway.service")
-    assert not hasattr(service, "_build_config_update"), (
+    assert not hasattr(_ag_service_module, "_build_config_update"), (
         "_build_config_update was restored in service.py; it must stay deleted"
     )
 
@@ -402,7 +396,7 @@ async def test_agent_command_pk_rejects_non_v7_uuid(db_session) -> None:
     uuid4 — the authoritative guard for the FIFO sort-key invariant that the
     semgrep taint rule cannot see across the producer-DTO → enqueue_command hop.
     A uuid7 PK inserts cleanly."""
-    org = await orgs_repo.insert_org(db_session, slug=f"v7-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"v7-{uuid4().hex[:6]}")
 
     db_session.add(AgentCommandRow(id=uuid4(), org_id=org.org_id, command_kind="ProvisionWorkspace"))
     with pytest.raises(IntegrityError):
@@ -410,6 +404,6 @@ async def test_agent_command_pk_rejects_non_v7_uuid(db_session) -> None:
     await db_session.rollback()
 
     # A uuid7 PK satisfies the constraint.
-    org = await orgs_repo.insert_org(db_session, slug=f"v7ok-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"v7ok-{uuid4().hex[:6]}")
     db_session.add(AgentCommandRow(id=uuid7(), org_id=org.org_id, command_kind="ProvisionWorkspace"))
     await db_session.flush()

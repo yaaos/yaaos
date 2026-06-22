@@ -8,14 +8,12 @@ from typing import Any
 
 from app.core.coding_agent import (
     ActivityLog,
-    CodingAgentRegistry,
     Invocation,
     InvokeCodingAgent,
     RunResult,
     Usage,
-    bind_coding_agent_registry,
-    current_coding_agent_registry,
     register_plugin,
+    set_coding_agents_for_tests,
 )
 from app.testing.stub_coding_agent import (
     StubCodingAgentPlugin,
@@ -74,12 +72,12 @@ def test_plugin_id_mirrors_wrapped() -> None:
 
 def test_wrap_all_is_idempotent() -> None:
     # Start from an empty registry so the test is independent of suite state.
-    bind_coding_agent_registry(CodingAgentRegistry())
-    dummy = _DummyPlugin()
-    register_plugin(dummy)
-    assert wrap_all_registered_plugins() == 1
-    plugins = current_coding_agent_registry().list()
-    assert len(plugins) == 1
-    assert isinstance(plugins[0], StubCodingAgentPlugin)
-    # second call is a no-op — already wrapped
-    assert wrap_all_registered_plugins() == 0
+    with set_coding_agents_for_tests(scenario="empty") as reg:
+        dummy = _DummyPlugin()
+        register_plugin(dummy)
+        assert wrap_all_registered_plugins() == 1
+        plugins = reg.list()
+        assert len(plugins) == 1
+        assert isinstance(plugins[0], StubCodingAgentPlugin)
+        # second call is a no-op — already wrapped
+        assert wrap_all_registered_plugins() == 0

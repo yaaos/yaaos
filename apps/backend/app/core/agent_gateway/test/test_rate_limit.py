@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.core.agent_gateway.rate_limit import (
@@ -16,7 +18,7 @@ pytestmark = pytest.mark.usefixtures("redis_or_skip")
 async def test_per_ip_limit_kicks_in() -> None:
     # Unique key per run so the counter never collides with another test's
     # (the autouse fixture also flushes the window before each test).
-    ip = f"test-{__import__('uuid').uuid4().hex}"
+    ip = f"test-{uuid.uuid4().hex}"
     for _ in range(PER_IP_LIMIT):
         await check_identity_exchange(source_ip=ip)
     with pytest.raises(RateLimitedError) as exc_info:

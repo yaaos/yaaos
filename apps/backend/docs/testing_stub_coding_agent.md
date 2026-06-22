@@ -26,7 +26,7 @@ Wraps the real plugin. Implements the full `CodingAgentPlugin` Protocol surface:
 
 ### `wrap_all_registered_plugins()`
 
-Reads the current `CodingAgentRegistry` via `current_coding_agent_registry()`, builds a fresh `CodingAgentRegistry` with each entry wrapped, and binds it via `bind_coding_agent_registry()`. Idempotent — already-wrapped entries are kept as-is. Future coding-agent plugins require zero changes here.
+Reads all registered coding-agent plugins via `list_plugins()` from `core/coding_agent`, wraps each with `StubCodingAgentPlugin`, and re-registers via `replace_plugin`. Idempotent — already-wrapped entries are kept as-is. Future coding-agent plugins require zero changes here.
 
 ### Companion: stub_workspace
 

@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -23,10 +22,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role, register_handler
-from app.core.identity import repository as identity_repo
+from app.core.identity import create_user, mint_session
 from app.core.sse import publish_workspace_activity
 from app.core.sse.web import _workspace_activity_stream
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _make_app() -> FastAPI:
@@ -48,28 +47,18 @@ def _client() -> httpx.AsyncClient:
 @pytest_asyncio.fixture
 async def cross_org_seed(db_session) -> AsyncIterator[dict[str, object]]:
     """Caller in org A; the requested wfx id belongs to a different org."""
-    user = await identity_repo.insert_user(db_session, display_name="OrgAOwner")
+    user = await create_user(db_session, display_name="OrgAOwner")
 
-    org_a = await orgs_repo.insert_org(db_session, slug=f"wfa-a-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
+    org_a = await insert_org(db_session, slug=f"wfa-a-{uuid.uuid4().hex[:8]}")
+    await insert_membership(
         db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="owner-a"
     )
 
-    raw_token = f"wfa-{uuid.uuid4().hex[:8]}"
-    await identity_repo.insert_session(
-        db_session,
-        token_hash=identity_repo.hash_token(raw_token),
-        user_id=user.id,
-        workspace_id=None,
-        csrf_token="csrf-wfa",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    created = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     # `wfx_id` deliberately points at no row; the route never reads it, only
     # the (caller_org, wfx_id) channel key does.
-    yield {"org_a": org_a, "foreign_wfx_id": uuid.uuid4(), "token": raw_token}
+    yield {"org_a": org_a, "foreign_wfx_id": uuid.uuid4(), "token": created.raw_token}
 
 
 @pytest.mark.service

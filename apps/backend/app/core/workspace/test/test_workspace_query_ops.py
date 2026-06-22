@@ -23,9 +23,9 @@ from app.core.workspace.models import WorkspaceRow
 
 
 async def _seed_workspace(db_session, *, status: str = "active", **kwargs) -> WorkspaceRow:
-    from app.testing.seed import seed_agent  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_agent  # noqa: PLC0415
 
-    agent = await seed_agent(org_id=uuid4(), session=db_session)
+    agent = await seed_agent(org_id=uuid4())
     row = WorkspaceRow(
         id=uuid7(),
         org_id=uuid4(),

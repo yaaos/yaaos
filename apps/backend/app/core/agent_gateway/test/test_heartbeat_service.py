@@ -12,9 +12,9 @@ from uuid import uuid4, uuid7
 
 import pytest
 
-from app.core.agent_gateway import SubscriberRegistry
 from app.core.agent_gateway.subscribers import (
     _SUBSCRIBER_STALE_THRESHOLD_SECONDS,
+    SubscriberRegistry,
     _agent_routes_key,
     _wfx_subscribers_key,
 )

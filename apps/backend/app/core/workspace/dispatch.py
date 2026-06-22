@@ -27,7 +27,7 @@ from app.core.workspace.types import WorkspaceClaimFailed, WorkspaceNotFoundErro
 
 if TYPE_CHECKING:
     from app.core.agent_gateway import AgentCommand
-    from app.core.workflow.types import CommandContext
+    from app.core.workflow import CommandContext
 
 log = structlog.get_logger("core.workspace.dispatch")
 

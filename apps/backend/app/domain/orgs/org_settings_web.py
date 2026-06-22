@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from app.core.agent_gateway import revoke_all_for_arn
 from app.core.auth import Action, Role, org_id_var, public_route
 from app.core.database import session as db_session
-from app.core.identity import repository as identity_repo
+from app.core.identity import find_session_by_hash, get_user, hash_token, list_emails_for_user
 from app.core.sessions import require
 from app.core.tenancy import (
     get_org_full as _get_org_full,
@@ -56,7 +56,7 @@ from app.core.tenancy import (
     update_org_fields as _update_org_fields,
 )
 from app.core.webserver import RouteSpec, register_routes
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import get_org_full_by_slug, insert_membership, insert_org
 from app.domain.orgs.onboarding import get_onboarding_status
 
 log = structlog.get_logger("orgs.settings.web")
@@ -120,26 +120,22 @@ async def create_org(
     """
     if not yaaos_session:
         return JSONResponse(status_code=401, content={"error": "unauthenticated"})
-    token_hash = identity_repo.hash_token(yaaos_session)
+    token_hash = hash_token(yaaos_session)
     async with db_session() as s:
-        sess_row = await identity_repo.get_session_by_hash(s, token_hash)
+        sess_row = await find_session_by_hash(s, token_hash)
         if sess_row is None or sess_row.user_id is None:
-            return JSONResponse(status_code=401, content={"error": "unauthenticated"})
-        from datetime import UTC, datetime  # noqa: PLC0415
-
-        if sess_row.expires_at < datetime.now(UTC):
             return JSONResponse(status_code=401, content={"error": "unauthenticated"})
 
         slug = body.slug.strip().lower()
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}[a-z0-9]|[a-z0-9]", slug):
             return JSONResponse(status_code=422, content={"error": "invalid_slug"})
 
-        existing = await orgs_repo.get_org_by_slug(s, slug)
+        existing = await get_org_full_by_slug(s, slug)
         if existing is not None:
             return JSONResponse(status_code=409, content={"error": "slug_taken"})
 
-        org = await orgs_repo.insert_org(s, slug=slug, display_name=body.name.strip())
-        await orgs_repo.insert_membership(
+        org = await insert_org(s, slug=slug, display_name=body.name.strip())
+        await insert_membership(
             s,
             user_id=sess_row.user_id,
             org_id=org.org_id,
@@ -286,14 +282,10 @@ async def list_mine(
     """Cross-org list of the user's memberships. Powers the org switcher and `/orgs` picker."""
     if not yaaos_session:
         return JSONResponse(status_code=401, content={"error": "unauthenticated"})
-    token_hash = identity_repo.hash_token(yaaos_session)
+    token_hash = hash_token(yaaos_session)
     async with db_session() as s:
-        row = await identity_repo.get_session_by_hash(s, token_hash)
+        row = await find_session_by_hash(s, token_hash)
         if row is None or row.user_id is None:
-            return JSONResponse(status_code=401, content={"error": "unauthenticated"})
-        from datetime import UTC, datetime  # noqa: PLC0415
-
-        if row.expires_at < datetime.now(UTC):
             return JSONResponse(status_code=401, content={"error": "unauthenticated"})
         memberships = await _list_memberships_for_user(s, row.user_id)
         out: list[MineOrgView] = []
@@ -342,10 +334,10 @@ async def config_status() -> ConfigStatusResponse:
         for m in admin_memberships:
             if m.role.value not in ("owner", "admin"):
                 continue
-            user = await identity_repo.get_user(s, m.user_id)
+            user = await get_user(s, m.user_id)
             if user is None:
                 continue
-            emails = await identity_repo.list_emails_for_user(s, m.user_id)
+            emails = await list_emails_for_user(s, m.user_id)
             primary = next(
                 (e.email for e in emails if e.is_primary),
                 emails[0].email if emails else None,

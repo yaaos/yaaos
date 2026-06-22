@@ -1,0 +1,25 @@
+rules:
+  - id: no-dynamic-attr-access
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Dynamic attribute access via getattr/setattr with a non-literal name
+      bypasses type checking and module-boundary rules. Use explicit typed
+      keyword arguments or a typed model so a wrong name fails loudly at the
+      call site. See apps/backend/docs/patterns.md § Implementation discipline.
+    patterns:
+      - pattern-either:
+          - pattern: getattr($OBJ, $NAME, ...)
+          - pattern: setattr($OBJ, $NAME, $VAL)
+      # Exclude calls where $NAME is a string literal — those are static
+      # lookups equivalent to obj.attr and are not a bypass.
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: "^[^\"']"
+    paths:
+      # observability/service.py uses setattr to attach structured-log fields
+      # to stdlib logging.LogRecord objects (a framework-required pattern) and
+      # getattr to resolve a log-level by string name from the logging module.
+      # Both are legitimate, narrow, and isolated to that file.
+      exclude:
+        - "**/observability/service.py"

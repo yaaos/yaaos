@@ -46,7 +46,7 @@ from app.core.workflow import (
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.core.workflow.service import request_cancel
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -224,7 +224,7 @@ async def test_cancel_running_workflow_routes_through_finalizer_service(
 
     ticket_id = str(uuid4())
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="cancel-through-finalizer-test",
@@ -351,7 +351,7 @@ async def test_cancel_awaiting_agent_waits_for_event_service(
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="cancel-awaiting-agent-test",
@@ -460,7 +460,7 @@ async def test_cancel_after_finalizer_discriminator_service(
         },
     )
 
-    with scoped_engine() as eng_a:
+    with set_engine_for_tests() as eng_a:
         eng_a.register_workflow(wf_a)
         wfx_id_a = await eng_a.start(
             workflow_name="cancel-discriminator-a",
@@ -533,7 +533,7 @@ async def test_cancel_after_finalizer_discriminator_service(
         },
     )
 
-    with scoped_engine() as eng_b:
+    with set_engine_for_tests() as eng_b:
         eng_b.register_workflow(wf_b)
         wfx_id_b = await eng_b.start(
             workflow_name="cancel-discriminator-b",

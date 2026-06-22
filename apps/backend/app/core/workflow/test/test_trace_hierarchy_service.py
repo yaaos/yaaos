@@ -53,7 +53,7 @@ from app.core.workflow import (
 from app.core.workflow.models import WorkflowExecutionRow
 from app.core.workflow.service import HANDLE_AGENT_EVENT
 from app.testing.observability import span_capture
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -152,7 +152,7 @@ async def test_workflow_trace_hierarchy_after_workspace_command(db_session) -> N
             upstream_trace_id = upstream_span.get_span_context().trace_id
             upstream_tp = current_traceparent()
 
-            with scoped_engine() as eng:
+            with set_engine_for_tests() as eng:
                 eng.register_workflow(wf)
 
                 wfx_id = await eng.start(
@@ -251,7 +251,7 @@ async def test_workflow_trace_hierarchy_pure_local(db_session) -> None:  # type:
             upstream_trace_id = upstream_span.get_span_context().trace_id
             upstream_tp = current_traceparent()
 
-            with scoped_engine() as eng:
+            with set_engine_for_tests() as eng:
                 eng.register_workflow(wf)
 
                 wfx_id = await eng.start(
@@ -316,7 +316,7 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
             run_span_id = None  # populated below from the captured spans
             upstream_tp = current_traceparent()
 
-            with scoped_engine() as eng:
+            with set_engine_for_tests() as eng:
                 eng.register_workflow(wf_local)
 
                 await eng.start(
@@ -369,7 +369,7 @@ async def test_workflow_command_parents_to_workflow_run(db_session) -> None:  # 
             upstream_ws_trace_id = upstream_ws_span.get_span_context().trace_id
             upstream_ws_tp = current_traceparent()
 
-            with scoped_engine() as eng2:
+            with set_engine_for_tests() as eng2:
                 eng2.register_workflow(wf_ws)
 
                 wfx_id = await eng2.start(
@@ -457,7 +457,7 @@ async def test_workflow_task_spans_in_workflow_trace(db_session) -> None:  # typ
             upstream_trace_id = upstream_span.get_span_context().trace_id
             upstream_tp = current_traceparent()
 
-            with scoped_engine() as eng:
+            with set_engine_for_tests() as eng:
                 eng.register_workflow(wf)
 
                 await eng.start(

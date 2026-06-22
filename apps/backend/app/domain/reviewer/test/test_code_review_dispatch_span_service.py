@@ -38,42 +38,35 @@ async def test_code_review_dispatch_compile_invocation_failure_sets_span_error(
     db_session,
 ) -> None:
     """compile_invocation failure records exception event + ERROR on active span."""
-    from app.core import byok  # noqa: PLC0415
+    import app.core.byok as byok  # noqa: PLC0415
     from app.core.audit_log import Actor  # noqa: PLC0415
-    from app.core.coding_agent import (  # noqa: PLC0415
-        bind_coding_agent_registry,
-        current_coding_agent_registry,
-    )
+    from app.core.coding_agent import set_coding_agents_for_tests  # noqa: PLC0415
     from app.core.workflow import CommandContext  # noqa: PLC0415
     from app.domain.orgs import create_org  # noqa: PLC0415
     from app.domain.reviewer.commands import CodeReview, CodeReviewInputs  # noqa: PLC0415
-    from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
-    from app.testing.seed import seed_workspace as _seed_workspace  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_agent as _seed_agent  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_workspace as _seed_workspace  # noqa: PLC0415
 
     # Seed a real org so the byok key insert FK passes.
     org = await create_org(db_session, slug=f"t-{uuid4().hex[:8]}", display_name="t")
     org_id = org.id
 
     # Seed the DB rows dispatch needs to pass its workspace-owner guard.
-    agent_row = await _seed_agent(org_id=org_id, session=db_session)
+    agent_row = await _seed_agent(org_id=org_id)
     ws_id = await _seed_workspace(
         org_id=org_id,
         provider_id="in_process",
         sha="deadbeef",
         agent_id=agent_row["id"],
-        caller_session=db_session,
     )
     # CodeReview.dispatch loads the Anthropic key before calling build_invocation.
     await byok.set(org_id, "anthropic", "sk-test-key", actor=Actor.system(), session=db_session)
     await db_session.commit()
 
     # Swap the coding-agent registry so the raising stub is under "claude_code".
-    prior_registry = current_coding_agent_registry()
-    fresh_registry = prior_registry.copy()
-    fresh_registry.replace(_RaisingPlugin())  # type: ignore[arg-type]
-    bind_coding_agent_registry(fresh_registry)
+    with set_coding_agents_for_tests() as fresh_registry:
+        fresh_registry.replace(_RaisingPlugin())  # type: ignore[arg-type]
 
-    try:
         cmd = CodeReview()
         ctx = CommandContext(
             ticket_id=str(uuid4()),
@@ -95,8 +88,6 @@ async def test_code_review_dispatch_compile_invocation_failure_sets_span_error(
             with tracer.start_as_current_span("workflow.start_step.CodeReview"):
                 with pytest.raises(RuntimeError, match="simulated"):
                     await cmd.dispatch(inputs, ctx, session=db_session)
-    finally:
-        bind_coding_agent_registry(prior_registry)
 
     spans = exporter.get_finished_spans()
     target = next(

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -673,6 +675,25 @@ def bootstrap() -> None:
 
 def get_plugin() -> GitHubPlugin:
     return _plugin
+
+
+@contextmanager
+def set_github_plugin_for_tests(plugin: GitHubPlugin | None = None) -> Iterator[GitHubPlugin]:
+    """Context manager: swap the singleton plugin for the duration of the block.
+
+    Pass an explicit ``plugin`` instance to test plugin-dependent paths, or
+    omit the argument to receive a fresh default ``GitHubPlugin`` instance.
+    Restores the prior singleton on exit — even on exception.
+
+    Production never calls this.
+    """
+    global _plugin
+    prior = _plugin
+    _plugin = plugin if plugin is not None else GitHubPlugin()
+    try:
+        yield _plugin
+    finally:
+        _plugin = prior
 
 
 async def record_webhook_event(

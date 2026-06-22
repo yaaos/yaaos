@@ -12,10 +12,16 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware
-from app.core.identity import ProviderProfile, totp
-from app.core.identity import repository as identity_repo
-from app.core.sessions import web as _auth_web  # noqa: F401
+from app.core.identity import (
+    ProviderProfile,
+    add_email,
+    create_user,
+    enroll_totp,
+    link_oauth_identity,
+    verify_totp,
+)
 from app.plugins.oauth_test import set_next_profile
 
 
@@ -40,15 +46,13 @@ async def _state() -> str:
 
 @pytest_asyncio.fixture
 async def user_with_totp(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="MFA")
-    await identity_repo.add_email(db_session, user_id=user.id, email="mfa@example.com", verified=True)
-    await identity_repo.add_oauth_identity(
-        db_session, user_id=user.id, provider="test", external_subject="mfa-1"
-    )
-    seed, _ = await totp.enroll(db_session, user_id=user.id)
+    user = await create_user(db_session, display_name="MFA")
+    await add_email(db_session, user_id=user.id, email="mfa@example.com", verified=True)
+    await link_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="mfa-1")
+    seed, _ = await enroll_totp(db_session, user_id=user.id)
     # Promote to verified.
     code = pyotp.TOTP(seed).now()
-    await totp.verify(db_session, user_id=user.id, code=code)
+    await verify_totp(db_session, user_id=user.id, code=code)
     await db_session.commit()
     yield {"user": user, "seed": seed}
 

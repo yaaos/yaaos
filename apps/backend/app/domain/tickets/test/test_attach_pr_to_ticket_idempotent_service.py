@@ -18,13 +18,15 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import delete
 
 from app.core.audit_log import list_for_entity
 from app.core.database import get_sessionmaker
 from app.core.vcs import VCSPullRequest
 from app.domain.tickets import attach_pr_to_ticket, create_from_pr
 from app.domain.tickets import upsert as upsert_pr
-from app.testing.seed import delete_pull_request, delete_ticket
+from app.domain.tickets.models import TicketRow
+from app.domain.tickets.pull_request import PullRequestRow
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
@@ -34,11 +36,11 @@ async def _clean(ticket_id: UUID | None, pr_id: UUID | None) -> None:
     # pull_requests.ticket_id → tickets.id (NOT NULL); delete PR first.
     async with sessionmaker() as s:
         if pr_id is not None:
-            await delete_pull_request(pr_id, session=s)
+            await s.execute(delete(PullRequestRow).where(PullRequestRow.id == pr_id))
         await s.commit()
     async with sessionmaker() as s:
         if ticket_id is not None:
-            await delete_ticket(ticket_id, session=s)
+            await s.execute(delete(TicketRow).where(TicketRow.id == ticket_id))
         await s.commit()
 
 

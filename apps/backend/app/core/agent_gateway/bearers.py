@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -139,15 +140,23 @@ _verify_override: ContextVar[_VerifyCallback | None] = ContextVar(
 )
 
 
-def set_verify_override(callback: _VerifyCallback | None) -> None:
-    """Test hook: swap `bearers.verify` for a stub. Pass `None` to restore.
+@contextmanager
+def set_bearer_verify_for_tests(
+    *,
+    verify: _VerifyCallback | None = None,
+) -> Iterator[None]:
+    """Context manager: swap `bearers.verify` for a stub for the duration.
 
-    Held in a ContextVar so the override is bounded by the calling test's
-    context. The autouse `_bearer_verify_isolation` fixture in
-    `app/testing/isolation.py` rebinds it to `None` before each test, so
-    individual tests never need to reset it themselves.
+    With `verify=None` (the default) the override is cleared — the real DB
+    lookup runs. With `verify=<callable>` the callable is installed as the
+    active override, useful for service tests that need to inject a known
+    `BearerContext` without a real DB row. Restores the prior value on exit.
     """
-    _verify_override.set(callback)
+    token = _verify_override.set(verify)
+    try:
+        yield
+    finally:
+        _verify_override.reset(token)
 
 
 async def verify(token: str) -> BearerContext | None:
@@ -291,6 +300,6 @@ __all__ = [
     "revoke_all_for_agent",
     "revoke_all_for_arn",
     "revoke_all_for_org",
-    "set_verify_override",
+    "set_bearer_verify_for_tests",
     "verify",
 ]

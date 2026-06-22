@@ -1652,62 +1652,6 @@
         "title": "_AssertionBody",
         "type": "object"
       },
-      "_BootstrapOwnerRequest": {
-        "properties": {
-          "display_name": {
-            "default": "Owner",
-            "title": "Display Name",
-            "type": "string"
-          },
-          "email": {
-            "minLength": 3,
-            "title": "Email",
-            "type": "string"
-          },
-          "github_id": {
-            "minLength": 1,
-            "title": "Github Id",
-            "type": "string"
-          },
-          "org_slug": {
-            "minLength": 1,
-            "title": "Org Slug",
-            "type": "string"
-          },
-          "provider": {
-            "default": "github",
-            "title": "Provider",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email",
-          "github_id",
-          "org_slug"
-        ],
-        "title": "_BootstrapOwnerRequest",
-        "type": "object"
-      },
-      "_BrokenIntegrationRequest": {
-        "properties": {
-          "org_slug": {
-            "minLength": 1,
-            "title": "Org Slug",
-            "type": "string"
-          },
-          "provider": {
-            "default": "linear",
-            "minLength": 1,
-            "title": "Provider",
-            "type": "string"
-          }
-        },
-        "required": [
-          "org_slug"
-        ],
-        "title": "_BrokenIntegrationRequest",
-        "type": "object"
-      },
       "_CreateOrgRequest": {
         "properties": {
           "name": {
@@ -1728,70 +1672,6 @@
           "slug"
         ],
         "title": "_CreateOrgRequest",
-        "type": "object"
-      },
-      "_DeregisterWorkspaceAgentRequest": {
-        "properties": {
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "title": "_DeregisterWorkspaceAgentRequest",
-        "type": "object"
-      },
-      "_GithubInstallRequest": {
-        "properties": {
-          "org_login": {
-            "default": "acme",
-            "minLength": 1,
-            "title": "Org Login",
-            "type": "string"
-          },
-          "target_org_slug": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Org Slug"
-          }
-        },
-        "title": "_GithubInstallRequest",
-        "type": "object"
-      },
-      "_LessonRequest": {
-        "properties": {
-          "body": {
-            "minLength": 1,
-            "title": "Body",
-            "type": "string"
-          },
-          "repo_external_id": {
-            "minLength": 1,
-            "title": "Repo External Id",
-            "type": "string"
-          },
-          "title": {
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "repo_external_id",
-          "title",
-          "body"
-        ],
-        "title": "_LessonRequest",
         "type": "object"
       },
       "_MarkReadFilter": {
@@ -1919,50 +1799,6 @@
         "title": "_PatchUserRequest",
         "type": "object"
       },
-      "_RepoSkillRequest": {
-        "properties": {
-          "org_slug": {
-            "minLength": 1,
-            "title": "Org Slug",
-            "type": "string"
-          },
-          "repo_external_id": {
-            "minLength": 1,
-            "title": "Repo External Id",
-            "type": "string"
-          },
-          "skill_name": {
-            "minLength": 1,
-            "title": "Skill Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "org_slug",
-          "repo_external_id",
-          "skill_name"
-        ],
-        "title": "_RepoSkillRequest",
-        "type": "object"
-      },
-      "_SamlSignRequest": {
-        "properties": {
-          "email": {
-            "title": "Email",
-            "type": "string"
-          },
-          "name_id": {
-            "default": "",
-            "title": "Name Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email"
-        ],
-        "title": "_SamlSignRequest",
-        "type": "object"
-      },
       "_SsoConfigBody": {
         "properties": {
           "email_domains": {
@@ -2004,34 +1840,6 @@
           "idp_metadata_xml"
         ],
         "title": "_SsoConfigBody",
-        "type": "object"
-      },
-      "_StageProfileRequest": {
-        "properties": {
-          "display_name": {
-            "default": "",
-            "title": "Display Name",
-            "type": "string"
-          },
-          "email_verified": {
-            "default": true,
-            "title": "Email Verified",
-            "type": "boolean"
-          },
-          "external_subject": {
-            "title": "External Subject",
-            "type": "string"
-          },
-          "primary_email": {
-            "title": "Primary Email",
-            "type": "string"
-          }
-        },
-        "required": [
-          "external_subject",
-          "primary_email"
-        ],
-        "title": "_StageProfileRequest",
         "type": "object"
       },
       "_TotpVerifyRequest": {
@@ -2093,40 +1901,6 @@
           "memberships"
         ],
         "title": "_UserMeResponse",
-        "type": "object"
-      },
-      "_UserWithSessionRequest": {
-        "properties": {
-          "email": {
-            "minLength": 3,
-            "title": "Email",
-            "type": "string"
-          },
-          "session_cookie": {
-            "minLength": 1,
-            "title": "Session Cookie",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email",
-          "session_cookie"
-        ],
-        "title": "_UserWithSessionRequest",
-        "type": "object"
-      },
-      "_WorkspaceAgentRequest": {
-        "properties": {
-          "org_slug": {
-            "minLength": 1,
-            "title": "Org Slug",
-            "type": "string"
-          }
-        },
-        "required": [
-          "org_slug"
-        ],
-        "title": "_WorkspaceAgentRequest",
         "type": "object"
       }
     }

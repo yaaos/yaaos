@@ -3,7 +3,7 @@ parks on the **returned** command_id (no synthesized stub id), and resumes when
 a terminal AgentEvent arrives at `record_agent_event` — correlated via
 `agent_commands.workflow_execution_id` with no workspace-row dependency.
 
-Drives a two-step workflow (Workspace → Local terminal) via `scoped_workflow`:
+Drives a two-step workflow (Workspace → Local terminal) via `set_engine_for_tests`:
 
 1. Register a test `_DispatchingWs` Workspace command whose `dispatch` enqueues
    a real `agent_commands` row via `enqueue_command` with the correct
@@ -43,7 +43,7 @@ from app.core.workflow import (
     step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -146,7 +146,7 @@ async def test_workspace_dispatch_parks_on_returned_command_id_and_resumes(
         },
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(workflow)
         wfx_id = await eng.start(
             workflow_name="workspace-dispatch-service-test",

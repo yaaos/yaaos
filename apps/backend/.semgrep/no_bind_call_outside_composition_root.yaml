@@ -1,0 +1,32 @@
+rules:
+  - id: no-bind-call-outside-composition-root
+    languages: [python]
+    severity: ERROR
+    message: >-
+      bind_*(<instance>) calls may only appear in the composition roots
+      app/web.py and app/worker.py. Use set_X_for_tests() context managers
+      for test isolation instead — calling a registry binder outside the
+      composition roots re-binds a singleton in a non-startup context, a
+      Cardinal-rule violation that defeats per-test isolation and
+      process-lifetime guarantees.
+      See apps/backend/docs/patterns.md § Cardinal rule.
+    # Match any call whose function-name part contains `.bind_` (qualified, e.g.
+    # redis.bind_pubsub) or starts with `bind_` (bare, e.g. bind_email_inbox).
+    # Exactly-one-positional-arg constraint (`$FUNC($INSTANCE)` without `...`)
+    # excludes third-party functions like structlog's bind_contextvars that take
+    # only keyword arguments.
+    patterns:
+      - pattern: $FUNC($INSTANCE)
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: "(^|\\.)bind_"
+    paths:
+      # Semgrep is invoked from apps/backend/ with target `app` (see bin/ci), so
+      # paths here are relative to apps/backend/. Use full anchored paths —
+      # bare basenames like "web.py" match every web.py in the tree (~17 files),
+      # silently exempting non-root route files from this rule.
+      # Only the two composition roots are allowed to call bind_*().
+      # app/testing/ is excluded by the --exclude app/testing flag in bin/ci.
+      exclude:
+        - "/app/web.py"
+        - "/app/worker.py"

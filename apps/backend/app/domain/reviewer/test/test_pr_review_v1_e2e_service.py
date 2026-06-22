@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core import byok
+import app.core.byok as byok
 from app.core.audit_log import Actor
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import WorkflowState, get_execution_summary
@@ -30,9 +30,9 @@ from app.domain.orgs import create_org
 from app.domain.reviewer.types import TicketSnapshot
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create_from_pr as create_ticket
-from app.testing.seed import seed_agent as _seed_agent_for_tests
-from app.testing.seed import seed_workspace as _seed_workspace_for_tests
-from app.testing.workflow_harness import scoped_engine
+from app.testing.e2e_setup import seed_agent as _seed_agent_for_tests
+from app.testing.e2e_setup import seed_workspace as _seed_workspace_for_tests
+from app.testing.workflow_harness import set_engine_for_tests
 
 
 async def _seed_org_with_anthropic_key(db_session) -> UUID:  # type: ignore[no-untyped-def]
@@ -69,7 +69,7 @@ class _StubWorkspaceProvider:
 @pytest.fixture
 def _registered_engine(workspace_providers_isolation):  # type: ignore[no-untyped-def]
     register_workspace_provider(_StubWorkspaceProvider())
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(pr_review_v1)
         yield eng
 
@@ -226,13 +226,12 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_p
     pr_id = pr.id
 
     # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
-    agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
+    agent_row = await _seed_agent_for_tests(org_id=org_id)
     seeded_ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
         provider_id="in_process",
         sha="deadbeef",
         agent_id=agent_row["id"],
-        caller_session=db_session,
     )
     await db_session.commit()
 
@@ -273,7 +272,7 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_p
         is_fork=False,
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(pr_review_v1)
 
         with register_stub_vcs(plugin_id="github"):
@@ -382,14 +381,13 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
         await _drain_workflow_outbox(db_session)
 
         # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
-        agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
+        agent_row = await _seed_agent_for_tests(org_id=org_id)
         sim_workspace_id = str(
             await _seed_workspace_for_tests(
                 org_id=org_id,
                 provider_id="in_process",
                 sha="deadbeefcafef00d",
                 agent_id=agent_row["id"],
-                caller_session=db_session,
             )
         )
         await db_session.commit()

@@ -15,14 +15,6 @@ coding-agent plugin; concrete impls live in `domain/<consumer>/commands/`.
 
 from __future__ import annotations
 
-from uuid import UUID
-
-from pydantic import SecretStr
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.agent_gateway import (
-    enqueue_config_update_for_all_org_agents as _enqueue_config_update_for_all_org_agents,
-)
 from app.core.agent_gateway import (
     register_byok_secrets_provider as _register_byok_secrets_provider,
 )
@@ -34,6 +26,10 @@ from app.core.agent_gateway import (
 # registers the daily `coding_agent_activity_partition_maintenance` task with
 # the broker + scheduler registry at import time.
 from app.core.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
+from app.core.coding_agent.byok import (
+    _register_byok_on_change,
+    build_byok_secrets_for_org,
+)
 from app.core.coding_agent.commands_base import CodingAgentCommand
 from app.core.coding_agent.run_service import (
     create_run,
@@ -41,12 +37,12 @@ from app.core.coding_agent.run_service import (
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.core.coding_agent.service import (
-    CodingAgentRegistry,
-    bind_coding_agent_registry,
-    current_coding_agent_registry,
     dispatch_invocation,
     get_plugin,
+    list_plugins,
     register_plugin,
+    replace_plugin,
+    set_coding_agents_for_tests,
 )
 from app.core.coding_agent.types import (
     ACTIVITY_EVENT_KINDS,
@@ -64,50 +60,7 @@ from app.core.coding_agent.types import (
 )
 
 _register_run_sink(CodingAgentRunSinkImpl())
-
-
-async def build_byok_secrets_for_org(
-    org_id: UUID,
-    *,
-    session: AsyncSession,
-) -> dict[str, SecretStr]:
-    """Return a dict of provider_id → SecretStr for every registered plugin
-    that has a byok_requirement and a stored key for the org.
-
-    Called by `core/agent_gateway._build_config_update_dto` via the registered
-    byok-secrets-provider IoC seam. Reads BYOK keys for all plugins that declare
-    a `byok_requirement()`. Wraps each plaintext in SecretStr immediately so it
-    never crosses module boundaries as a bare string.
-    """
-    import app.core.byok as _byok  # noqa: PLC0415
-
-    registry = current_coding_agent_registry()
-    result: dict[str, SecretStr] = {}
-    for plugin in registry.list():
-        req = plugin.byok_requirement()
-        if req is None:
-            continue
-        plaintext = await _byok.get(org_id, req, session=session)
-        if plaintext is not None:
-            result[req] = SecretStr(plaintext)
-    return result
-
-
 _register_byok_secrets_provider(build_byok_secrets_for_org)
-
-
-def _register_byok_on_change() -> None:
-    """Register the ConfigUpdate fan-out callback with byok at import time.
-
-    In-function import keeps the `core/byok` edge out of the top-level namespace
-    (tach `depends_on` lists top-level imports). The import is a module-level
-    side-effect, executed once at first import of `core/coding_agent`.
-    """
-    import app.core.byok as _byok  # noqa: PLC0415
-
-    _byok.register_on_change(_enqueue_config_update_for_all_org_agents)
-
-
 _register_byok_on_change()
 
 __all__ = [
@@ -117,7 +70,6 @@ __all__ = [
     "CodingAgentCommand",
     "CodingAgentError",
     "CodingAgentPlugin",
-    "CodingAgentRegistry",
     "Effort",
     "Invocation",
     "InvokeCodingAgent",
@@ -125,12 +77,13 @@ __all__ = [
     "RunResult",
     "RunStatus",
     "Usage",
-    "bind_coding_agent_registry",
     "build_byok_secrets_for_org",
     "create_run",
-    "current_coding_agent_registry",
     "dispatch_invocation",
     "get_plugin",
     "get_step_activity",
+    "list_plugins",
     "register_plugin",
+    "replace_plugin",
+    "set_coding_agents_for_tests",
 ]

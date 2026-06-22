@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
-import app.web  # noqa: F401 — registers all models so FK metadata resolves correctly
 from app.core.coding_agent.models import CodingAgentActivityRow, CodingAgentRunRow
 from app.core.coding_agent.run_service import (
     create_run,
@@ -29,6 +28,7 @@ from app.core.coding_agent.run_service import (
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.core.coding_agent.types import ActivityLog, Usage
+from app.web import app as _web_app  # noqa: F401 — registers all models so FK metadata resolves correctly
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

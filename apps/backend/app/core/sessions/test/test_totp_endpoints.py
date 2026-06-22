@@ -7,10 +7,9 @@ import pyotp
 import pytest
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.core.sessions import web as _auth_web  # noqa: F401
+from app.core.identity import create_user, mint_session
 
 
 def _app() -> FastAPI:
@@ -35,8 +34,8 @@ async def test_enroll_without_session_returns_401() -> None:
 
 @pytest.mark.asyncio
 async def test_enroll_then_verify_happy_path(db_session) -> None:
-    user = await identity_repo.insert_user(db_session, display_name="T")
-    s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session, display_name="T")
+    s = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
@@ -56,8 +55,8 @@ async def test_enroll_then_verify_happy_path(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_verify_wrong_code_returns_400(db_session) -> None:
-    user = await identity_repo.insert_user(db_session)
-    s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session)
+    s = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:

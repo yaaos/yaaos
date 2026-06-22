@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -24,11 +23,11 @@ import pytest_asyncio
 from fastapi import APIRouter, Depends, FastAPI
 
 from app.core.auth import Action, AuthMiddleware, Role, register_handler
-from app.core.identity import repository as identity_repo
+from app.core.identity import create_user, mint_session
 from app.core.sessions import require
 from app.core.sse import GeneralEventKind, publish_general
 from app.core.sse.web import _general_stream
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _make_app() -> FastAPI:
@@ -51,29 +50,19 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     """One owner user with a valid session, belonging to two orgs.
     Used for the membership-gated + cross-org tests."""
-    user = await identity_repo.insert_user(db_session, display_name="TestOwner")
+    user = await create_user(db_session, display_name="TestOwner")
 
-    org_a = await orgs_repo.insert_org(db_session, slug=f"org-a-{uuid.uuid4().hex[:8]}")
-    await orgs_repo.insert_membership(
+    org_a = await insert_org(db_session, slug=f"org-a-{uuid.uuid4().hex[:8]}")
+    await insert_membership(
         db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="owner-a"
     )
 
-    org_b = await orgs_repo.insert_org(db_session, slug=f"org-b-{uuid.uuid4().hex[:8]}")
+    org_b = await insert_org(db_session, slug=f"org-b-{uuid.uuid4().hex[:8]}")
     # User is NOT a member of org_b — used for the 403 test.
 
-    raw_token = f"sse-test-{uuid.uuid4().hex[:8]}"
-    await identity_repo.insert_session(
-        db_session,
-        token_hash=identity_repo.hash_token(raw_token),
-        user_id=user.id,
-        workspace_id=None,
-        csrf_token="csrf-sse",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    created = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
-    yield {"org_a": org_a, "org_b": org_b, "user": user, "token": raw_token}
+    yield {"org_a": org_a, "org_b": org_b, "user": user, "token": created.raw_token}
 
 
 @pytest.mark.service
@@ -92,24 +81,14 @@ async def test_general_endpoint_returns_401_without_session() -> None:
 @pytest.mark.asyncio
 async def test_general_endpoint_returns_400_without_org_slug(db_session) -> None:
     """`GET /api/sse/general` with session but no X-Yaaos-Org-Slug → 400."""
-    user = await identity_repo.insert_user(db_session, display_name="NoOrgUser")
-    raw_token = f"noorg-{uuid.uuid4().hex[:8]}"
-    await identity_repo.insert_session(
-        db_session,
-        token_hash=identity_repo.hash_token(raw_token),
-        user_id=user.id,
-        workspace_id=None,
-        csrf_token="csrf-noorg",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    user = await create_user(db_session, display_name="NoOrgUser")
+    created = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
     async with _client() as c:
         resp = await c.get(
             "/api/sse/general",
-            cookies={"yaaos_session": raw_token},
+            cookies={"yaaos_session": created.raw_token},
         )
     assert resp.status_code == 400
 

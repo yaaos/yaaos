@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextlib import contextmanager
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,23 +13,22 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.core.agent_gateway import (
-    bearers,
-    get_subscriber_registry,
-)
+from app.core.agent_gateway import bearers, set_bearer_verify_for_tests
+from app.core.agent_gateway.subscribers import _get as _get_subscriber_registry
 from app.core.sse import subscribe_workspace_activity
 
 pytestmark = pytest.mark.usefixtures("redis_or_skip")
 
 
-def _install_bearer_stub(agent_id: UUID) -> tuple[str, UUID]:
-    """Install a `bearers.verify` stub that accepts a fixed plaintext +
-    returns a context bound to `agent_id`. Direct DB-backed bearer
-    coverage lives in `test_bearers.py`; here we test the WS protocol
-    without crossing event-loop boundaries between the test session and
-    TestClient's portal.
+@contextmanager
+def _install_bearer_stub(agent_id: UUID):
+    """Context manager: install a `bearers.verify` stub that accepts a fixed
+    plaintext + returns a context bound to `agent_id`. Direct DB-backed bearer
+    coverage lives in `test_bearers.py`; here we test the WS protocol without
+    crossing event-loop boundaries between the test session and TestClient's
+    portal.
 
-    Returns `(token, org_id)` so callers can subscribe to the org-scoped
+    Yields `(token, org_id)` so callers can subscribe to the org-scoped
     workspace-activity channel.
     """
     expected = f"bearer-{uuid4().hex}"
@@ -39,8 +39,8 @@ def _install_bearer_stub(agent_id: UUID) -> tuple[str, UUID]:
             return None
         return bearers.BearerContext(bearer_id=uuid4(), agent_id=agent_id, org_id=org_id)
 
-    bearers.set_verify_override(_stub)
-    return expected, org_id
+    with set_bearer_verify_for_tests(verify=_stub):
+        yield expected, org_id
 
 
 def _app() -> FastAPI:
@@ -66,20 +66,22 @@ def test_ws_close_4401_when_missing_bearer() -> None:
 def test_ws_accepts_bearer_and_registers_sender() -> None:
     app = _app()
     agent_id = uuid4()
-    bearer, _ = _install_bearer_stub(agent_id)
-    sender_open = False
-    with TestClient(app) as client:
-        with client.websocket_connect(
-            "/api/v1/agent/activity",
-            headers={"Authorization": f"Bearer {bearer}"},
-        ):
-            # While the WS is open, the registry has a sender for this agent.
-            sender_open = get_subscriber_registry().has_sender(agent_id)
-    # TestClient.__exit__ shuts down the portal and waits for all in-flight
-    # handlers to complete — the server's finally block (unregister_sender)
-    # has run by this point.
-    assert sender_open, "sender should be registered while WS is open"
-    assert not get_subscriber_registry().has_sender(agent_id), "sender should be unregistered after WS closes"
+    with _install_bearer_stub(agent_id) as (bearer, _):
+        sender_open = False
+        with TestClient(app) as client:
+            with client.websocket_connect(
+                "/api/v1/agent/activity",
+                headers={"Authorization": f"Bearer {bearer}"},
+            ):
+                # While the WS is open, the registry has a sender for this agent.
+                sender_open = _get_subscriber_registry().has_sender(agent_id)
+        # TestClient.__exit__ shuts down the portal and waits for all in-flight
+        # handlers to complete — the server's finally block (unregister_sender)
+        # has run by this point.
+        assert sender_open, "sender should be registered while WS is open"
+        assert not _get_subscriber_registry().has_sender(agent_id), (
+            "sender should be unregistered after WS closes"
+        )
 
 
 @pytest.mark.asyncio
@@ -91,57 +93,56 @@ async def test_activity_batch_fans_out_to_sse() -> None:
     app = _app()
     agent_id = uuid4()
     workflow_id = uuid4()
-    bearer, org_id = _install_bearer_stub(agent_id)
+    with _install_bearer_stub(agent_id) as (bearer, org_id):
+        received: list[dict] = []
 
-    received: list[dict] = []
+        async def _consume() -> None:
+            async for evt in subscribe_workspace_activity(org_id, workflow_id):
+                received.append(evt)
+                if len(received) == 2:
+                    return
 
-    async def _consume() -> None:
-        async for evt in subscribe_workspace_activity(org_id, workflow_id):
-            received.append(evt)
-            if len(received) == 2:
-                return
+        consumer = asyncio.create_task(_consume())
+        # Wait long enough for the Redis SUBSCRIBE round-trip to complete
+        # before the publisher (in the thread below) starts sending. Local
+        # Redis is sub-millisecond but the consumer task also has to be
+        # scheduled.
+        await asyncio.sleep(0.5)
 
-    consumer = asyncio.create_task(_consume())
-    # Wait long enough for the Redis SUBSCRIBE round-trip to complete
-    # before the publisher (in the thread below) starts sending. Local
-    # Redis is sub-millisecond but the consumer task also has to be
-    # scheduled.
-    await asyncio.sleep(0.5)
+        # Run the WS client in a thread because TestClient.websocket_connect
+        # is synchronous and we need to keep the event loop running for the
+        # core/sse consumer. Without the small sleep before the with-exit,
+        # the close races the server's receive_text() and the activity_batch
+        # frame is dropped before the handler processes it (starlette's
+        # TestClient WS portal: send_json is fire-and-forget; closing the WS
+        # immediately afterwards can beat the server's frame consumption).
+        def _send_batch() -> None:
+            with TestClient(app) as client:
+                with client.websocket_connect(
+                    "/api/v1/agent/activity",
+                    headers={"Authorization": f"Bearer {bearer}"},
+                ) as ws:
+                    ws.send_json(
+                        {
+                            "type": "activity_batch",
+                            "workflow_execution_id": str(workflow_id),
+                            "events": [
+                                {"kind": "agent.thought", "text": "hello"},
+                                {"kind": "agent.tool_use", "tool": "Read"},
+                            ],
+                        }
+                    )
+                    # Give the server-side WS handler a chance to drain the
+                    # frame off the receive queue before we close.
+                    time.sleep(0.3)
 
-    # Run the WS client in a thread because TestClient.websocket_connect
-    # is synchronous and we need to keep the event loop running for the
-    # core/sse consumer. Without the small sleep before the with-exit,
-    # the close races the server's receive_text() and the activity_batch
-    # frame is dropped before the handler processes it (starlette's
-    # TestClient WS portal: send_json is fire-and-forget; closing the WS
-    # immediately afterwards can beat the server's frame consumption).
-    def _send_batch() -> None:
-        with TestClient(app) as client:
-            with client.websocket_connect(
-                "/api/v1/agent/activity",
-                headers={"Authorization": f"Bearer {bearer}"},
-            ) as ws:
-                ws.send_json(
-                    {
-                        "type": "activity_batch",
-                        "workflow_execution_id": str(workflow_id),
-                        "events": [
-                            {"kind": "agent.thought", "text": "hello"},
-                            {"kind": "agent.tool_use", "tool": "Read"},
-                        ],
-                    }
-                )
-                # Give the server-side WS handler a chance to drain the
-                # frame off the receive queue before we close.
-                time.sleep(0.3)
+        await asyncio.to_thread(_send_batch)
+        await asyncio.wait_for(consumer, timeout=2)
 
-    await asyncio.to_thread(_send_batch)
-    await asyncio.wait_for(consumer, timeout=2)
-
-    assert received == [
-        {"kind": "agent.thought", "text": "hello"},
-        {"kind": "agent.tool_use", "tool": "Read"},
-    ]
+        assert received == [
+            {"kind": "agent.thought", "text": "hello"},
+            {"kind": "agent.tool_use", "tool": "Read"},
+        ]
 
 
 @pytest.mark.asyncio
@@ -156,21 +157,21 @@ async def test_publish_with_no_subscriber_drops_nothing_breaks_nothing() -> None
     app = _app()
     agent_id = uuid4()
     workflow_id = uuid4()
-    bearer, _ = _install_bearer_stub(agent_id)
+    with _install_bearer_stub(agent_id) as (bearer, _):
 
-    def _send_batch() -> None:
-        with TestClient(app) as client:
-            with client.websocket_connect(
-                "/api/v1/agent/activity",
-                headers={"Authorization": f"Bearer {bearer}"},
-            ) as ws:
-                ws.send_json(
-                    {
-                        "type": "activity_batch",
-                        "workflow_execution_id": str(workflow_id),
-                        "events": [{"kind": "agent.thought"}],
-                    }
-                )
+        def _send_batch() -> None:
+            with TestClient(app) as client:
+                with client.websocket_connect(
+                    "/api/v1/agent/activity",
+                    headers={"Authorization": f"Bearer {bearer}"},
+                ) as ws:
+                    ws.send_json(
+                        {
+                            "type": "activity_batch",
+                            "workflow_execution_id": str(workflow_id),
+                            "events": [{"kind": "agent.thought"}],
+                        }
+                    )
 
-    await asyncio.to_thread(_send_batch)
-    # No assertion — the test asserts by not raising.
+        await asyncio.to_thread(_send_batch)
+        # No assertion — the test asserts by not raising.

@@ -28,7 +28,7 @@ from app.core.agent_gateway.types import (
     InvokeClaudeCodeCommand,
     InvokeClaudeCodeFields,
 )
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 pytestmark = pytest.mark.service
 
@@ -58,7 +58,7 @@ async def test_invoke_payload_fields_round_trip(db_session) -> None:
     """Enqueue via `InvokeClaudeCodeFields`, then fetch the row and deserialise
     via `_row_to_command`; confirm it produces an `InvokeClaudeCodeCommand`."""
     org_id = uuid4()
-    await seed_agent(org_id=org_id, session=db_session)
+    await seed_agent(org_id=org_id)
 
     command_id = uuid7()
     workspace_id = uuid4()
@@ -94,7 +94,7 @@ async def test_enqueue_command_payload_typed_fields_key_set(db_session) -> None:
     """The JSONB key set stored via `InvokeClaudeCodeFields` must equal the
     legacy flat-dict key set — no new or missing keys, preserving wire shape."""
     org_id = uuid4()
-    await seed_agent(org_id=org_id, session=db_session)
+    await seed_agent(org_id=org_id)
 
     workspace_id = uuid4()
     workflow_id = uuid4()
@@ -138,7 +138,7 @@ async def test_enqueue_command_payload_envelope_wins(db_session) -> None:
     """Envelope identity fields must be present in the persisted payload and
     must reflect the named parameters, not any value from payload_fields."""
     org_id = uuid4()
-    await seed_agent(org_id=org_id, session=db_session)
+    await seed_agent(org_id=org_id)
 
     command_id = uuid7()
     workspace_id = uuid4()

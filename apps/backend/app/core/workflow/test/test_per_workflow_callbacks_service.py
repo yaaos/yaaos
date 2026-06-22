@@ -37,7 +37,7 @@ from app.core.workflow import (
     step,
 )
 from app.testing.observability import span_capture
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -155,7 +155,7 @@ async def test_per_workflow_callback_fires_service(db_session: Any) -> None:
         on_start=_probe,
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(wf)
         async with org_context(org_id, ActorKind.SYSTEM):
             wfx_id = await eng.start(
@@ -204,7 +204,7 @@ async def test_per_workflow_recovery_resolution_service(db_session: Any) -> None
         recovery_commands=(_RecoveryCmd,),
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         eng.register_workflow(wf)
         async with org_context(org_id, ActorKind.SYSTEM):
             wfx_id = await eng.start(
@@ -239,7 +239,7 @@ async def test_register_workflow_rejects_duplicate_recovery_label_service(db_ses
         recovery_commands=(_RecoveryConflictA, _RecoveryConflictB),
     )
 
-    with scoped_engine() as eng:
+    with set_engine_for_tests() as eng:
         with pytest.raises(WorkflowError, match="duplicate recovery label"):
             eng.register_workflow(wf)
 
@@ -270,7 +270,7 @@ async def test_callback_exception_records_on_span_service(db_session: Any) -> No
     )
 
     with span_capture() as exporter:
-        with scoped_engine() as eng:
+        with set_engine_for_tests() as eng:
             eng.register_workflow(wf)
             async with org_context(org_id, ActorKind.SYSTEM):
                 await eng.start(

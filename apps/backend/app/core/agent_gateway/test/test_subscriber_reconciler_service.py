@@ -14,7 +14,7 @@ from uuid import uuid4, uuid7
 
 import pytest
 
-from app.core.agent_gateway import SubscriberRegistry, bind_subscriber_registry
+from app.core.agent_gateway import set_subscriber_registry_for_tests
 from app.core.agent_gateway.subscribers import SubscriberReconciler
 from app.core.redis import (
     hash_delete,
@@ -46,8 +46,6 @@ async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) 
     await hash_set(route_key, {"workspace_id": str(workspace_id), "agent_id": str(agent_id)})
     await zset_add_member(routes_key, str(wfx_id), time.time())
 
-    reg = SubscriberRegistry()
-    bind_subscriber_registry(reg)
     sent: list[dict] = []
     received = asyncio.Event()
 
@@ -55,16 +53,17 @@ async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) 
         sent.append(msg)
         received.set()
 
-    await reg.register_sender(agent_id, _sender)
+    with set_subscriber_registry_for_tests() as reg:
+        await reg.register_sender(agent_id, _sender)
 
-    # Reconciler reads from get_registry() — must be the same instance.
-    reconciler = SubscriberReconciler()
-    await reconciler._reconcile_once()
+        # Reconciler reads from _get() — must be the same instance as reg.
+        reconciler = SubscriberReconciler()
+        await reconciler._reconcile_once()
 
-    # The reconciler should have published subscribe; the pub/sub consumer
-    # on this registry instance should deliver it.
-    await asyncio.wait_for(received.wait(), timeout=2.0)
-    reg.unregister_sender(agent_id)
+        # The reconciler should have published subscribe; the pub/sub consumer
+        # on this registry instance should deliver it.
+        await asyncio.wait_for(received.wait(), timeout=2.0)
+        reg.unregister_sender(agent_id)
 
     assert any(m.get("type") == "subscribe" for m in sent), f"expected subscribe message; got {sent}"
     sub = next(m for m in sent if m.get("type") == "subscribe")
@@ -93,8 +92,6 @@ async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -
     # Route HASH must be present for reconciler to resolve workspace_id.
     await hash_set(route_key, {"workspace_id": str(workspace_id), "agent_id": str(agent_id)})
 
-    reg = SubscriberRegistry()
-    bind_subscriber_registry(reg)
     sent: list[dict] = []
     unsub_received = asyncio.Event()
 
@@ -103,20 +100,21 @@ async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -
         if msg.get("type") == "unsubscribe":
             unsub_received.set()
 
-    await reg.register_sender(agent_id, _sender)
+    with set_subscriber_registry_for_tests() as reg:
+        await reg.register_sender(agent_id, _sender)
 
-    # Manually inject streaming state so the reconciler believes the agent
-    # is streaming this wfx_id (simulates the case where the agent was told
-    # to subscribe but the last SSE consumer has since disconnected).
-    async with reg._lock:
-        reg._streaming.setdefault(agent_id, set()).add(wfx_id)
+        # Manually inject streaming state so the reconciler believes the agent
+        # is streaming this wfx_id (simulates the case where the agent was told
+        # to subscribe but the last SSE consumer has since disconnected).
+        async with reg._lock:
+            reg._streaming.setdefault(agent_id, set()).add(wfx_id)
 
-    # Reconciler reads from get_registry() — must be the same instance.
-    reconciler = SubscriberReconciler()
-    await reconciler._reconcile_once()
+        # Reconciler reads from _get() — must be the same instance as reg.
+        reconciler = SubscriberReconciler()
+        await reconciler._reconcile_once()
 
-    await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
-    reg.unregister_sender(agent_id)
+        await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
+        reg.unregister_sender(agent_id)
 
     unsubs = [m for m in sent if m.get("type") == "unsubscribe"]
     assert len(unsubs) >= 1

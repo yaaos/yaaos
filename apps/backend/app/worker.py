@@ -19,19 +19,6 @@ def main() -> int:
     # registries — those registries are empty until the modules below load.
     # Imported here (outside `core/tasks`) because `core` cannot depend on
     # `plugins` or `testing` under layering rules.
-    import app.core.redis as _redis  # noqa: PLC0415
-
-    _redis.bind_pubsub(_redis.RedisPubsub())
-
-    import app.core.agent_gateway as _gw  # noqa: PLC0415
-
-    _gw.bind_subscriber_registry(_gw.SubscriberRegistry())
-
-    from app.domain.orgs.email import _Inbox as _EmailInbox  # noqa: PLC0415
-    from app.domain.orgs.email import bind_email_inbox as _bind_inbox  # noqa: PLC0415
-
-    _bind_inbox(_EmailInbox())
-
     import app.core.coding_agent  # noqa: PLC0415
     import app.core.workflow  # noqa: PLC0415
     import app.domain.reviewer  # noqa: PLC0415

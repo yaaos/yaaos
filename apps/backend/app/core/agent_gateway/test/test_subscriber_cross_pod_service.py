@@ -14,7 +14,7 @@ from uuid import uuid4, uuid7
 
 import pytest
 
-from app.core.agent_gateway import SubscriberRegistry
+from app.core.agent_gateway.subscribers import SubscriberRegistry
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 

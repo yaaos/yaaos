@@ -14,11 +14,11 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.identity
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, register_handler
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.core.identity import user_web as _user_web  # noqa: F401  -- registers /api/user/*
-from app.core.sessions import web as _auth_web  # noqa: F401  -- registers /api/auth/*
+from app.core.identity.repository import add_email, hash_token, insert_session, insert_user
+from app.core.identity.sessions import create as _create_session
 
 
 def _make_app() -> FastAPI:
@@ -37,11 +37,9 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="Tester")
-    await identity_repo.add_email(
-        db_session, user_id=user.id, email="tester@x.test", is_primary=True, verified=True
-    )
-    s = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await insert_user(db_session, display_name="Tester")
+    await add_email(db_session, user_id=user.id, email="tester@x.test", is_primary=True, verified=True)
+    s = await _create_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "session": s}
 
@@ -69,11 +67,11 @@ async def test_require_session_no_cookie_is_401(seeded) -> None:
 @pytest.mark.asyncio
 async def test_require_session_expired_cookie_is_401(db_session) -> None:
     """Expired session → 401 unauthenticated; no user resolution."""
-    user = await identity_repo.insert_user(db_session, display_name="Exp")
+    user = await insert_user(db_session, display_name="Exp")
     raw_token = "expired-token-xyz"
-    await identity_repo.insert_session(
+    await insert_session(
         db_session,
-        token_hash=identity_repo.hash_token(raw_token),
+        token_hash=hash_token(raw_token),
         user_id=user.id,
         workspace_id=None,
         csrf_token="csrf-exp",

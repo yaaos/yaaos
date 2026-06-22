@@ -13,10 +13,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
+from app.core.identity import create_user, mint_session
+from app.domain.orgs import get_membership, insert_org
+
+# org_settings_web is loaded by domain.orgs.__init__ — no explicit import needed
 
 
 def _app() -> FastAPI:
@@ -34,8 +34,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="C")
-    sess = await session_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session, display_name="C")
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "sess": sess}
 
@@ -63,7 +63,7 @@ async def test_create_org_happy_path(seeded, db_session) -> None:
     assert body["name"] == "Brand New"
     assert body["role"] == "admin"
     # Membership row exists for the caller.
-    membership = await orgs_repo.get_membership(db_session, user_id=seeded["user"].id, org_id=body["id"])
+    membership = await get_membership(db_session, user_id=seeded["user"].id, org_id=body["id"])
     assert membership is not None
     assert membership.role == "admin"
 
@@ -83,7 +83,7 @@ async def test_create_org_invalid_slug_returns_422(seeded) -> None:
 
 @pytest.mark.asyncio
 async def test_create_org_duplicate_slug_returns_409(seeded, db_session) -> None:
-    await orgs_repo.insert_org(db_session, slug="taken", display_name="Taken")
+    await insert_org(db_session, slug="taken", display_name="Taken")
     await db_session.commit()
     sess = seeded["sess"]
     async with _client() as c:

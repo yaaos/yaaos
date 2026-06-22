@@ -7,19 +7,17 @@ straddle loops).
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 
-from app.core.auth import Action, AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
+from app.core.auth import Action, AuthMiddleware, Role, required_role_for
+from app.core.identity import create_user, mint_session
 from app.core.sessions import public_route, require
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _make_app() -> FastAPI:
@@ -65,45 +63,23 @@ def _make_app() -> FastAPI:
 
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
-    user = await identity_repo.insert_user(db_session, display_name="Owner")
-    member_user = await identity_repo.insert_user(db_session, display_name="Member")
-    org = await orgs_repo.insert_org(db_session, slug="acme")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
-    await orgs_repo.insert_membership(
+    user = await create_user(db_session, display_name="Owner")
+    member_user = await create_user(db_session, display_name="Member")
+    org = await insert_org(db_session, slug="acme")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own")
+    await insert_membership(
         db_session, user_id=member_user.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
 
-    raw_owner = "owner-raw-token"
-    raw_member = "member-raw-token"
-    await identity_repo.insert_session(
-        db_session,
-        token_hash=identity_repo.hash_token(raw_owner),
-        user_id=user.id,
-        workspace_id=None,
-        csrf_token="csrf-owner",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
-    await identity_repo.insert_session(
-        db_session,
-        token_hash=identity_repo.hash_token(raw_member),
-        user_id=member_user.id,
-        workspace_id=None,
-        csrf_token="csrf-member",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    owner_created = await mint_session(db_session, user_id=user.id, workspace_id=None)
+    member_created = await mint_session(db_session, user_id=member_user.id, workspace_id=None)
 
     yield {
         "org": org,
         "owner_user": user,
         "member_user": member_user,
-        "owner_token": raw_owner,
-        "member_token": raw_member,
+        "owner_token": owner_created.raw_token,
+        "member_token": member_created.raw_token,
     }
 
 
@@ -202,10 +178,13 @@ async def test_legacy_route_without_security_declaration_500s() -> None:
 
 def test_required_role_for_covers_every_action() -> None:
     """Action enum must stay in lockstep with the role registry."""
-    from app.core.auth import _REQUIRED_ROLE  # noqa: PLC0415
-
-    missing = [a for a in Action if a not in _REQUIRED_ROLE]
-    assert missing == [], f"Actions missing from _REQUIRED_ROLE: {missing}"
+    missing = []
+    for a in Action:
+        try:
+            required_role_for(a)
+        except KeyError:
+            missing.append(a)
+    assert missing == [], f"Actions missing from required_role_for: {missing}"
 
 
 @pytest.mark.asyncio
@@ -258,23 +237,13 @@ async def test_csrf_skipped_on_safe_method(seeded) -> None:
 @pytest.mark.asyncio
 async def test_role_check_does_not_leak_membership_existence(db_session, seeded) -> None:
     """Caller without membership in an existing org sees 404, not 403."""
-    outsider = await identity_repo.insert_user(db_session, display_name="Outsider")
-    raw = f"outsider-{uuid.uuid4()}"
-    await identity_repo.insert_session(
-        db_session,
-        token_hash=identity_repo.hash_token(raw),
-        user_id=outsider.id,
-        workspace_id=None,
-        csrf_token="x",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    outsider = await create_user(db_session, display_name="Outsider")
+    created = await mint_session(db_session, user_id=outsider.id, workspace_id=None)
 
     async with _client(_make_app()) as c:
         resp = await c.get(
             "/api/memberships/ok",
-            cookies={"yaaos_session": raw},
+            cookies={"yaaos_session": created.raw_token},
             headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 404

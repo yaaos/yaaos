@@ -22,13 +22,13 @@ from app.core.agent_gateway import CleanupWorkspaceCommand, enqueue_command
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.agent_gateway.sts_verifier import (
     VerifiedIdentity,
-    set_verify_identity_override,
+    set_sts_verify_for_tests,
 )
 from app.core.audit_log import list_for_entity
 from app.core.tenancy import update_org_fields
 from app.core.workspace import WorkspaceStatus, get_workspace_info
-from app.domain.orgs import repository as orgs_repo
-from app.testing.seed import seed_agent, seed_workspace
+from app.domain.orgs import insert_membership, insert_org
+from app.testing.e2e_setup import seed_agent, seed_workspace
 
 # ── App / client helpers ─────────────────────────────────────────────────
 
@@ -47,8 +47,9 @@ def _agent_client() -> httpx.AsyncClient:
 
 def _orgs_app() -> FastAPI:
     # Side-effect imports: register routes before mounting specs.
-    import app.core.sessions.web  # noqa: PLC0415
-    import app.domain.orgs.org_settings_web  # noqa: PLC0415
+    # Importing the packages triggers web-submodule loading via __init__.py.
+    import app.core.sessions  # noqa: PLC0415
+    import app.domain.orgs  # noqa: PLC0415
     from app.core.auth import AuthMiddleware  # noqa: PLC0415
     from app.core.webserver import mount_specs  # noqa: PLC0415
 
@@ -64,21 +65,18 @@ def _orgs_client() -> httpx.AsyncClient:
 
 async def _make_admin_session(db_session):
     from app.core.auth import Role  # noqa: PLC0415
-    from app.core.identity import repository as identity_repo  # noqa: PLC0415
-    from app.core.identity import sessions as sess_lifecycle  # noqa: PLC0415
+    from app.core.identity import create_user, mint_session  # noqa: PLC0415
 
-    org = await orgs_repo.insert_org(db_session, slug=f"shutdown-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"shutdown-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
         registered_iam_arn="arn:aws:iam::111122223333:role/yaaos",
         aws_region="us-east-1",
     )
-    user = await identity_repo.insert_user(db_session, display_name="Admin")
-    await orgs_repo.insert_membership(
-        db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="admin"
-    )
-    sess = await sess_lifecycle.create(db_session, user_id=user.id, workspace_id=None)
+    user = await create_user(db_session, display_name="Admin")
+    await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="admin")
+    sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     # Return raw_token, csrf_token for double-submit CSRF in mutation requests.
     return org, user.id, sess.raw_token, sess.csrf_token
@@ -86,21 +84,16 @@ async def _make_admin_session(db_session):
 
 async def _seed_org_and_agent(db_session, *, iam_arn: str = "arn:aws:iam::111122223333:role/yaaos"):
     """Create an org row (required by bearer_tokens FK) + a seed agent. Returns (org, agent_dict)."""
-    org = await orgs_repo.insert_org(db_session, slug=f"del-test-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"del-test-{uuid4().hex[:6]}")
     await update_org_fields(db_session, org.org_id, registered_iam_arn=iam_arn, aws_region="us-east-1")
     agent = await seed_agent(
         org_id=org.org_id,
-        session=db_session,
         iam_arn=iam_arn,
-        heartbeat_age_seconds=5,
     )
     return org, agent
 
 
-@pytest.fixture(autouse=True)
-def _reset_sts_verifier():
-    yield
-    set_verify_identity_override(None)
+# sts_verify_isolation autouse fixture (in app/testing/isolation.py) handles reset.
 
 
 # ── DELETE /api/v1/agent/identity ─────────────────────────────────────────
@@ -191,7 +184,6 @@ async def test_delete_identity_expires_held_workspaces_and_synthesizes_failure(d
         sha="abc",
         current_command_id=command_id,
         agent_id=agent["id"],
-        caller_session=db_session,
     )
     await db_session.commit()
 
@@ -250,7 +242,7 @@ async def test_arn_change_revokes_old_arn_bearers(db_session) -> None:
     org_id = org.org_id
     old_arn = "arn:aws:iam::111122223333:role/yaaos"
 
-    agent = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=5)
+    agent = await seed_agent(org_id=org_id)
     await db_session.commit()
 
     from app.core.agent_gateway import bearers  # noqa: PLC0415
@@ -290,7 +282,7 @@ async def test_arn_clear_revokes_old_arn_bearers(db_session) -> None:
     org_id = org.org_id
     old_arn = "arn:aws:iam::111122223333:role/yaaos"
 
-    agent = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=5)
+    agent = await seed_agent(org_id=org_id)
     await db_session.commit()
 
     from app.core.agent_gateway import bearers  # noqa: PLC0415
@@ -329,7 +321,7 @@ async def test_region_mismatch_writes_identity_exchange_failed_audit_row(db_sess
     """A region-mismatch identity exchange writes one `identity_exchange_failed`
     audit row attributed to the matched org."""
     canonical_arn = "arn:aws:iam::999988887777:role/region-test"
-    org = await orgs_repo.insert_org(db_session, slug=f"region-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"region-{uuid4().hex[:6]}")
     await update_org_fields(
         db_session,
         org.org_id,
@@ -341,22 +333,21 @@ async def test_region_mismatch_writes_identity_exchange_failed_audit_row(db_sess
     async def _stub(_payload: str) -> VerifiedIdentity:
         return VerifiedIdentity(canonical_arn=canonical_arn, raw_arn=canonical_arn, region="eu-west-1")
 
-    set_verify_identity_override(_stub)
-
     _signed_payload = (
         '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.dev"},"body":""}'
     )
 
-    async with _agent_client() as c:
-        resp = await c.post(
-            "/api/v1/agent/identity",
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.0.0",
-                "agent_metadata": {},
-                "payload": _signed_payload,
-            },
-        )
+    with set_sts_verify_for_tests(callback=_stub):
+        async with _agent_client() as c:
+            resp = await c.post(
+                "/api/v1/agent/identity",
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.0.0",
+                    "agent_metadata": {},
+                    "payload": _signed_payload,
+                },
+            )
     assert resp.status_code == 401
 
     # Verify audit row via public list_for_entity.
@@ -373,28 +364,27 @@ async def test_region_mismatch_no_org_writes_no_audit_row(db_session) -> None:
     `audit_entries.org_id` is mandatory and can't be populated."""
     # Use a different unregistered ARN to avoid cross-test pollution.
     unregistered_arn = f"arn:aws:iam::000000000000:role/no-org-{uuid4().hex[:6]}"
-    org = await orgs_repo.insert_org(db_session, slug=f"no-org-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"no-org-{uuid4().hex[:6]}")
     await db_session.commit()
 
     async def _stub(_payload: str) -> VerifiedIdentity:
         return VerifiedIdentity(canonical_arn=unregistered_arn, raw_arn=unregistered_arn, region="eu-west-1")
 
-    set_verify_identity_override(_stub)
-
     _signed_payload = (
         '{"url":"https://sts.amazonaws.com/","headers":{"x-yaaos-audience":"app.yaaos.dev"},"body":""}'
     )
 
-    async with _agent_client() as c:
-        resp = await c.post(
-            "/api/v1/agent/identity",
-            json={
-                "kind": "aws-sts",
-                "agent_version": "1.0.0",
-                "agent_metadata": {},
-                "payload": _signed_payload,
-            },
-        )
+    with set_sts_verify_for_tests(callback=_stub):
+        async with _agent_client() as c:
+            resp = await c.post(
+                "/api/v1/agent/identity",
+                json={
+                    "kind": "aws-sts",
+                    "agent_version": "1.0.0",
+                    "agent_metadata": {},
+                    "payload": _signed_payload,
+                },
+            )
     # No org → 403 (unregistered ARN)
     assert resp.status_code == 403
 

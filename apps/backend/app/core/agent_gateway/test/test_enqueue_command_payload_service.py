@@ -22,8 +22,8 @@ from sqlalchemy.exc import IntegrityError
 from app.core.agent_gateway.models import AgentCommandRow
 from app.core.agent_gateway.service import enqueue_command_payload
 from app.core.agent_gateway.types import AgentCommandKind, InvokeClaudeCodeFields
+from app.testing.e2e_setup import seed_agent
 from app.testing.observability import span_capture
-from app.testing.seed import seed_agent
 
 pytestmark = pytest.mark.service
 
@@ -60,7 +60,7 @@ async def test_enqueue_command_payload_row_and_span(db_session) -> None:
     # agent_commands has no FK to workspace_agents directly, but seed_agent inserts
     # the org-level agent row that some FK paths depend on.  The `org_id` is what
     # agent_commands actually uses — no FK to workspace_agents on that table.
-    await seed_agent(org_id=org_id, session=db_session)
+    await seed_agent(org_id=org_id)
 
     command_id = uuid7()
     workspace_id = uuid4()
@@ -113,7 +113,7 @@ async def test_enqueue_command_payload_span_records_error(db_session) -> None:
     """A duplicate-PK flush error causes the span to record the exception and
     set `StatusCode.ERROR`."""
     org_id = uuid4()
-    await seed_agent(org_id=org_id, session=db_session)
+    await seed_agent(org_id=org_id)
 
     command_id = uuid7()
     workspace_id = uuid4()

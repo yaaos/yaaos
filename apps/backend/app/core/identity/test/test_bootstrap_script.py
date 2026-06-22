@@ -16,8 +16,8 @@ import httpx
 import pytest
 
 from app.core.config import get_settings
-from app.core.identity import repository as identity_repo
-from app.domain.orgs import repository as orgs_repo
+from app.core.identity.repository import find_oauth_identity, find_user_by_email
+from app.domain.orgs import get_membership, get_org_full_by_slug
 
 _BIN = Path(__file__).resolve().parents[4] / "bin" / "bootstrap"
 
@@ -120,13 +120,13 @@ async def test_bootstrap_creates_all_rows(github_user_lookup, db_session) -> Non
     from app.core.database import get_sessionmaker  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
-        user = await identity_repo.find_user_by_email(s, "jack-bootstrap@example.com")
+        user = await find_user_by_email(s, "jack-bootstrap@example.com")
         assert user is not None
-        identity = await identity_repo.find_oauth_identity(s, provider="github", external_subject="9991")
+        identity = await find_oauth_identity(s, provider="github", external_subject="9991")
         assert identity is not None and identity.user_id == user.id
-        org = await orgs_repo.get_org_by_slug(s, "acme-boot")
+        org = await get_org_full_by_slug(s, "acme-boot")
         assert org is not None
-        membership = await orgs_repo.get_membership(s, user_id=user.id, org_id=org.org_id)
+        membership = await get_membership(s, user_id=user.id, org_id=org.org_id)
         assert membership is not None and membership.role == "owner"
 
         await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
@@ -150,9 +150,9 @@ async def test_bootstrap_is_idempotent(github_user_lookup) -> None:
     from app.core.database import get_sessionmaker  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
-        user = await identity_repo.find_user_by_email(s, "jack-idem@example.com")
+        user = await find_user_by_email(s, "jack-idem@example.com")
         assert user is not None
-        org = await orgs_repo.get_org_by_slug(s, "idem-org")
+        org = await get_org_full_by_slug(s, "idem-org")
         assert org is not None
         await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
         await s.commit()
@@ -168,22 +168,23 @@ async def test_bootstrap_rejects_invalid_email_then_accepts(github_user_lookup) 
     from app.core.database import get_sessionmaker  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
-        user = await identity_repo.find_user_by_email(s, "jack-retry@example.com")
+        user = await find_user_by_email(s, "jack-retry@example.com")
         assert user is not None
-        org = await orgs_repo.get_org_by_slug(s, "retry-org")
+        org = await get_org_full_by_slug(s, "retry-org")
         assert org is not None
         await _cleanup_user_and_org(s, user_id=user.id, org_id=org.org_id)
         await s.commit()
 
 
 async def _cleanup_user_and_org(s, *, user_id, org_id) -> None:
-    from app.testing.seed import delete_org, delete_user_artifacts  # noqa: PLC0415
+    from app.core.identity import delete_user  # noqa: PLC0415
+    from app.core.tenancy import delete_org  # noqa: PLC0415
 
     # Cleanup for rows committed by the bootstrap subprocess outside the
     # transactional fixture. Deleting the org cascades to its memberships;
-    # owning module keeps the table names in one place.
+    # deleting the user cascades to emails, OAuth identities, and sessions.
     await delete_org(s, org_id)
-    await delete_user_artifacts(s, user_id=user_id)
+    await delete_user(s, user_id=user_id)
 
 
 # Avoid the static reference to `httpx` flagging as unused.

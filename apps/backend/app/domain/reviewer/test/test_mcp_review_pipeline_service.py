@@ -22,16 +22,16 @@ import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
 
+import app.domain.mcp_proxy  # noqa: F401  -- triggers mcp route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
-from app.core.identity import repository as identity_repo
+from app.core.identity import create_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.vcs import VCSPullRequest
-from app.domain.integrations import _REGISTRY, create_credential
+from app.domain.integrations import create_credential, set_providers_for_tests
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
-from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 from app.domain.reviewer import PRReviewAggregate, ReviewScope, ReviewTrigger, SqlAlchemyAggregateRepository
 from app.domain.reviewer.mcp_wiring import (
     prefix_broken_creds_warning as _prefix_broken_creds_warning,
@@ -68,11 +68,9 @@ class _StubProvider:
 
 @pytest.fixture
 def stub_provider():
-    _REGISTRY["stub_pipeline"] = _StubProvider()
-    try:
+    with set_providers_for_tests() as registry:
+        registry["stub_pipeline"] = _StubProvider()
         yield
-    finally:
-        _REGISTRY.pop("stub_pipeline", None)
 
 
 def _app() -> FastAPI:
@@ -91,8 +89,8 @@ def _client() -> httpx.AsyncClient:
 async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, str]:
     """Seed org + ticket + PR + review + a `last_refresh_status="failed"` credential.
     Mints the per-review bearer and returns (review, raw_token)."""
-    org = await orgs_repo.insert_org(db_session, slug=f"svc-mcp-{uuid4().hex[:8]}")
-    await identity_repo.insert_user(db_session, display_name="U")
+    org = await insert_org(db_session, slug=f"svc-mcp-{uuid4().hex[:8]}")
+    await create_user(db_session, display_name="U")
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(
         org_id=org.org_id,

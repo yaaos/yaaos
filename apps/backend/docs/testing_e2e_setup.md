@@ -36,7 +36,7 @@ HTTP routes (prefix `/api/testing`):
 
 ### `reset()`
 
-`core.database.truncate_all_tables` in reverse-FK order via per-table `DELETE FROM` (RowExclusive locks only; won't deadlock against lingering SSE/WS connections).
+`core.database.truncate_all_tables` in reverse-FK order via per-table `DELETE FROM` (RowExclusive locks only; won't deadlock against lingering SSE/WS connections). Also calls `domain.orgs.clear_global_inbox()` to flush the module-global in-memory email inbox so emails from a previous (possibly failed) test run do not leak into the next run. Redis rate-limit keys for the agent identity-exchange endpoint are deleted for the same reason.
 
 ### `seed_github_install`
 

@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import json
 
-import app.web  # noqa: F401 — side-effect: registers every RouteSpec
 from app.core.webserver.openapi_artifact import (
     ARTIFACT_PATH,
     build_stripped_spec,
 )
+from app.web import app as _web_app  # noqa: F401 — side-effect: registers every RouteSpec
 
 
 def test_committed_web_openapi_matches_current_code() -> None:

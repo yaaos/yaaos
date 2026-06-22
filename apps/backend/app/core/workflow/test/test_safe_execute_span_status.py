@@ -35,7 +35,7 @@ from app.core.workflow import (
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.observability import span_capture
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -118,7 +118,7 @@ async def test_safe_execute_records_exception_on_raise(db_session) -> None:
     )
 
     with span_capture() as exporter:
-        with scoped_engine() as eng:
+        with set_engine_for_tests() as eng:
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="span-raise-test",
@@ -163,7 +163,7 @@ async def test_safe_execute_sets_error_status_on_failure_outcome(db_session) -> 
     )
 
     with span_capture() as exporter:
-        with scoped_engine() as eng:
+        with set_engine_for_tests() as eng:
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="span-failure-test",
@@ -211,7 +211,7 @@ async def test_safe_execute_ok_on_success_outcome(db_session) -> None:
     )
 
     with span_capture() as exporter:
-        with scoped_engine() as eng:
+        with set_engine_for_tests() as eng:
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="span-success-test",

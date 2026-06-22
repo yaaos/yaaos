@@ -12,14 +12,13 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.core.sessions import web as _auth_web  # noqa: F401
+from app.core.identity import create_user, mint_session
 from app.core.tenancy import update_org_fields
-from app.domain.orgs import org_settings_web as _org_settings_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs import web as _orgs_web  # noqa: F401
+from app.domain.orgs import insert_membership, insert_org
+
+# org_settings_web and web are loaded by domain.orgs.__init__ — no explicit imports needed
 
 
 def _patch_app() -> FastAPI:
@@ -38,21 +37,21 @@ def _patch_client() -> httpx.AsyncClient:
 @pytest_asyncio.fixture
 async def two_orgs(db_session):
     """Two orgs, each with an admin session. Used to verify cross-org ARN collision."""
-    admin_a = await identity_repo.insert_user(db_session, display_name="Admin A")
-    admin_b = await identity_repo.insert_user(db_session, display_name="Admin B")
+    admin_a = await create_user(db_session, display_name="Admin A")
+    admin_b = await create_user(db_session, display_name="Admin B")
 
-    org_a = await orgs_repo.insert_org(db_session, slug="org-arn-a")
-    org_b = await orgs_repo.insert_org(db_session, slug="org-arn-b")
+    org_a = await insert_org(db_session, slug="org-arn-a")
+    org_b = await insert_org(db_session, slug="org-arn-b")
 
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session, user_id=admin_a.id, org_id=org_a.org_id, role=Role.ADMIN, handle="adm-a"
     )
-    await orgs_repo.insert_membership(
+    await insert_membership(
         db_session, user_id=admin_b.id, org_id=org_b.org_id, role=Role.ADMIN, handle="adm-b"
     )
 
-    sess_a = await session_lifecycle.create(db_session, user_id=admin_a.id, workspace_id=None)
-    sess_b = await session_lifecycle.create(db_session, user_id=admin_b.id, workspace_id=None)
+    sess_a = await mint_session(db_session, user_id=admin_a.id, workspace_id=None)
+    sess_b = await mint_session(db_session, user_id=admin_b.id, workspace_id=None)
     await db_session.commit()
 
     yield {

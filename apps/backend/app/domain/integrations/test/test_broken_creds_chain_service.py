@@ -21,9 +21,10 @@ import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
 
+import app.domain.mcp_proxy  # noqa: F401  -- triggers mcp route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
+from app.core.identity import add_email, create_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.vcs import VCSPullRequest
@@ -31,8 +32,8 @@ from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
-from app.domain.mcp_proxy import web as _mcp_web  # noqa: F401  (route registration)
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
+from app.domain.orgs import read_sent_emails as read_email_inbox
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -42,7 +43,6 @@ from app.domain.reviewer import (
 from app.domain.reviewer import prefix_broken_creds_warning as _prefix_broken_creds_warning
 from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
-from app.testing.seed import read_email_inbox
 
 
 def _config() -> ProviderConfig:
@@ -113,14 +113,10 @@ async def test_health_check_flip_then_next_review_dispatches_through_broken_cred
     stub_provider.next_validate = False
 
     # 1. Seed org + Owner + email + credential (initially "ok").
-    org = await orgs_repo.insert_org(db_session, slug=f"svc-chain-{uuid4().hex[:8]}")
-    owner = await identity_repo.insert_user(db_session, display_name="Owner")
-    await identity_repo.add_email(
-        db_session, user_id=owner.id, email="owner@example.com", is_primary=True, verified=True
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner"
-    )
+    org = await insert_org(db_session, slug=f"svc-chain-{uuid4().hex[:8]}")
+    owner = await create_user(db_session, display_name="Owner")
+    await add_email(db_session, user_id=owner.id, email="owner@example.com", is_primary=True, verified=True)
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner")
     db_session.add(
         McpCredentialRow(
             org_id=org.org_id,

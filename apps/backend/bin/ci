@@ -26,22 +26,53 @@ bin/check_table_access
 
 echo "==> pytest"
 mkdir -p tmp
+# Clear stale sentinel/dump from any prior run so the post-pytest assertions
+# below reflect THIS run, not the previous one. The sentinel is rewritten by
+# bin/import_audit.install() at conftest load; the dump is only written when
+# violations exist.
+rm -f tmp/import_audit_ran tmp/import_audit_violations.json
 uv run pytest -q --report-log=tmp/pytest-reportlog.json
 
-echo "==> semgrep (static security: p/python + p/owasp-top-ten)"
-# `--error` makes findings fail CI. `--metrics off` disables semgrep.dev
-# telemetry. `--exclude` paths bypass the test-scaffolding layer (`app/testing/`
-# is excluded from production wheels — see pyproject.toml — and its
-# DB-truncate helpers legitimately use raw `text()` that the OWASP rules
-# flag) and all unit-test files (they execute against test fixtures, not
-# user input). Inline CLI excludes rather than `.semgrepignore` because
-# the latter's path resolution proved unreliable across local vs Docker
-# environments.
+# Belt-and-suspenders for the runtime import audit (bin/import_audit.py):
+# pytest's sessionfinish hook already exits non-zero on violations, but these
+# two checks catch the failure mode where the guard never installed (broken
+# conftest, missing import_audit module) — pytest would exit 0 and silently
+# leave the audit off. The sentinel proves install() ran; the dump check
+# re-surfaces violations after pytest's own output.
+test -f tmp/import_audit_ran || { echo "import_audit guard did not run — conftest broken?" >&2; exit 2; }
+if [ -s tmp/import_audit_violations.json ]; then
+    echo "runtime import audit recorded violations — see tmp/import_audit_violations.json" >&2
+    exit 2
+fi
+
+echo "==> semgrep — third-party packs (p/python + p/owasp-top-ten)"
+# Third-party rule packs are tuned for production code; they false-positive
+# on test scaffolding (DB TRUNCATE, fake creds, bypassed auth). The
+# test-scaffolding layer is excluded from production wheels (see
+# pyproject.toml [tool.hatch.build.targets.wheel]) and gated by
+# is_dev_env() at the HTTP boundary, so the exclusion here doesn't widen
+# the prod surface — it just suppresses known noise on test fixtures.
 uv run semgrep scan \
     --config p/python \
     --config p/owasp-top-ten \
+    --exclude testing \
+    --exclude 'test_*.py' \
+    --error \
+    --metrics off \
+    --quiet \
+    app
+
+echo "==> semgrep — project rules (.semgrep)"
+# Excludes match the third-party invocation above. semgrep's --exclude is a
+# basename/glob match, not a path prefix — `--exclude app/testing` does NOT
+# match files under app/testing/ when the target is `app`. The bare directory
+# name `testing` matches every directory named that, which here is only
+# app/testing/. Per-rule `paths.exclude` inside .semgrep/ is unreliable for
+# the same reason. Until a project rule needs to scan app/testing/, the CLI
+# flag is the authoritative gate.
+uv run semgrep scan \
     --config .semgrep \
-    --exclude app/testing \
+    --exclude testing \
     --exclude 'test_*.py' \
     --error \
     --metrics off \

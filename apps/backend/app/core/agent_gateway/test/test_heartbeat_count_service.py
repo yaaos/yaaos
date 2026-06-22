@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.core.agent_gateway import bearers
 from app.core.agent_gateway.models import WorkspaceAgentRow
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ def _client() -> httpx.AsyncClient:
 
 
 async def _fixture_org_and_agent(db_session):
-    org = await orgs_repo.insert_org(db_session, slug=f"hb-cnt-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"hb-cnt-{uuid4().hex[:6]}")
     org.registered_iam_arn = f"arn:aws:iam::123456789012:role/test-{uuid4().hex[:6]}"
     org.aws_region = "us-east-1"
     agent = WorkspaceAgentRow(

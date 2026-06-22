@@ -212,10 +212,10 @@ def _step_summary(
 
 def _project_run_view(row: WorkflowExecutionRow) -> WorkflowRunView:
     # Lazy import breaks the circular dependency: views imports service for
-    # get_engine; service does not import views.
-    from app.core.workflow.service import get_engine  # noqa: PLC0415
+    # _get_engine; service does not import views.
+    from app.core.workflow.service import _get_engine  # noqa: PLC0415
 
-    engine = get_engine()
+    engine = _get_engine()
     try:
         wf = engine.get_workflow(row.workflow_name, version=row.workflow_version)
     except WorkflowNotFoundError:

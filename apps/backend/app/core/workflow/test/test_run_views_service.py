@@ -28,7 +28,7 @@ from app.core.workflow import (
     step,
 )
 from app.core.workflow.models import WorkflowExecutionRow
-from app.testing.workflow_harness import scoped_engine, scoped_workflow
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -97,7 +97,7 @@ def _wfx(
 @pytest.fixture
 def _engine_with_three_step_workflow():
     """Bind a fresh engine registering a three-step workflow we project against."""
-    with scoped_engine():
+    with set_engine_for_tests() as eng:
         wf = Workflow(
             name="test_runview_v1",
             version=1,
@@ -109,8 +109,8 @@ def _engine_with_three_step_workflow():
                 _gamma_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
             },
         )
-        with scoped_workflow(wf):
-            yield
+        eng.register_workflow(wf)
+        yield
 
 
 @pytest.mark.asyncio
@@ -270,7 +270,7 @@ async def test_runview_orders_newest_first(db_session, _engine_with_three_step_w
 async def test_runview_empty_steps_when_workflow_unknown(db_session) -> None:
     """A run row whose workflow def isn't registered yields zero steps but
     still surfaces the execution metadata."""
-    with scoped_engine():
+    with set_engine_for_tests():
         ticket_id = uuid4()
         row = _wfx(ticket_id, state="running", workflow_name="never_registered_v1")
         db_session.add(row)

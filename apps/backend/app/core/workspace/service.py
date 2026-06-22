@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import structlog
@@ -126,36 +128,56 @@ class WorkspaceRegistry:
 
 
 _providers_var: ContextVar[WorkspaceRegistry | None] = ContextVar("_workspace_registry_var", default=None)
-# Import-time default: plugins that call register_workspace_provider() at
-# module-import time (bootstrap()) land here when no per-test binding is active.
-# Production never calls bind_workspace_registry(); the ContextVar exists solely
-# for per-test isolation.
-_default_registry = WorkspaceRegistry()
 
 
-def bind_workspace_registry(instance: WorkspaceRegistry) -> None:
-    _providers_var.set(instance)
+def _get() -> WorkspaceRegistry:
+    val = _providers_var.get()
+    if val is None:
+        val = WorkspaceRegistry()
+        _providers_var.set(val)
+    return val
 
 
-def current_workspace_registry() -> WorkspaceRegistry:
-    return _providers_var.get() or _default_registry
+@contextmanager
+def set_workspace_providers_for_tests(
+    *,
+    scenario: Literal["default", "empty"] = "default",
+) -> Iterator[WorkspaceRegistry]:
+    """Context manager: bind an isolated workspace registry for the duration.
+
+    `scenario="default"` copies the current module default (preserving
+    production-registered + stub-wrapped providers). `scenario="empty"` binds
+    a blank registry — use when a test must control exactly which providers exist.
+    Restores the prior binding on exit — even on exception.
+    """
+    instance = WorkspaceRegistry() if scenario == "empty" else _get().copy()
+    token = _providers_var.set(instance)
+    try:
+        yield instance
+    finally:
+        _providers_var.reset(token)
 
 
 def register_workspace_provider(provider: WorkspaceProvider) -> None:
-    current_workspace_registry().register(provider)
+    _get().register(provider)
+
+
+def replace_workspace_provider(provider: WorkspaceProvider) -> None:
+    """Overwrite-or-insert a provider in the current registry; used by stub helpers."""
+    _get().replace(provider)
 
 
 def get_provider(provider_id: str) -> WorkspaceProvider:
-    return current_workspace_registry().get(provider_id)
+    return _get().get(provider_id)
 
 
 def is_workspace_provider_registered(plugin_id: str) -> bool:
-    return current_workspace_registry().is_registered(plugin_id)
+    return _get().is_registered(plugin_id)
 
 
 def list_workspace_providers() -> list[WorkspaceProvider]:
     """Return registered providers in insertion order."""
-    return current_workspace_registry().list()
+    return _get().list()
 
 
 def _utcnow() -> datetime:
@@ -487,7 +509,7 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
 
 
 async def _attempt_destroy(row: WorkspaceRow) -> None:
-    provider = current_workspace_registry().get_or_none(row.provider_id)
+    provider = _get().get_or_none(row.provider_id)
     if provider is None:
         log.warning("workspace.destroy_no_provider", workspace_id=str(row.id), provider_id=row.provider_id)
         async with get_session() as s:
@@ -620,7 +642,7 @@ async def run_workspace_reaper() -> None:
 async def health_check_all() -> dict[str, HealthStatus]:
     """Aggregate health across registered providers (used by settings)."""
     out: dict[str, HealthStatus] = {}
-    for plugin_id, provider in current_workspace_registry().items():
+    for plugin_id, provider in _get().items():
         try:
             out[plugin_id] = await provider.health_check()
         except Exception as e:

@@ -98,6 +98,23 @@ async def lookup(session: AsyncSession, raw_token: str) -> Session | None:
     return Session.from_row(row)
 
 
+async def find_session_by_hash(session: AsyncSession, token_hash: str) -> Session | None:
+    """Look up a session by pre-computed token hash. None on missing/expired.
+
+    Use this when the caller already has the hash (e.g. from `hash_token(raw)`).
+    For the typical "I have a bearer cookie" path, use `lookup` (re-exported as
+    `lookup_session`) instead.
+    """
+    row = (
+        await session.execute(select(SessionRow).where(SessionRow.token_hash == token_hash))
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    if row.expires_at < _now():
+        return None
+    return Session.from_row(row)
+
+
 async def touch(session: AsyncSession, raw_token: str) -> None:
     """Update `last_seen_at` to now. No-op if the session doesn't exist or
     is expired."""

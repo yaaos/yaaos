@@ -9,7 +9,8 @@ because `core/oauth.exchange_code` consumes it.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Generator
+from contextlib import contextmanager
 from typing import Protocol, runtime_checkable
 
 from pydantic import SecretStr
@@ -48,6 +49,27 @@ def known_providers() -> list[str]:
     return sorted(_REGISTRY.keys())
 
 
+@contextmanager
+def set_providers_for_tests(
+    providers: dict[str, IntegrationProvider] | None = None,
+) -> Generator[dict[str, IntegrationProvider]]:
+    """Test-only context manager that yields the live provider registry.
+
+    On entry snapshots the current registry (so the test body can register stub
+    providers freely); on exit restores the original entries. If `providers` is
+    given, the registry is seeded with those entries before yielding.
+    """
+    original = dict(_REGISTRY)
+    _REGISTRY.clear()
+    if providers:
+        _REGISTRY.update(providers)
+    try:
+        yield _REGISTRY
+    finally:
+        _REGISTRY.clear()
+        _REGISTRY.update(original)
+
+
 ValidateCallable = Callable[[SecretStr], Awaitable[bool]]
 
 
@@ -78,4 +100,5 @@ __all__ = [
     "get_provider",
     "known_providers",
     "register_provider",
+    "set_providers_for_tests",
 ]

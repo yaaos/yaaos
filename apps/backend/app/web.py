@@ -14,15 +14,10 @@ from app.core import config  # noqa: F401
 # database — anything imported later (tasks, sse, agent_gateway)
 # registers afterwards and therefore shuts down first.
 from app.core import database  # noqa: F401
-from app.core import redis
+from app.core import redis  # noqa: F401
 from app.core import observability
 
-redis.bind_pubsub(redis.RedisPubsub())
-
-import asyncio  # noqa: E402
-from app.core import sse as _core_sse  # noqa: E402
-
-_core_sse.bind_shutdown_event(asyncio.Event())
+from app.core import sse as _core_sse  # noqa: F401 — registers shutdown hook
 
 observability.configure(role="app")
 
@@ -35,9 +30,7 @@ from app.core import audit_log, coding_agent, vcs, workspace  # noqa: F401, E402
 # 4a. workflow engine + agent gateway. Workflow engine registers the
 # three taskiq task names at import; agent_gateway registers `/v1/*` routes.
 from app.core import workflow as _core_workflow  # noqa: F401, E402
-from app.core import agent_gateway as _core_agent_gateway  # noqa: E402
-
-_core_agent_gateway.bind_subscriber_registry(_core_agent_gateway.SubscriberRegistry())
+from app.core import agent_gateway as _core_agent_gateway  # noqa: F401, E402
 
 # 4b. Intake router — pure infrastructure; no domain imports.
 from app.core import intake as _core_intake  # noqa: F401, E402
@@ -47,20 +40,8 @@ from app.core import intake as _core_intake  # noqa: F401, E402
 # `Depends(public_route)` so the contextvars + middleware classes exist.
 from app.core import identity  # noqa: F401, E402
 from app.domain import orgs  # noqa: F401, E402
-from app.domain.orgs.email import _Inbox, bind_email_inbox  # noqa: E402
-
-bind_email_inbox(_Inbox())
 from app.core import auth  # noqa: F401, E402
 from app.core import sessions  # noqa: F401, E402
-
-# Register `/api/memberships/*` and `/api/audit/*` after both `domain.orgs`
-# and `core.sessions` are loaded — `orgs.web` imports `core.sessions.dependencies`,
-# which imports back into `domain.orgs`, so the cycle must break here, not in
-# `orgs/__init__`.
-from app.core.identity import user_web as _identity_user_web  # noqa: F401, E402
-from app.domain.orgs import audit_web as _orgs_audit_web  # noqa: F401, E402
-from app.domain.orgs import sso_web as _orgs_sso_web  # noqa: F401, E402
-from app.domain.orgs import web as _orgs_web  # noqa: F401, E402
 
 # 5. Domain modules — order: types first (lessons), then leaf domain modules,
 #    then domain modules that depend on others.
@@ -79,13 +60,9 @@ register_workspace_providers()
 from app.core.agent_gateway import get_run_sink as _get_run_sink  # noqa: E402
 
 assert _get_run_sink() is not None, "coding-agent run sink must be registered"
-from app.domain.orgs import byok_routes as _orgs_byok_routes  # noqa: F401, E402
 from app.domain.integrations import web as _domain_integrations_web  # noqa: F401, E402
-from app.domain.mcp_proxy import web as _domain_mcp_proxy_web  # noqa: F401, E402
-from app.domain.orgs import coding_agents_web as _orgs_coding_agents_web  # noqa: F401, E402
-from app.domain.orgs import org_settings_web as _orgs_org_settings_web  # noqa: F401, E402
+import app.domain.mcp_proxy  # noqa: E402 — triggers mcp_proxy web route registration
 from app.core.workspace import web as _core_workspace_web  # noqa: F401, E402
-from app.domain.orgs import vcs_web as _orgs_vcs_web  # noqa: F401, E402
 from app.core.notifications import web as _notifications_web  # noqa: F401, E402
 from app.core.sse import web as _core_sse_web  # noqa: F401, E402
 
@@ -121,15 +98,24 @@ if get_settings().yaaos_coding_agent_stub:
     wrap_all_registered_plugins()
     wrap_all_registered_workspace_providers()
 
-# 7b. Test-only HTTP surface (`/api/testing/*`) — reset + seed endpoints used by
-# the e2e Playwright suite (and ad-hoc local seeding). Mounted only in dev/test
-# builds; prod wheels exclude the testing/ tree, so this import would fail loud
-# if it ever ran with the layer stripped.
-if get_settings().is_non_prod:
-    from app.testing import e2e_setup  # noqa: F401
-
 # 8. Build the FastAPI app.
 app = webserver.create_app()
+
+# 7b. Test-only HTTP surface (`/api/testing/*`) — reset + seed endpoints used by
+# the e2e Playwright suite (and ad-hoc local seeding). `mount_testing_endpoints`
+# is the production-safety gate (raises RuntimeError if called with prod settings).
+# On non-prod: gate confirms env, then e2e_setup.mount registers routes directly
+# (core/webserver cannot import app.testing — layering: core < testing). Post-mount
+# `assert_no_testing_routes_in_prod` is defense-in-depth — verifies no testing
+# route leaked in. Prod wheels exclude the testing/ tree, so any stray import there
+# fails loud.
+_settings = get_settings()
+if _settings.is_non_prod:
+    webserver.mount_testing_endpoints(app, _settings)  # gate; would raise if is_production
+    from app.testing import e2e_setup as _e2e_setup
+
+    _e2e_setup.mount(app)
+webserver.assert_no_testing_routes_in_prod(app, _settings)
 
 if __name__ == "__main__":
     import uvicorn

@@ -5,8 +5,8 @@ and session factory the rest of the backend uses.
 """
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,8 +44,29 @@ _test_session_override: ContextVar[AsyncSession | None] = ContextVar(
 
 
 def set_test_session_override(s: AsyncSession | None) -> None:
-    """Install a session that `session()` will yield. Test-only."""
+    """Install a session that `session()` will yield. Test-only.
+
+    Prefer `set_db_session_for_tests` for context-managed usage — it
+    automatically restores the prior value on exit.
+    """
     _test_session_override.set(s)
+
+
+@contextmanager
+def set_db_session_for_tests(
+    override: AsyncSession | None,
+) -> Iterator[AsyncSession | None]:
+    """Context manager: install ``override`` as the session that `session()`
+    yields for the duration of the block. Restores the prior override on exit
+    — even on exception.
+
+    Production never calls this.
+    """
+    token = _test_session_override.set(override)
+    try:
+        yield override
+    finally:
+        _test_session_override.reset(token)
 
 
 def _engine_kwargs(settings) -> dict[str, object]:  # type: ignore[no-untyped-def]

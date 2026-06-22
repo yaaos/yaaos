@@ -105,9 +105,9 @@ _REQUEST_STRUCTLOG_KEYS = (
 )
 
 
-def bind_request_structlog_vars() -> None:
-    """Bind the currently-resolved identity contextvars to structlog so every
-    log line inside the request carries them. Idempotent — called after
+def configure_structlog_context() -> None:
+    """Stamp structlog context with the currently-resolved identity contextvars so
+    every log line inside the request carries them. Idempotent — called after
     `require()` resolves a session + membership."""
     org_id = org_id_var.get()
     user_id = user_id_var.get()

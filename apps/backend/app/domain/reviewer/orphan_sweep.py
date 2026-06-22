@@ -25,11 +25,11 @@ from uuid import UUID
 
 import structlog
 
+import app.domain.tickets as tickets
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.tasks import scheduled
 from app.core.workflow import list_active_execution_ids
-from app.domain import tickets
 
 log = structlog.get_logger("reviewer.orphan_sweep")
 

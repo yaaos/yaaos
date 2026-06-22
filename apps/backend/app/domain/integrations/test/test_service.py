@@ -9,13 +9,13 @@ from dataclasses import dataclass, field
 import pytest
 from pydantic import SecretStr
 
+import app.domain.integrations as integ
 from app.core.audit_log import Actor, list_for_org
-from app.core.identity import repository as identity_repo
+from app.core.identity import create_user
 from app.core.oauth import ProviderConfig, Tokens
 from app.core.secrets import decrypt
-from app.domain import integrations as integ
 from app.domain.integrations.types import _REGISTRY, IntegrationNotConnectedError
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 
 
 def _make_stub_config() -> ProviderConfig:
@@ -78,8 +78,8 @@ def stub_exchange(monkeypatch):
 
 @pytest.fixture
 async def seeded(db_session):
-    user = await identity_repo.insert_user(db_session, display_name="U")
-    org = await orgs_repo.insert_org(db_session, slug="integ-test")
+    user = await create_user(db_session, display_name="U")
+    org = await insert_org(db_session, slug="integ-test")
     return {"user": user, "org": org, "actor": Actor.user(user_id=user.id)}
 
 

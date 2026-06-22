@@ -8,13 +8,13 @@ import pytest_asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor, audit
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
-from app.core.sessions import web as _auth_web  # noqa: F401
-from app.domain.orgs import audit_web as _audit_web  # noqa: F401
-from app.domain.orgs import repository as orgs_repo
+from app.core.identity import create_user, mint_session
+from app.domain.orgs import insert_membership, insert_org
+
+# audit_web is loaded by domain.orgs.__init__ — no explicit import needed
 
 
 class _Payload(BaseModel):
@@ -36,17 +36,13 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    owner = await identity_repo.insert_user(db_session, display_name="Owner")
-    member = await identity_repo.insert_user(db_session, display_name="Member")
-    org = await orgs_repo.insert_org(db_session, slug="audit-endpoint")
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
-    )
-    owner_session = await session_lifecycle.create(db_session, user_id=owner.id, workspace_id=None)
-    member_session = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
+    owner = await create_user(db_session, display_name="Owner")
+    member = await create_user(db_session, display_name="Member")
+    org = await insert_org(db_session, slug="audit-endpoint")
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
+    await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")
+    owner_session = await mint_session(db_session, user_id=owner.id, workspace_id=None)
+    member_session = await mint_session(db_session, user_id=member.id, workspace_id=None)
     # Two distinguishable audit rows.
     await audit(
         "user",

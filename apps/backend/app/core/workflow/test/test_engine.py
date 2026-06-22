@@ -15,6 +15,7 @@ from app.core.workflow import (
     CommandContext,
     Empty,
     Outcome,
+    RetryPolicy,
     TerminalAction,
     Workflow,
     WorkflowCommand,
@@ -211,7 +212,7 @@ async def test_start_creates_execution_row_and_routes_to_done(db_session) -> Non
 
     eng = _engine_with_workflow()
     # Install as process singleton so task bodies (route_workflow, start_step)
-    # can look up the engine via get_engine().
+    # can look up the engine via _get_engine().
     svc._engine = eng
 
     ticket_id = str(uuid4())
@@ -345,9 +346,7 @@ async def test_engine_state_persists_to_columns_service(db_session) -> None:
 
     fail_once_step = step(
         _FailOnce,
-        retry_policy=__import__("app.core.workflow.types", fromlist=["RetryPolicy"]).RetryPolicy(
-            max_attempts=2
-        ),
+        retry_policy=RetryPolicy(max_attempts=2),
     )
     cleanup_step = step(_CleanupCommand)
     ticket_wf_input = workflow_input(_TestSnapshot)

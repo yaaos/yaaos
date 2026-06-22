@@ -140,7 +140,7 @@ Every domain function takes `org_id` kwarg; every query filters by it. Per-reque
 - Auth middleware (`core/auth`): every `/api/*` route declares security via `Depends(require(action))` or `Depends(public_route)`; a post-response guard 500s any 2xx that left `route_security_resolved` unset.
 - Sessions: opaque server-side rows (sha256-hashed tokens), `HttpOnly; SameSite=Lax; Secure` cookies, double-submit CSRF on mutations. SSO satisfaction tracked per-session per-org with 8h TTL.
 - Background jobs open `org_context(org_id, actor_kind, actor_id)` to set the same contextvars + OTel + structlog fields the HTTP middleware sets.
-- Session rotation on role change, invite accept, SSO satisfaction. `sessions.revoke_all_for_user` on member removal + logout-all.
+- Session rotation on role change, invite accept, SSO satisfaction. `revoke_all_sessions_for_user` (from [`core/identity`](../apps/backend/docs/core_identity.md)) on member removal + logout-all.
 
 Per-module deep dives: [`core_auth`](../apps/backend/docs/core_auth.md), [`core_identity`](../apps/backend/docs/core_identity.md), [`domain_orgs`](../apps/backend/docs/domain_orgs.md), [`core_saml`](../apps/backend/docs/core_saml.md).
 

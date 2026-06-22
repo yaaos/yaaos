@@ -23,13 +23,12 @@ from app.core.audit_log import Actor, ActorKind, audit
 from app.core.auth import Role, org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.core.identity import repository as identity_repo
+from app.core.identity import list_emails_for_user
 from app.core.secrets import SecretsDecryptError, decrypt
 from app.core.tasks import scheduled
 from app.domain.integrations.models import McpCredentialRow
 from app.domain.integrations.types import get_provider
-from app.domain.orgs import repository as orgs_repo
-from app.domain.orgs import send_plain
+from app.domain.orgs import get_org_full, list_memberships_for_org, send_plain
 
 log = structlog.get_logger("integrations.scheduler")
 
@@ -60,17 +59,17 @@ def _broken_creds_email_body(*, provider: str, org_slug: str) -> str:
 async def _notify_owners(row: McpCredentialRow) -> int:
     """Send the broken-creds email to every Owner of the org. Returns count sent."""
     async with db_session() as s:
-        org = await orgs_repo.get_org(s, row.org_id)
+        org = await get_org_full(s, row.org_id)
         if org is None:
             return 0
-        memberships = await orgs_repo.list_memberships_for_org(s, row.org_id)
+        memberships = await list_memberships_for_org(s, row.org_id)
         owner_ids = [m.user_id for m in memberships if m.role == Role.OWNER]
         if not owner_ids:
             return 0
         # Collect verified email addresses for each owner.
         owner_emails: list[str] = []
         for uid in owner_ids:
-            for email_row in await identity_repo.list_emails_for_user(s, uid):
+            for email_row in await list_emails_for_user(s, uid):
                 if email_row.verified_at is not None:
                     owner_emails.append(email_row.email)
     if not owner_emails:

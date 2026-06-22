@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import warnings
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
+
+# Runtime import audit — install BEFORE any app.* import so the meta-path
+# finder observes every backend module load. Defense-in-depth on top of
+# bin/sync_modules' static checks: catches dynamic-Python reaches
+# (importlib.import_module, __import__, getattr-triggered lazy loads,
+# string-built plugin dispatch) that no AST analysis can see. See
+# bin/import_audit.py for the rule definition.
+_BIN_DIR = Path(__file__).resolve().parent / "bin"
+if str(_BIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_BIN_DIR))
+import import_audit  # noqa: E402
+
+import_audit.install()
 
 # Set test env vars BEFORE any app imports so module-level `get_settings()` works.
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://yaaos:yaaos@localhost:5432/yaaos_test")
@@ -36,17 +51,30 @@ os.environ.setdefault("YAAOS_PUBLIC_ORIGIN", "https://app.yaaos.dev")
 # Re-export autouse isolation fixtures so pytest auto-discovers them. The import
 # is deferred until after env vars are set because app.testing.isolation triggers
 # app.core.redis → app.core.config at import time.
-from app.testing.isolation import (  # noqa: F401
-    _canonical_registries,
+from app.testing.isolation import (  # noqa: E402, F401
     bearer_verify_isolation,
     email_inbox_isolation,
     plugin_registries_isolation,
     pubsub_isolation,
     scheduler_registry_isolation,
     sse_shutdown_event_isolation,
+    sts_verify_isolation,
     subscriber_registry_isolation,
     workspace_providers_isolation,
 )
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Flush the runtime import-audit report and fail the suite on any violation.
+
+    Writes `tmp/import_audit_violations.json` when non-empty; overrides
+    pytest's exit status to 2 so `bin/ci`'s `set -e` halts. The sentinel file
+    `tmp/import_audit_ran` (written at install) lets `bin/ci` independently
+    prove the guard ran even when the run is otherwise green.
+    """
+    count = import_audit.flush_and_report()
+    if count and session.exitstatus == 0:
+        session.exitstatus = 2
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -136,8 +164,7 @@ async def db_session(_migrated_schema: None) -> AsyncIterator:
     from sqlalchemy import event  # noqa: PLC0415
     from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
 
-    from app.core.database import get_engine  # noqa: PLC0415
-    from app.core.database.service import set_test_session_override  # noqa: PLC0415
+    from app.core.database import get_engine, set_db_session_for_tests  # noqa: PLC0415
 
     engine = get_engine()
     async with engine.connect() as connection:
@@ -155,11 +182,10 @@ async def db_session(_migrated_schema: None) -> AsyncIterator:
             if trans.nested and not trans._parent.nested:
                 connection.sync_connection.begin_nested()
 
-        set_test_session_override(async_session)
-        try:
-            yield async_session
-        finally:
-            set_test_session_override(None)
-            await async_session.close()
-            if outer_trans.is_active:
-                await outer_trans.rollback()
+        with set_db_session_for_tests(async_session):
+            try:
+                yield async_session
+            finally:
+                await async_session.close()
+                if outer_trans.is_active:
+                    await outer_trans.rollback()

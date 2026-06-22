@@ -42,7 +42,7 @@ from app.core.workflow import (
 )
 from app.core.workflow.models import WorkflowExecutionRow
 from app.testing.observability import span_capture
-from app.testing.workflow_harness import scoped_engine
+from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
 
@@ -147,7 +147,7 @@ async def test_workspace_command_span_emitted(db_session) -> None:  # type: igno
         with outer_tracer.start_as_current_span("upstream-intake"):
             upstream_tp = current_traceparent()
 
-            with scoped_engine() as eng:
+            with set_engine_for_tests() as eng:
                 eng.register_workflow(wf)
                 wfx_id = await eng.start(
                     workflow_name="ws-span-test",
@@ -200,7 +200,7 @@ async def test_workspace_command_span_error_on_dispatch_raise(db_session) -> Non
     )
 
     with span_capture() as exporter:
-        with scoped_engine() as eng:
+        with set_engine_for_tests() as eng:
             eng.register_workflow(wf)
             wfx_id = await eng.start(
                 workflow_name="ws-span-raise-test",
@@ -246,7 +246,7 @@ async def test_local_command_span_category_attribute(db_session) -> None:  # typ
     )
 
     with span_capture() as exporter:
-        with scoped_engine() as eng:
+        with set_engine_for_tests() as eng:
             eng.register_workflow(wf)
             await eng.start(
                 workflow_name="local-category-attr-test",

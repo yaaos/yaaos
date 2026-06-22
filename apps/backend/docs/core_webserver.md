@@ -44,6 +44,15 @@ The dump+strip logic lives in [`app/core/webserver/openapi_artifact.py`](../app/
 
 When you change the API shape (routes, response models, query params), run `apps/backend/bin/dump_web_openapi` and commit the updated artifact.
 
+## Testing-endpoint mount hardening
+
+Two helpers in `core/webserver/testing_mount.py` guard against `/api/testing/*` routes appearing in production:
+
+- **`mount_testing_endpoints(app, settings)`** — production-safety gate. Raises `RuntimeError` immediately if `settings.is_production` is true. Called in `app/web.py` before `e2e_setup.mount(app)`; the call inside the `if is_non_prod:` block means it is unreachable in prod, but the gate is a redundant hard barrier.
+- **`assert_no_testing_routes_in_prod(app, settings)`** — defense-in-depth sweep. Runs unconditionally after `create_app()` and any testing mounts. If `settings.is_production` is true and any `app.routes` entry has a path starting with `/api/testing/`, raises `RuntimeError` naming the offending path.
+
+`core/webserver` cannot import `app.testing` (layer order: `core < testing`). The actual route registration (`e2e_setup.mount(app)`) lives in `app/web.py` (the composition root), which is allowed to cross layers.
+
 ## Gotchas
 
 - In dev (no `apps/web/dist`), non-`/api/` paths 404. Run `pnpm dev` separately.

@@ -16,15 +16,16 @@ sets the event, the generator emits a final `retry:`+comment frame that tells
 the browser's `EventSource` to reconnect within ~1 s, then returns — the
 `StreamingResponse` completes cleanly instead of hanging on a dead socket.
 The `retry:` value is 1000 ms; any already-pending `__anext__` task is
-cancelled before the generator exits.  The event is bound at process startup
-via `bind_shutdown_event` (composition root) and per-test via the
+cancelled before the generator exits.  The event is held in a module-private
+ContextVar with an eager default; tests rebind via the
 `sse_shutdown_event_isolation` autouse fixture in `app/testing/isolation`.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from uuid import UUID
 
@@ -43,7 +44,10 @@ from app.core.webserver import RouteSpec, register_routes
 
 router = APIRouter()
 
+# Test-override slot: set per-test by `set_shutdown_event_for_tests`.
+# Production path uses `_default_shutdown_event` (lazy-created on first access).
 _shutdown_event_var: ContextVar[asyncio.Event | None] = ContextVar("_shutdown_event_var", default=None)
+_default_shutdown_event: asyncio.Event | None = None
 
 # The final frame sent to the client on deploy.  `retry: 1000` asks the
 # browser to reconnect in ~1 s; the comment line is ignored by `onmessage`
@@ -51,27 +55,38 @@ _shutdown_event_var: ContextVar[asyncio.Event | None] = ContextVar("_shutdown_ev
 _SHUTDOWN_FRAME = "retry: 1000\n: server closing\n\n"
 
 
-def bind_shutdown_event(event: asyncio.Event) -> None:
-    """Bind `event` as the active SSE shutdown signal for the current Context.
-
-    Called once at process startup (composition root) and once per test
-    (`sse_shutdown_event_isolation` fixture in `app/testing/isolation`).
-    Subsequent calls in the same Context replace the prior binding.
-    """
-    _shutdown_event_var.set(event)
-
-
 def _get_event() -> asyncio.Event:
-    """Return the active shutdown event. Raises `RuntimeError` if
-    `bind_shutdown_event` has not been called — fail-fast so forgotten
-    startup binds surface immediately rather than silently producing wrong state."""
-    event = _shutdown_event_var.get()
-    if event is None:
-        raise RuntimeError(
-            "sse shutdown event not bound: call bind_shutdown_event(asyncio.Event()) "
-            "at process startup or use the sse_shutdown_event_isolation fixture in tests."
-        )
-    return event
+    """Return the active shutdown event.
+
+    Test-override (installed by `set_shutdown_event_for_tests`) takes priority.
+    Production path lazy-creates a module-global event on first access so no
+    composition-root binding is required.
+    """
+    override = _shutdown_event_var.get()
+    if override is not None:
+        return override
+    global _default_shutdown_event
+    if _default_shutdown_event is None:
+        _default_shutdown_event = asyncio.Event()
+    return _default_shutdown_event
+
+
+@contextmanager
+def set_shutdown_event_for_tests() -> Iterator[asyncio.Event]:
+    """Context manager: install a fresh asyncio.Event as the SSE shutdown signal
+    for the duration of the block. Test-only seam — restores the prior override
+    on exit (even on exception).
+
+    Used by `sse_shutdown_event_isolation` in `app/testing/isolation` so every
+    test starts with an unset event and cannot leak a previously-set event into
+    the next test.
+    """
+    event = asyncio.Event()
+    token = _shutdown_event_var.set(event)
+    try:
+        yield event
+    finally:
+        _shutdown_event_var.reset(token)
 
 
 async def shutdown() -> None:

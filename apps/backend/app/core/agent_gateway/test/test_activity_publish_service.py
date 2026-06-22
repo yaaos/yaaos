@@ -17,10 +17,10 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from app.core.agent_gateway import bearers
+from app.core.agent_gateway import bearers, set_bearer_verify_for_tests
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.sse import subscribe_workspace_activity
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_org
 
 
 def _app() -> FastAPI:
@@ -36,7 +36,7 @@ def _app() -> FastAPI:
 
 async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
     """Insert org + agent row + issue a bearer. Returns (org_id, agent_id, bearer_token)."""
-    org = await orgs_repo.insert_org(db_session, slug=f"act-pub-{uuid4().hex[:6]}")
+    org = await insert_org(db_session, slug=f"act-pub-{uuid4().hex[:6]}")
     org.registered_iam_arn = f"arn:aws:iam::123456789012:role/test-{uuid4().hex[:6]}"
     org.aws_region = "us-east-1"
     agent = WorkspaceAgentRow(
@@ -81,41 +81,40 @@ async def test_ws_batch_publishes_workspace_activity_with_org_id(db_session) -> 
             return None
         return bearers.BearerContext(bearer_id=uuid4(), agent_id=agent_id, org_id=org_id)
 
-    bearers.set_verify_override(_bearer_stub)
+    with set_bearer_verify_for_tests(verify=_bearer_stub):
+        received: list[dict] = []
 
-    received: list[dict] = []
+        async def _consume() -> None:
+            async for evt in subscribe_workspace_activity(org_id, wfx_id):
+                received.append(evt)
+                if len(received) >= 2:
+                    return
 
-    async def _consume() -> None:
-        async for evt in subscribe_workspace_activity(org_id, wfx_id):
-            received.append(evt)
-            if len(received) >= 2:
-                return
+        consumer = asyncio.create_task(_consume())
+        # Allow the subscriber to register before the publisher fires.
+        await asyncio.sleep(0.5)
 
-    consumer = asyncio.create_task(_consume())
-    # Allow the subscriber to register before the publisher fires.
-    await asyncio.sleep(0.5)
+        def _send_batch() -> None:
+            with TestClient(_app()) as client:
+                with client.websocket_connect(
+                    "/api/v1/agent/activity",
+                    headers={"Authorization": f"Bearer {token}"},
+                ) as ws:
+                    ws.send_json(
+                        {
+                            "type": "activity_batch",
+                            "workflow_execution_id": str(wfx_id),
+                            "events": [
+                                {"kind": "agent.thought", "text": "thinking"},
+                                {"kind": "agent.tool_use", "tool": "Read"},
+                            ],
+                        }
+                    )
+                    time.sleep(0.3)
 
-    def _send_batch() -> None:
-        with TestClient(_app()) as client:
-            with client.websocket_connect(
-                "/api/v1/agent/activity",
-                headers={"Authorization": f"Bearer {token}"},
-            ) as ws:
-                ws.send_json(
-                    {
-                        "type": "activity_batch",
-                        "workflow_execution_id": str(wfx_id),
-                        "events": [
-                            {"kind": "agent.thought", "text": "thinking"},
-                            {"kind": "agent.tool_use", "tool": "Read"},
-                        ],
-                    }
-                )
-                time.sleep(0.3)
+        await asyncio.to_thread(_send_batch)
+        await asyncio.wait_for(consumer, timeout=3.0)
 
-    await asyncio.to_thread(_send_batch)
-    await asyncio.wait_for(consumer, timeout=3.0)
-
-    assert len(received) == 2
-    assert received[0] == {"kind": "agent.thought", "text": "thinking"}
-    assert received[1] == {"kind": "agent.tool_use", "tool": "Read"}
+        assert len(received) == 2
+        assert received[0] == {"kind": "agent.thought", "text": "thinking"}
+        assert received[1] == {"kind": "agent.tool_use", "tool": "Read"}

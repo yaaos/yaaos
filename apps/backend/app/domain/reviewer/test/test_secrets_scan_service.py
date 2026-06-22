@@ -94,10 +94,10 @@ async def test_secrets_scan_advances_when_diff_fetch_fails(db_session) -> None: 
         async def fetch_diff(self, org_id, external_id):  # type: ignore[no-untyped-def]
             raise RuntimeError("github transient")
 
-    from app.testing.isolation import scoped_vcs_plugin  # noqa: PLC0415
+    from app.core.vcs import set_vcs_for_tests  # noqa: PLC0415
 
     inputs = SecretsScanInputs(org_id=uuid4(), plugin_id="github", pr_external_id="pr-x")
-    with scoped_vcs_plugin(_RaisingPlugin()):  # type: ignore[arg-type]
+    with set_vcs_for_tests(plugin=_RaisingPlugin()):  # type: ignore[arg-type]
         outcome = await SecretsScan().execute(inputs, _cmd_ctx(), session=db_session)
 
     assert outcome.label == "success"

@@ -22,9 +22,9 @@ async def _make_workspace_row(
     status: str = "active",
     command_id=None,
 ) -> WorkspaceRow:
-    from app.testing.seed import seed_agent  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_agent  # noqa: PLC0415
 
-    agent = await seed_agent(org_id=uuid4(), session=db_session)
+    agent = await seed_agent(org_id=uuid4())
     return WorkspaceRow(
         id=uuid7(),
         org_id=uuid4(),

@@ -17,16 +17,15 @@ from itsdangerous import URLSafeTimedSerializer
 from pydantic import SecretStr
 from sqlalchemy import select
 
+import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.config import get_settings
-from app.core.identity import repository as identity_repo
-from app.core.identity import sessions as session_lifecycle
+from app.core.identity import create_user, mint_session
 from app.core.oauth import ProviderConfig, Tokens
-from app.core.sessions import web as _auth_web  # noqa: F401
 from app.domain.integrations import web as _integ_web  # noqa: F401
 from app.domain.integrations.types import _REGISTRY
-from app.domain.orgs import repository as orgs_repo
+from app.domain.orgs import insert_membership, insert_org
 
 
 def _make_stub_config() -> ProviderConfig:
@@ -100,17 +99,13 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    admin = await identity_repo.insert_user(db_session, display_name="A")
-    member = await identity_repo.insert_user(db_session, display_name="M")
-    org = await orgs_repo.insert_org(db_session, slug="integ-ep")
-    await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
-    )
-    admin_sess = await session_lifecycle.create(db_session, user_id=admin.id, workspace_id=None)
-    member_sess = await session_lifecycle.create(db_session, user_id=member.id, workspace_id=None)
+    admin = await create_user(db_session, display_name="A")
+    member = await create_user(db_session, display_name="M")
+    org = await insert_org(db_session, slug="integ-ep")
+    await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
+    await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")
+    admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)
+    member_sess = await mint_session(db_session, user_id=member.id, workspace_id=None)
     await db_session.commit()
     yield {
         "org": org,
