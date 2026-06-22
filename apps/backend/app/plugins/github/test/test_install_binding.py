@@ -102,11 +102,11 @@ async def seeded_owner(db_session):
     """Owner + Admin sessions on a fresh org. Builds the auth surface the
     `/install/start` route needs to exercise role gating (Owner-only)."""
     from app.core.auth import Role  # noqa: PLC0415
-    from app.core.identity import insert_user, mint_session  # noqa: PLC0415
+    from app.core.identity import create_user, mint_session  # noqa: PLC0415
     from app.domain.orgs import insert_membership, insert_org  # noqa: PLC0415
 
-    owner = await insert_user(db_session, display_name="O")
-    admin = await insert_user(db_session, display_name="A")
+    owner = await create_user(db_session, display_name="O")
+    admin = await create_user(db_session, display_name="A")
     org = await insert_org(db_session, slug="gh-org")
     await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="ownr")
     await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="admin")

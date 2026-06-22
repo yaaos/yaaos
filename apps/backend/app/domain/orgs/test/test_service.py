@@ -12,9 +12,9 @@ from app.domain.orgs import (
     delete_expired_invitations,
     find_saml_org_slug_for_domain,
     get_org,
-    insert_invitation,
     insert_org,
 )
+from app.domain.orgs.repository import insert_invitation
 
 # ---------------------------------------------------------------------------
 # get_org

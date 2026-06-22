@@ -10,7 +10,7 @@ from fastapi import FastAPI
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import ProviderProfile, add_email, add_oauth_identity, insert_user
+from app.core.identity import ProviderProfile, add_email, create_user, link_oauth_identity
 from app.domain.orgs import insert_membership, insert_org
 from app.plugins.oauth_test import set_next_profile
 
@@ -38,9 +38,9 @@ async def _state_for_test() -> str:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    user = await insert_user(db_session, display_name="Login Audit")
+    user = await create_user(db_session, display_name="Login Audit")
     await add_email(db_session, user_id=user.id, email="la@example.com", verified=True)
-    await add_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="la-1")
+    await link_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="la-1")
     org_a = await insert_org(db_session, slug="audit-a")
     org_b = await insert_org(db_session, slug="audit-b")
     await insert_membership(db_session, user_id=user.id, org_id=org_a.org_id, role=Role.BUILDER, handle="la")

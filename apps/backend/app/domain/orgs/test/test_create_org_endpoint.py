@@ -13,7 +13,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.core.identity import insert_user, mint_session
+from app.core.identity import create_user, mint_session
 from app.domain.orgs import get_membership, insert_org
 
 # org_settings_web is loaded by domain.orgs.__init__ — no explicit import needed
@@ -34,7 +34,7 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    user = await insert_user(db_session, display_name="C")
+    user = await create_user(db_session, display_name="C")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "sess": sess}

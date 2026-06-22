@@ -65,7 +65,7 @@ def _orgs_client() -> httpx.AsyncClient:
 
 async def _make_admin_session(db_session):
     from app.core.auth import Role  # noqa: PLC0415
-    from app.core.identity import insert_user, mint_session  # noqa: PLC0415
+    from app.core.identity import create_user, mint_session  # noqa: PLC0415
 
     org = await insert_org(db_session, slug=f"shutdown-{uuid4().hex[:6]}")
     await update_org_fields(
@@ -74,7 +74,7 @@ async def _make_admin_session(db_session):
         registered_iam_arn="arn:aws:iam::111122223333:role/yaaos",
         aws_region="us-east-1",
     )
-    user = await insert_user(db_session, display_name="Admin")
+    user = await create_user(db_session, display_name="Admin")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="admin")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()

@@ -7,9 +7,7 @@ straddle loops).
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -17,7 +15,7 @@ import pytest_asyncio
 from fastapi import Depends, FastAPI
 
 from app.core.auth import Action, AuthMiddleware, Role, required_role_for
-from app.core.identity import hash_token, insert_session, insert_user
+from app.core.identity import create_user, mint_session
 from app.core.sessions import public_route, require
 from app.domain.orgs import insert_membership, insert_org
 
@@ -65,43 +63,23 @@ def _make_app() -> FastAPI:
 
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
-    user = await insert_user(db_session, display_name="Owner")
-    member_user = await insert_user(db_session, display_name="Member")
+    user = await create_user(db_session, display_name="Owner")
+    member_user = await create_user(db_session, display_name="Member")
     org = await insert_org(db_session, slug="acme")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own")
     await insert_membership(
         db_session, user_id=member_user.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
     )
 
-    raw_owner = "owner-raw-token"
-    raw_member = "member-raw-token"
-    await insert_session(
-        db_session,
-        token_hash=hash_token(raw_owner),
-        user_id=user.id,
-        workspace_id=None,
-        csrf_token="csrf-owner",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
-    await insert_session(
-        db_session,
-        token_hash=hash_token(raw_member),
-        user_id=member_user.id,
-        workspace_id=None,
-        csrf_token="csrf-member",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    owner_created = await mint_session(db_session, user_id=user.id, workspace_id=None)
+    member_created = await mint_session(db_session, user_id=member_user.id, workspace_id=None)
 
     yield {
         "org": org,
         "owner_user": user,
         "member_user": member_user,
-        "owner_token": raw_owner,
-        "member_token": raw_member,
+        "owner_token": owner_created.raw_token,
+        "member_token": member_created.raw_token,
     }
 
 
@@ -259,23 +237,13 @@ async def test_csrf_skipped_on_safe_method(seeded) -> None:
 @pytest.mark.asyncio
 async def test_role_check_does_not_leak_membership_existence(db_session, seeded) -> None:
     """Caller without membership in an existing org sees 404, not 403."""
-    outsider = await insert_user(db_session, display_name="Outsider")
-    raw = f"outsider-{uuid.uuid4()}"
-    await insert_session(
-        db_session,
-        token_hash=hash_token(raw),
-        user_id=outsider.id,
-        workspace_id=None,
-        csrf_token="x",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
+    outsider = await create_user(db_session, display_name="Outsider")
+    created = await mint_session(db_session, user_id=outsider.id, workspace_id=None)
 
     async with _client(_make_app()) as c:
         resp = await c.get(
             "/api/memberships/ok",
-            cookies={"yaaos_session": raw},
+            cookies={"yaaos_session": created.raw_token},
             headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert resp.status_code == 404

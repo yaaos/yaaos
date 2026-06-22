@@ -21,7 +21,7 @@ import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.config import get_settings
-from app.core.identity import insert_user, mint_session
+from app.core.identity import create_user, mint_session
 from app.core.oauth import ProviderConfig, Tokens
 from app.domain.integrations import web as _integ_web  # noqa: F401
 from app.domain.integrations.types import _REGISTRY
@@ -99,8 +99,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    admin = await insert_user(db_session, display_name="A")
-    member = await insert_user(db_session, display_name="M")
+    admin = await create_user(db_session, display_name="A")
+    member = await create_user(db_session, display_name="M")
     org = await insert_org(db_session, slug="integ-ep")
     await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
     await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")

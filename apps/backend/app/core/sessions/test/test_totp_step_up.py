@@ -17,9 +17,9 @@ from app.core.auth import AuthMiddleware
 from app.core.identity import (
     ProviderProfile,
     add_email,
-    add_oauth_identity,
+    create_user,
     enroll_totp,
-    insert_user,
+    link_oauth_identity,
     verify_totp,
 )
 from app.plugins.oauth_test import set_next_profile
@@ -46,9 +46,9 @@ async def _state() -> str:
 
 @pytest_asyncio.fixture
 async def user_with_totp(db_session):
-    user = await insert_user(db_session, display_name="MFA")
+    user = await create_user(db_session, display_name="MFA")
     await add_email(db_session, user_id=user.id, email="mfa@example.com", verified=True)
-    await add_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="mfa-1")
+    await link_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="mfa-1")
     seed, _ = await enroll_totp(db_session, user_id=user.id)
     # Promote to verified.
     code = pyotp.TOTP(seed).now()

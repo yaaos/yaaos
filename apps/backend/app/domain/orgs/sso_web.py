@@ -134,8 +134,8 @@ async def sso_acs(
     from app.core.auth import Role  # noqa: PLC0415
     from app.core.identity import (  # noqa: PLC0415
         add_email,
+        create_user,
         find_user_by_email,
-        insert_user,
         mark_sso_satisfied,
         mint_session,
     )
@@ -163,7 +163,7 @@ async def sso_acs(
         if user_row is None:
             if not cfg.jit_enabled:
                 raise _err(403, "user_not_provisioned")
-            user_row = await insert_user(s, display_name=email.split("@")[0])
+            user_row = await create_user(s, display_name=email.split("@")[0])
             await add_email(s, user_id=user_row.id, email=email, is_primary=True, verified=True)
             await _create_membership(
                 s,

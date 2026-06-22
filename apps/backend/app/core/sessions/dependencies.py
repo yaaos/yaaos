@@ -27,7 +27,7 @@ from app.core.auth import (
     user_id_var,
 )
 from app.core.database import session as db_session
-from app.core.identity import get_session_by_hash, hash_token
+from app.core.identity import find_session_by_hash, hash_token
 from app.core.tenancy import AuthOrg, resolve_auth_org
 
 
@@ -48,15 +48,11 @@ async def _current_session_user_id(
         return None
     token_hash = hash_token(yaaos_session)
     async with db_session() as s:
-        row = await get_session_by_hash(s, token_hash)
-    if row is None or row.user_id is None:
+        sess = await find_session_by_hash(s, token_hash)
+    if sess is None or sess.user_id is None:
         return None
-    from datetime import UTC, datetime  # noqa: PLC0415
-
-    if row.expires_at < datetime.now(UTC):
-        return None
-    user_id_var.set(row.user_id)
-    return row.user_id
+    user_id_var.set(sess.user_id)
+    return sess.user_id
 
 
 def require(action: Action) -> Callable[..., None]:
@@ -119,7 +115,7 @@ def require(action: Action) -> Callable[..., None]:
         if token:
             token_hash = hash_token(token)
             async with db_session() as s:
-                sess_row = await get_session_by_hash(s, token_hash)
+                sess_row = await find_session_by_hash(s, token_hash)
             if sess_row is not None and sess_row.last_seen_at is not None:
                 minutes = auth_org.session_timeout_override
                 idle = _timedelta(minutes=minutes) if minutes else SESSION_IDLE_TIMEOUT

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.auth import Role
-from app.core.identity import insert_user
+from app.core.identity import create_user
 from app.domain.orgs import insert_membership, insert_org, list_active_member_ids
 
 
@@ -18,12 +18,12 @@ async def test_list_active_member_ids_returns_active_only(db_session) -> None:
     org_b = await insert_org(db_session, slug="lam-org-b")
 
     # Three users in org_a.
-    user1 = await insert_user(db_session, display_name="User1")
-    user2 = await insert_user(db_session, display_name="User2")
-    user3 = await insert_user(db_session, display_name="User3")
+    user1 = await create_user(db_session, display_name="User1")
+    user2 = await create_user(db_session, display_name="User2")
+    user3 = await create_user(db_session, display_name="User3")
 
     # One user only in org_b — must not appear in org_a results.
-    user_b = await insert_user(db_session, display_name="UserB")
+    user_b = await create_user(db_session, display_name="UserB")
 
     await insert_membership(db_session, user_id=user1.id, org_id=org_a.org_id, role=Role.OWNER, handle="u1")
     await insert_membership(db_session, user_id=user2.id, org_id=org_a.org_id, role=Role.ADMIN, handle="u2")

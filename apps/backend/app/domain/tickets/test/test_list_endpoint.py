@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import insert_user, mint_session
+from app.core.identity import create_user, mint_session
 from app.domain.orgs import insert_membership, insert_org
 from app.web import app as _web_app  # noqa: F401
 
@@ -62,7 +62,7 @@ async def _seed_ticket(
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    user = await insert_user(db_session, display_name="B")
+    user = await create_user(db_session, display_name="B")
     org = await insert_org(db_session, slug="list-org")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="b")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)

@@ -43,11 +43,11 @@ def _client() -> httpx.AsyncClient:
 async def _make_org_and_session(db_session) -> tuple[Any, Any, str]:
     """Create an org + admin session; return (org_row, user_id, session_cookie_token)."""
     from app.core.auth import Role  # noqa: PLC0415
-    from app.core.identity import insert_user, mint_session  # noqa: PLC0415
+    from app.core.identity import create_user, mint_session  # noqa: PLC0415
     from app.domain.orgs import insert_membership, insert_org  # noqa: PLC0415
 
     org = await insert_org(db_session, slug=f"liveness-{uuid4().hex[:6]}")
-    user = await insert_user(db_session, display_name="Test User")
+    user = await create_user(db_session, display_name="Test User")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="test")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()

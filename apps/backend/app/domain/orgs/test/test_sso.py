@@ -11,9 +11,9 @@ from fastapi import FastAPI
 from app.core.auth import Action, AuthMiddleware, Role
 from app.core.identity import (
     add_email,
+    create_user,
     enroll_totp,
     find_user_by_email,
-    insert_user,
     mark_sso_satisfied,
     mint_session,
     verify_totp,
@@ -49,7 +49,7 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def sso_org(db_session):
-    user = await insert_user(db_session, display_name="SSO User")
+    user = await create_user(db_session, display_name="SSO User")
     await add_email(db_session, user_id=user.id, email="ssouser@example.com", verified=True)
     org = await insert_org(db_session, slug="sso-org")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="sso")
@@ -176,7 +176,7 @@ async def test_middleware_allows_when_sso_satisfied(sso_org, db_session) -> None
 
 @pytest.mark.asyncio
 async def test_exempt_owner_bypasses_sso_when_totp_verified(db_session) -> None:
-    owner = await insert_user(db_session, display_name="Owner")
+    owner = await create_user(db_session, display_name="Owner")
     await add_email(db_session, user_id=owner.id, email="owner@example.com", verified=True)
     org = await insert_org(db_session, slug="exempt-org")
     await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="ow")

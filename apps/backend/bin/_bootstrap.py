@@ -38,7 +38,13 @@ from pydantic import BaseModel  # noqa: E402
 from app.core.audit_log import Actor, audit  # noqa: E402
 from app.core.auth import Role  # noqa: E402
 from app.core.database import session as db_session  # noqa: E402
-from app.core.identity import repository as identity_repo  # noqa: E402
+from app.core.identity import (  # noqa: E402
+    add_email,
+    create_user,
+    find_oauth_identity,
+    find_user_by_email,
+    link_oauth_identity,
+)
 from app.domain.orgs import repository as orgs_repo  # noqa: E402
 
 _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
@@ -112,30 +118,28 @@ async def _ensure_org(
 
 
 async def _ensure_user(s, *, email: str, display_name: str):
-    existing = await identity_repo.find_user_by_email(s, email)
+    existing = await find_user_by_email(s, email)
     if existing is not None:
         return existing, False
-    user = await identity_repo.insert_user(s, display_name=display_name)
-    await identity_repo.add_email(s, user_id=user.id, email=email, is_primary=True, verified=True)
+    user = await create_user(s, display_name=display_name)
+    await add_email(s, user_id=user.id, email=email, is_primary=True, verified=True)
     return user, True
 
 
 async def _ensure_oauth_identity(s, *, user_id, external_subject: str):
-    existing = await identity_repo.find_oauth_identity(
-        s, provider="github", external_subject=external_subject
-    )
+    existing = await find_oauth_identity(s, provider="github", external_subject=external_subject)
     if existing is not None:
         if existing.user_id != user_id:
             raise RuntimeError(f"GitHub identity {external_subject} is already linked to a different user")
         return existing, False
-    row = await identity_repo.add_oauth_identity(
+    identity = await link_oauth_identity(
         s,
         user_id=user_id,
         provider="github",
         external_subject=external_subject,
         verified=True,
     )
-    return row, True
+    return identity, True
 
 
 async def _ensure_owner_membership(s, *, user_id, org_id, handle: str):

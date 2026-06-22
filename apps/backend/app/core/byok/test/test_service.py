@@ -9,13 +9,13 @@ import app.core.byok as byok
 from app.core.audit_log import Actor, list_for_org
 from app.core.auth import Role
 from app.core.byok.models import ByokKeyRow
-from app.core.identity import insert_user
+from app.core.identity import create_user
 from app.domain.orgs import insert_membership, insert_org
 
 
 @pytest.mark.asyncio
 async def test_set_get_roundtrip(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-rt")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -33,7 +33,7 @@ async def test_get_returns_none_when_missing(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_set_overwrites_existing(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-overwrite")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -45,7 +45,7 @@ async def test_set_overwrites_existing(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_clear_removes_row(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-clear")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -58,7 +58,7 @@ async def test_clear_removes_row(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_clear_returns_false_on_no_op(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-noop")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -68,7 +68,7 @@ async def test_clear_returns_false_on_no_op(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_validate_invokes_callable_and_stamps_last_validated(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-validate")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -94,7 +94,7 @@ async def test_validate_invokes_callable_and_stamps_last_validated(db_session) -
 
 @pytest.mark.asyncio
 async def test_validate_returns_false_when_validator_fails(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-failval")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -109,7 +109,7 @@ async def test_validate_returns_false_when_validator_fails(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_validate_returns_false_when_no_key_set(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-noval")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -123,7 +123,7 @@ async def test_validate_returns_false_when_no_key_set(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_set_emits_audit(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-audit-set")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -136,7 +136,7 @@ async def test_set_emits_audit(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_clear_emits_audit_only_on_actual_removal(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-audit-clear")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -155,7 +155,7 @@ async def test_clear_emits_audit_only_on_actual_removal(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_validate_audit_records_success_flag(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-audit-val")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)
@@ -181,7 +181,7 @@ async def test_validate_audit_records_success_flag(db_session) -> None:
 @pytest.mark.asyncio
 async def test_list_keys_for_org_returns_only_requested_org(db_session) -> None:
     """list_keys_for_org returns all keys for one org and excludes other orgs."""
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org_a = await insert_org(db_session, slug="byok-list-a")
     org_b = await insert_org(db_session, slug="byok-list-b")
     await insert_membership(db_session, user_id=user.id, org_id=org_a.org_id, role=Role.OWNER, handle="ua")
@@ -206,7 +206,7 @@ async def test_list_keys_for_org_returns_only_requested_org(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_set_rejects_empty_string(db_session) -> None:
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="byok-empty-input")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="u")
     actor = Actor.user(user_id=user.id)

@@ -16,7 +16,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core.auth import Role
-from app.core.identity import add_email, insert_user
+from app.core.identity import add_email, create_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.tasks import get_broker
@@ -69,7 +69,7 @@ def stub_provider():
 
 async def _seed(db_session, *, owner_email: str = "owner-svc@example.com"):
     org = await insert_org(db_session, slug=f"sched-svc-{datetime.now(UTC).timestamp()}")
-    owner = await insert_user(db_session, display_name="Owner")
+    owner = await create_user(db_session, display_name="Owner")
     await add_email(db_session, user_id=owner.id, email=owner_email, is_primary=True, verified=True)
     await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
     row = McpCredentialRow(

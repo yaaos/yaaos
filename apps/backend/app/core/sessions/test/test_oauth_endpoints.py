@@ -13,10 +13,10 @@ from app.core.auth import AuthMiddleware, Role
 from app.core.identity import (
     ProviderProfile,
     add_email,
-    add_oauth_identity,
+    create_user,
     find_oauth_identity,
     find_user_by_email,
-    insert_user,
+    link_oauth_identity,
 )
 from app.domain.orgs import insert_org, invite
 from app.plugins.oauth_test import set_next_profile
@@ -70,9 +70,9 @@ async def _begin_login_and_get_state() -> str:
 
 @pytest.mark.asyncio
 async def test_callback_existing_identity_issues_session(db_session) -> None:
-    user = await insert_user(db_session, display_name="E")
+    user = await create_user(db_session, display_name="E")
     await add_email(db_session, user_id=user.id, email="e@example.com", verified=True)
-    await add_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="ex-1")
+    await link_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="ex-1")
     state = await _begin_login_and_get_state()
     set_next_profile(
         ProviderProfile(
@@ -127,9 +127,9 @@ async def test_callback_unknown_user_redirects_to_login_with_reason(db_session) 
 
 @pytest.mark.asyncio
 async def test_callback_email_match_without_identity_autolinks(db_session) -> None:
-    user = await insert_user(db_session)
+    user = await create_user(db_session)
     await add_email(db_session, user_id=user.id, email="dup@example.com", verified=True)
-    await add_oauth_identity(db_session, user_id=user.id, provider="other", external_subject="o-1")
+    await link_oauth_identity(db_session, user_id=user.id, provider="other", external_subject="o-1")
     await db_session.commit()
     state = await _begin_login_and_get_state()
     set_next_profile(

@@ -13,7 +13,7 @@ from fastapi import FastAPI
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import insert_user, lookup_session, mint_session
+from app.core.identity import create_user, lookup_session, mint_session
 from app.domain.orgs import insert_membership, insert_org
 from app.domain.orgs import invite as invite_service
 
@@ -37,8 +37,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
-    owner_user = await insert_user(db_session, display_name="Owner")
-    member_user = await insert_user(db_session, display_name="Member")
+    owner_user = await create_user(db_session, display_name="Owner")
+    member_user = await create_user(db_session, display_name="Member")
     org = await insert_org(db_session, slug="endpoints-org")
     await insert_membership(
         db_session, user_id=owner_user.id, org_id=org.org_id, role=Role.OWNER, handle="own"
@@ -110,7 +110,7 @@ async def test_accept_invitation_happy_path(seeded, db_session) -> None:
         actor=Actor.user(user_id=owner_user.id),
     )
     # Acceptor needs a session cookie.
-    alice = await insert_user(db_session)
+    alice = await create_user(db_session)
     alice_session = await mint_session(db_session, user_id=alice.id, workspace_id=None)
     await db_session.commit()
 
@@ -145,7 +145,7 @@ async def test_accept_expired_returns_410(seeded, db_session) -> None:
         .where(InvitationRow.email == "ex@example.com")
         .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
     )
-    user = await insert_user(db_session)
+    user = await create_user(db_session)
     s = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 
@@ -171,7 +171,7 @@ async def test_accept_used_returns_410(seeded, db_session) -> None:
         invited_by_user_id=owner_user.id,
         actor=Actor.user(user_id=owner_user.id),
     )
-    user = await insert_user(db_session)
+    user = await create_user(db_session)
     s = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
 

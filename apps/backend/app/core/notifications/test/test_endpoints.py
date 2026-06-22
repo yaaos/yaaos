@@ -12,7 +12,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware
-from app.core.identity import insert_user, mint_session
+from app.core.identity import create_user, mint_session
 from app.core.notifications import web as _notifications_web  # noqa: F401
 from app.core.notifications.models import NotificationRow
 from app.core.notifications.service import create
@@ -34,8 +34,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    alice = await insert_user(db_session, display_name="Alice")
-    bob = await insert_user(db_session, display_name="Bob")
+    alice = await create_user(db_session, display_name="Alice")
+    bob = await create_user(db_session, display_name="Bob")
     org = await insert_org(db_session, slug="notif-org", display_name="NotifOrg")
     # One notification for Alice, one for Bob — proves per-user scoping.
     n_alice = await create(

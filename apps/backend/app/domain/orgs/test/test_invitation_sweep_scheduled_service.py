@@ -14,7 +14,7 @@ from sqlalchemy import select, update
 
 from app.core.audit_log import Actor
 from app.core.auth import Role
-from app.core.identity import insert_user
+from app.core.identity import create_user
 from app.core.tasks import get_broker
 from app.domain.orgs import insert_membership, insert_org, invite
 from app.domain.orgs.invitation_sweeper import _sweep_once, invitation_sweep
@@ -37,7 +37,7 @@ async def test_invitation_sweep_task_registered_with_broker() -> None:
 async def test_invitation_sweep_body_purges_expired(db_session) -> None:
     """Drive `_sweep_once` directly — expired invitation rows are deleted."""
     org = await insert_org(db_session, slug="inv-sched-org")
-    owner = await insert_user(db_session, display_name="Owner")
+    owner = await create_user(db_session, display_name="Owner")
     await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
     actor = Actor.user(user_id=owner.id)
 

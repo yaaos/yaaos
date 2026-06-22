@@ -8,7 +8,7 @@ from fastapi import FastAPI
 
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import add_email, insert_user, lookup_session, mint_session
+from app.core.identity import add_email, create_user, lookup_session, mint_session
 from app.domain.orgs import insert_membership, insert_org
 
 
@@ -34,7 +34,7 @@ async def test_me_without_session_returns_401() -> None:
 
 @pytest.mark.asyncio
 async def test_me_returns_user_and_memberships(db_session) -> None:
-    user = await insert_user(db_session, display_name="Jack K")
+    user = await create_user(db_session, display_name="Jack K")
     await add_email(db_session, user_id=user.id, email="jack@example.com", is_primary=True, verified=True)
     org_a = await insert_org(db_session, slug="me-org-a", display_name="A")
     org_b = await insert_org(db_session, slug="me-org-b", display_name="B")
@@ -72,7 +72,7 @@ async def test_me_returns_user_and_memberships(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_logout_all_revokes_every_session(db_session) -> None:
-    user = await insert_user(db_session)
+    user = await create_user(db_session)
     s1 = await mint_session(db_session, user_id=user.id, workspace_id=None)
     s2 = await mint_session(db_session, user_id=user.id, workspace_id=None)
     s3 = await mint_session(db_session, user_id=user.id, workspace_id=None)
@@ -97,7 +97,7 @@ async def test_logout_all_revokes_every_session(db_session) -> None:
 async def test_me_memberships_have_no_broken_integrations_field(db_session) -> None:
     """/api/auth/me memberships do not expose broken_integrations — that lives
     in GET /api/integrations/broken-summary (domain/integrations)."""
-    user = await insert_user(db_session, display_name="A")
+    user = await create_user(db_session, display_name="A")
     org = await insert_org(db_session, slug="me-no-broken-org")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
     sess = await mint_session(db_session, user_id=user.id, workspace_id=None)

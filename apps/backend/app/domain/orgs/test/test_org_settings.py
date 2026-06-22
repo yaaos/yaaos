@@ -12,7 +12,7 @@ from fastapi import FastAPI
 
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import hash_token, insert_user, mint_session
+from app.core.identity import hash_token, create_user, mint_session
 from app.core.tenancy import get_org_full, update_org_fields
 from app.domain.orgs import insert_membership, insert_org
 
@@ -53,9 +53,9 @@ def _idle_probe_client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    owner = await insert_user(db_session, display_name="O")
-    admin = await insert_user(db_session, display_name="A")
-    member = await insert_user(db_session, display_name="M")
+    owner = await create_user(db_session, display_name="O")
+    admin = await create_user(db_session, display_name="A")
+    member = await create_user(db_session, display_name="M")
     org = await insert_org(db_session, slug="ts-org")
     await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
     await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")

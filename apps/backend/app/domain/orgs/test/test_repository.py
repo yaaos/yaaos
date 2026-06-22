@@ -13,18 +13,17 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.core.auth import Role
-from app.core.identity import insert_user
+from app.core.identity import create_user
 from app.core.tenancy import get_membership_info, update_org_fields
 from app.domain.orgs import (
-    get_invitation_by_token_hash,
     get_membership,
     get_org_full_by_slug,
     hash_token,
-    insert_invitation,
     insert_membership,
     insert_org,
     update_role,
 )
+from app.domain.orgs.repository import get_invitation_by_token_hash, insert_invitation
 
 
 @pytest.mark.asyncio
@@ -32,7 +31,7 @@ async def test_create_org_and_owner_membership(db_session) -> None:
     org = await insert_org(db_session, slug="acme", display_name="Acme")
     assert org.slug == "acme"
 
-    user = await insert_user(db_session, display_name="Owner")
+    user = await create_user(db_session, display_name="Owner")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="owner")
 
     found = await get_membership(db_session, user_id=user.id, org_id=org.org_id)
@@ -43,8 +42,8 @@ async def test_create_org_and_owner_membership(db_session) -> None:
 @pytest.mark.asyncio
 async def test_unique_handle_per_org(db_session) -> None:
     org = await insert_org(db_session, slug="dup-handle")
-    a = await insert_user(db_session)
-    b = await insert_user(db_session)
+    a = await create_user(db_session)
+    b = await create_user(db_session)
     await insert_membership(db_session, user_id=a.id, org_id=org.org_id, role=Role.OWNER, handle="jack")
     with pytest.raises(IntegrityError):
         await insert_membership(db_session, user_id=b.id, org_id=org.org_id, role=Role.BUILDER, handle="jack")
@@ -62,7 +61,7 @@ async def test_role_covers_ordering() -> None:
 @pytest.mark.asyncio
 async def test_update_role(db_session) -> None:
     org = await insert_org(db_session, slug="role-change")
-    user = await insert_user(db_session)
+    user = await create_user(db_session)
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="m")
     await update_role(db_session, user_id=user.id, org_id=org.org_id, role=Role.ADMIN)
     info = await get_membership_info(db_session, user_id=user.id, org_id=org.org_id)

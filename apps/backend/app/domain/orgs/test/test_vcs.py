@@ -10,7 +10,7 @@ from fastapi import FastAPI
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor, list_for_org
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import insert_user, mint_session
+from app.core.identity import create_user, mint_session
 from app.domain.orgs import clear_vcs, get_vcs, insert_membership, insert_org, set_vcs
 
 # vcs_web is loaded by domain.orgs.__init__ — no explicit import needed
@@ -42,9 +42,9 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    owner = await insert_user(db_session, display_name="O")
-    admin = await insert_user(db_session, display_name="A")
-    member = await insert_user(db_session, display_name="M")
+    owner = await create_user(db_session, display_name="O")
+    admin = await create_user(db_session, display_name="A")
+    member = await create_user(db_session, display_name="M")
     org = await insert_org(db_session, slug="vcs-org")
     await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
     await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")

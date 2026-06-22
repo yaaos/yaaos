@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from app.core.auth import AUTH_LIMIT, MUTATE_LIMIT, Action, Role, limiter, org_id_var, user_id_var
 from app.core.database import session as db_session
-from app.core.identity import get_session_by_hash, get_user, hash_token, list_emails_for_user
+from app.core.identity import find_session_by_hash, get_user, hash_token, list_emails_for_user
 from app.core.sessions import current_actor, public_route, require
 from app.core.tenancy import update_member_handle as _update_member_handle
 from app.core.webserver import RouteSpec, register_routes
@@ -232,15 +232,11 @@ async def _resolve_session_user(s, raw_token: str) -> UUID | None:
     `accept_invitation` runs without the `require()` dep that normally
     populates `user_id_var`."""
     token_hash = hash_token(raw_token)
-    row = await get_session_by_hash(s, token_hash)
-    if row is None or row.user_id is None:
+    sess = await find_session_by_hash(s, token_hash)
+    if sess is None or sess.user_id is None:
         return None
-    from datetime import UTC, datetime  # noqa: PLC0415
-
-    if row.expires_at < datetime.now(UTC):
-        return None
-    user_id_var.set(row.user_id)
-    return row.user_id
+    user_id_var.set(sess.user_id)
+    return sess.user_id
 
 
 register_routes(RouteSpec(module_name="memberships", router=router))

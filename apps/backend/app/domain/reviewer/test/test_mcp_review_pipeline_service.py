@@ -25,7 +25,7 @@ from pydantic import SecretStr
 import app.domain.mcp_proxy  # noqa: F401  -- triggers mcp route registration
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
-from app.core.identity import insert_user
+from app.core.identity import create_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.vcs import VCSPullRequest
@@ -90,7 +90,7 @@ async def _seed_review_with_broken_credential(db_session) -> tuple[ReviewRow, st
     """Seed org + ticket + PR + review + a `last_refresh_status="failed"` credential.
     Mints the per-review bearer and returns (review, raw_token)."""
     org = await insert_org(db_session, slug=f"svc-mcp-{uuid4().hex[:8]}")
-    await insert_user(db_session, display_name="U")
+    await create_user(db_session, display_name="U")
     ext_id = f"pr-{uuid4()}"
     ticket_id, _ = await create_ticket(
         org_id=org.org_id,

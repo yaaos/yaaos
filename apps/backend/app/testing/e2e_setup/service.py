@@ -219,9 +219,9 @@ async def seed_bootstrap_owner(
     from app.core.audit_log import Actor  # noqa: PLC0415
     from app.core.auth import Role  # noqa: PLC0415
     from app.core.identity import (  # noqa: PLC0415
-        create_email,
-        create_oauth_identity,
+        add_email,
         create_user,
+        link_oauth_identity,
     )
     from app.domain.orgs import (  # noqa: PLC0415
         create_membership,
@@ -230,14 +230,14 @@ async def seed_bootstrap_owner(
 
     async with db_session() as s:
         user = await create_user(s, display_name=display_name)
-        await create_email(
+        await add_email(
             s,
             user_id=user.id,
             email=email.lower(),
             is_primary=True,
             verified=True,
         )
-        await create_oauth_identity(
+        await link_oauth_identity(
             s,
             user_id=user.id,
             provider=provider,
@@ -275,11 +275,11 @@ async def seed_user_with_session(*, email: str, raw_session_token: str) -> str:
     from datetime import UTC, datetime, timedelta  # noqa: PLC0415
 
     from app.core.identity import (  # noqa: PLC0415
-        create_email,
-        create_session,
+        add_email,
         create_user,
         find_user_by_email,
         hash_token,
+        set_session_for_tests,
     )
 
     async with db_session() as s:
@@ -288,14 +288,14 @@ async def seed_user_with_session(*, email: str, raw_session_token: str) -> str:
             user = existing
         else:
             user = await create_user(s, display_name=email.split("@", 1)[0])
-            await create_email(
+            await add_email(
                 s,
                 user_id=user.id,
                 email=email.lower(),
                 is_primary=True,
                 verified=True,
             )
-        await create_session(
+        await set_session_for_tests(
             s,
             token_hash=hash_token(raw_session_token),
             user_id=user.id,
@@ -446,14 +446,11 @@ async def set_session_last_seen(
     Uses the caller's session; does not commit."""
     from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
 
-    from app.core.identity import get_session_by_hash  # noqa: PLC0415
+    from app.core.identity import set_session_last_seen_for_tests  # noqa: PLC0415
 
     if not isinstance(db, AsyncSession):
         raise TypeError("set_session_last_seen: first arg must be AsyncSession")
-    row = await get_session_by_hash(db, token_hash)
-    assert row is not None, f"session not found for hash: {token_hash[:8]}..."
-    row.last_seen_at = last_seen_at
-    await db.flush()
+    await set_session_last_seen_for_tests(db, token_hash=token_hash, last_seen_at=last_seen_at)
 
 
 async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:

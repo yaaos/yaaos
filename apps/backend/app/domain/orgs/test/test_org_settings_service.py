@@ -14,7 +14,7 @@ from fastapi import FastAPI
 
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import insert_user, mint_session
+from app.core.identity import create_user, mint_session
 from app.core.tenancy import update_org_fields
 from app.domain.orgs import insert_membership, insert_org
 
@@ -37,8 +37,8 @@ def _patch_client() -> httpx.AsyncClient:
 @pytest_asyncio.fixture
 async def two_orgs(db_session):
     """Two orgs, each with an admin session. Used to verify cross-org ARN collision."""
-    admin_a = await insert_user(db_session, display_name="Admin A")
-    admin_b = await insert_user(db_session, display_name="Admin B")
+    admin_a = await create_user(db_session, display_name="Admin A")
+    admin_b = await create_user(db_session, display_name="Admin B")
 
     org_a = await insert_org(db_session, slug="org-arn-a")
     org_b = await insert_org(db_session, slug="org-arn-b")

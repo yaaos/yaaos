@@ -12,7 +12,7 @@ from fastapi import FastAPI
 
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import insert_user, mint_session
+from app.core.identity import create_user, mint_session
 from app.core.workspace import web as _workspace_web  # noqa: F401 — registers /api/workspaces
 from app.domain.orgs import insert_membership, insert_org
 
@@ -32,8 +32,8 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def seeded(db_session):
-    owner = await insert_user(db_session, display_name="Owner")
-    builder = await insert_user(db_session, display_name="Builder")
+    owner = await create_user(db_session, display_name="Owner")
+    builder = await create_user(db_session, display_name="Builder")
     org = await insert_org(db_session, slug="ws-status-org")
     await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
     await insert_membership(

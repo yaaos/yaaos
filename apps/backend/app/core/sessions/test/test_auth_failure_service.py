@@ -23,7 +23,7 @@ from fastapi import Depends, FastAPI
 import app.core.sessions  # noqa: F401  -- triggers /api/auth/me route registration
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, AuthMiddleware, Role, register_handler
-from app.core.identity import hash_token, insert_session, insert_user
+from app.core.identity import hash_token, create_user, mint_session
 from app.core.sessions import require
 from app.domain.orgs import insert_membership, insert_org
 from app.testing.e2e_setup import set_session_last_seen as _set_session_last_seen_for_tests
@@ -60,23 +60,17 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session) -> AsyncIterator[dict[str, object]]:
     """Owner with a valid session + a writable org. Tests that need a
     stale `last_seen_at` mutate the row in-place."""
-    user = await insert_user(db_session, display_name="Owner")
+    user = await create_user(db_session, display_name="Owner")
     org = await insert_org(db_session, slug=f"af-{uuid.uuid4().hex[:8]}")
     await insert_membership(db_session, user_id=user.id, org_id=org.org_id, role=Role.OWNER, handle="own")
 
-    raw_token = f"af-owner-{uuid.uuid4().hex[:8]}"
-    await insert_session(
+    created = await mint_session(
         db_session,
-        token_hash=hash_token(raw_token),
         user_id=user.id,
         workspace_id=None,
-        csrf_token="csrf-af",
-        ip=None,
-        user_agent=None,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     await db_session.commit()
-    yield {"org": org, "user": user, "token": raw_token}
+    yield {"org": org, "user": user, "token": created.raw_token}
 
 
 def _assert_cookies_cleared(resp: httpx.Response) -> None:

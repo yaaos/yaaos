@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import insert_user, mint_session
+from app.core.identity import create_user, mint_session
 from app.core.workflow import (
     CommandContext,
     Empty,
@@ -54,7 +54,7 @@ async def _seed_ticket(db_session) -> tuple:  # type: ignore[return]
     if existing is None:
         org = await insert_org(db_session, slug=_ORG_SLUG)
         existing = org
-    user = await insert_user(db_session, display_name="Builder")
+    user = await create_user(db_session, display_name="Builder")
     await insert_membership(
         db_session, user_id=user.id, org_id=existing.org_id, role=Role.BUILDER, handle="b"
     )

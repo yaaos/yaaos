@@ -16,8 +16,8 @@ from app.core.auth import AuthMiddleware
 from app.core.identity import (
     ProviderProfile,
     add_email,
-    add_oauth_identity,
-    insert_user,
+    create_user,
+    link_oauth_identity,
     lookup_session,
     mint_session,
 )
@@ -45,9 +45,9 @@ async def _state() -> str:
 
 @pytest_asyncio.fixture
 async def staged_user(db_session):
-    user = await insert_user(db_session, display_name="Rot")
+    user = await create_user(db_session, display_name="Rot")
     await add_email(db_session, user_id=user.id, email="rot@example.com", verified=True)
-    await add_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="rot-1")
+    await link_oauth_identity(db_session, user_id=user.id, provider="test", external_subject="rot-1")
     pre = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
     yield {"user": user, "pre": pre}

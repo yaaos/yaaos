@@ -8,7 +8,7 @@ import pytest
 
 from app.core.audit_log import Actor
 from app.core.auth import Role
-from app.core.identity import insert_user
+from app.core.identity import create_user
 from app.domain.orgs import delete_expired_invitations, insert_membership, insert_org, invite
 from app.domain.orgs.models import InvitationRow
 
@@ -21,7 +21,7 @@ async def test_orgs_self_sweeps_invitations(db_session) -> None:
     from sqlalchemy import select, update  # noqa: PLC0415
 
     org = await insert_org(db_session, slug="sweep-test-org")
-    owner = await insert_user(db_session, display_name="Sweeper")
+    owner = await create_user(db_session, display_name="Sweeper")
     await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
     actor = Actor.user(user_id=owner.id)
 

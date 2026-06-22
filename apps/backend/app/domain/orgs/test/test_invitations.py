@@ -8,7 +8,7 @@ import pytest
 
 from app.core.audit_log import Actor
 from app.core.auth import Role
-from app.core.identity import insert_user, lookup_session, mint_session
+from app.core.identity import create_user, lookup_session, mint_session
 from app.domain.orgs import (
     InvitationExpiredError,
     InvitationInvalidError,
@@ -26,7 +26,7 @@ from app.domain.orgs import read_sent_emails as read_email_inbox
 
 async def _bootstrap_org_and_owner(db):
     org = await insert_org(db, slug="acme-inv")
-    owner = await insert_user(db, display_name="Owner")
+    owner = await create_user(db, display_name="Owner")
     await insert_membership(db, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="owner")
     return org, owner
 
@@ -62,7 +62,7 @@ async def test_accept_invitation_creates_membership(db_session) -> None:
         invited_by_user_id=owner.id,
         actor=Actor.user(user_id=owner.id),
     )
-    bob = await insert_user(db_session, display_name="Bob")
+    bob = await create_user(db_session, display_name="Bob")
 
     membership = await accept_invitation(
         db_session,
@@ -85,7 +85,7 @@ async def test_accept_used_invitation_raises_used(db_session) -> None:
         invited_by_user_id=owner.id,
         actor=Actor.user(user_id=owner.id),
     )
-    user = await insert_user(db_session)
+    user = await create_user(db_session)
     await accept_invitation(db_session, raw_token=raw, user_id=user.id, actor=Actor.user(user_id=user.id))
 
     with pytest.raises(InvitationUsedError):
@@ -113,14 +113,14 @@ async def test_accept_expired_invitation_raises_expired(db_session) -> None:
         .where(InvitationRow.email == "d@example.com")
         .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
     )
-    user = await insert_user(db_session)
+    user = await create_user(db_session)
     with pytest.raises(InvitationExpiredError):
         await accept_invitation(db_session, raw_token=raw, user_id=user.id, actor=Actor.user(user_id=user.id))
 
 
 @pytest.mark.asyncio
 async def test_accept_garbage_token_raises_invalid(db_session) -> None:
-    user = await insert_user(db_session)
+    user = await create_user(db_session)
     with pytest.raises(InvitationInvalidError):
         await accept_invitation(
             db_session,
@@ -133,7 +133,7 @@ async def test_accept_garbage_token_raises_invalid(db_session) -> None:
 @pytest.mark.asyncio
 async def test_remove_member_revokes_sessions(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
-    target = await insert_user(db_session)
+    target = await create_user(db_session)
     await insert_membership(db_session, user_id=target.id, org_id=org.org_id, role=Role.BUILDER, handle="t")
     s1 = await mint_session(db_session, user_id=target.id, workspace_id=None)
     s2 = await mint_session(db_session, user_id=target.id, workspace_id=None)
@@ -148,7 +148,7 @@ async def test_remove_member_revokes_sessions(db_session) -> None:
 @pytest.mark.asyncio
 async def test_change_role_rotates_sessions(db_session) -> None:
     org, owner = await _bootstrap_org_and_owner(db_session)
-    target = await insert_user(db_session)
+    target = await create_user(db_session)
     await insert_membership(db_session, user_id=target.id, org_id=org.org_id, role=Role.BUILDER, handle="t2")
     s1 = await mint_session(db_session, user_id=target.id, workspace_id=None)
 

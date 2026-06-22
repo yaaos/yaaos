@@ -38,10 +38,8 @@ from app.domain.orgs.onboarding import (
 #   repository.get_org        -> get_org_full  (repository returns OrgFullView; service.get_org returns Org)
 #   repository.get_org_by_slug -> get_org_full_by_slug (same reason)
 from app.domain.orgs.repository import (
-    get_invitation_by_token_hash,
     get_membership,
     hash_token,
-    insert_invitation,
     insert_membership,
     insert_org,
     list_memberships_for_org,
@@ -122,7 +120,6 @@ __all__ = [
     "delete_expired_invitations",
     "find_saml_org_slug_for_domain",
     "get_config",
-    "get_invitation_by_token_hash",
     "get_membership",
     "get_onboarding_status",
     "get_org",
@@ -131,7 +128,6 @@ __all__ = [
     "get_org_full_by_slug",
     "get_vcs",
     "hash_token",
-    "insert_invitation",
     "insert_membership",
     "insert_org",
     "install_coding_agent",

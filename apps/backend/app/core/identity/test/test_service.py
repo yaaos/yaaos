@@ -18,9 +18,9 @@ async def test_create_user_round_trip(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_email_round_trip(db_session) -> None:
+async def test_add_email_round_trip(db_session) -> None:
     user = await svc.create_user(db_session, display_name="Bob")
-    email = await svc.create_email(
+    email = await svc.add_email(
         db_session,
         user_id=user.id,
         email="bob@example.com",
@@ -34,9 +34,9 @@ async def test_create_email_round_trip(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_oauth_identity_round_trip(db_session) -> None:
+async def test_link_oauth_identity_round_trip(db_session) -> None:
     user = await svc.create_user(db_session, display_name="Carol")
-    identity = await svc.create_oauth_identity(
+    identity = await svc.link_oauth_identity(
         db_session,
         user_id=user.id,
         provider="github",

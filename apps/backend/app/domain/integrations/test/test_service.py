@@ -11,7 +11,7 @@ from pydantic import SecretStr
 
 import app.domain.integrations as integ
 from app.core.audit_log import Actor, list_for_org
-from app.core.identity import insert_user
+from app.core.identity import create_user
 from app.core.oauth import ProviderConfig, Tokens
 from app.core.secrets import decrypt
 from app.domain.integrations.types import _REGISTRY, IntegrationNotConnectedError
@@ -78,7 +78,7 @@ def stub_exchange(monkeypatch):
 
 @pytest.fixture
 async def seeded(db_session):
-    user = await insert_user(db_session, display_name="U")
+    user = await create_user(db_session, display_name="U")
     org = await insert_org(db_session, slug="integ-test")
     return {"user": user, "org": org, "actor": Actor.user(user_id=user.id)}
 

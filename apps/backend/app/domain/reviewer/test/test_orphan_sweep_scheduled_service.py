@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import text
 
-from app.core.identity import insert_user
+from app.core.identity import create_user
 from app.core.tasks import get_broker
 from app.domain.orgs import insert_org
 from app.domain.reviewer.orphan_sweep import _sweep_once, ticket_orphan_sweep
@@ -57,7 +57,7 @@ async def test_ticket_orphan_sweep_task_registered_with_broker() -> None:
 @pytest.mark.asyncio
 async def test_orphan_sweep_body_flips_stale_ticket_to_failed(db_session) -> None:
     """Drive `_sweep_once` directly — orphan ticket older than grace window flips to failed."""
-    user = await insert_user(db_session, display_name="J")
+    user = await create_user(db_session, display_name="J")
     org = await insert_org(db_session, slug="orphan-sched-org")
     del user
     # Older than the 300 s default grace.
