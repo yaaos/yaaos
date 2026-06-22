@@ -16,9 +16,14 @@ rules:
     paths:
       exclude:
         - "**/__init__.py"
-    # The semgrep scan already excludes app/testing and test_*.py files via
-    # CLI flags in bin/ci; this rule is the belt-and-suspenders for any
-    # production file that might accidentally import a test seam.
+        - "app/testing/**"
+        - "**/app/testing/**"
+        - "**/test/**"
+        - "test_*.py"
+        - "**/test_*.py"
+    # bin/ci also passes `--exclude app/testing` / `--exclude test_*.py`, but
+    # cloud semgrep's CLI exclude resolution has proven unreliable across
+    # versions; the rule-level `paths.exclude` is the authoritative gate.
     # __init__.py files are excluded because they are module-interface re-export
     # barrels: importing set_*_for_tests there is a deliberate re-export into
     # the module's __all__, not a usage in production logic. bin/sync_modules

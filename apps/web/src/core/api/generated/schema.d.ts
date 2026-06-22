@@ -2368,68 +2368,12 @@ export interface components {
             /** Samlresponse */
             SAMLResponse: string;
         };
-        /** _BootstrapOwnerRequest */
-        _BootstrapOwnerRequest: {
-            /**
-             * Display Name
-             * @default Owner
-             */
-            display_name: string;
-            /** Email */
-            email: string;
-            /** Github Id */
-            github_id: string;
-            /** Org Slug */
-            org_slug: string;
-            /**
-             * Provider
-             * @default github
-             */
-            provider: string;
-        };
-        /** _BrokenIntegrationRequest */
-        _BrokenIntegrationRequest: {
-            /** Org Slug */
-            org_slug: string;
-            /**
-             * Provider
-             * @default linear
-             */
-            provider: string;
-        };
         /** _CreateOrgRequest */
         _CreateOrgRequest: {
             /** Name */
             name: string;
             /** Slug */
             slug: string;
-        };
-        /** _DeregisterWorkspaceAgentRequest */
-        _DeregisterWorkspaceAgentRequest: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-        };
-        /** _GithubInstallRequest */
-        _GithubInstallRequest: {
-            /**
-             * Org Login
-             * @default acme
-             */
-            org_login: string;
-            /** Target Org Slug */
-            target_org_slug?: string | null;
-        };
-        /** _LessonRequest */
-        _LessonRequest: {
-            /** Body */
-            body: string;
-            /** Repo External Id */
-            repo_external_id: string;
-            /** Title */
-            title: string;
         };
         /** _MarkReadFilter */
         _MarkReadFilter: {
@@ -2466,25 +2410,6 @@ export interface components {
             /** Display Name */
             display_name?: string | null;
         };
-        /** _RepoSkillRequest */
-        _RepoSkillRequest: {
-            /** Org Slug */
-            org_slug: string;
-            /** Repo External Id */
-            repo_external_id: string;
-            /** Skill Name */
-            skill_name: string;
-        };
-        /** _SamlSignRequest */
-        _SamlSignRequest: {
-            /** Email */
-            email: string;
-            /**
-             * Name Id
-             * @default
-             */
-            name_id: string;
-        };
         /** _SsoConfigBody */
         _SsoConfigBody: {
             /**
@@ -2506,23 +2431,6 @@ export interface components {
              * @default false
              */
             jit_enabled: boolean;
-        };
-        /** _StageProfileRequest */
-        _StageProfileRequest: {
-            /**
-             * Display Name
-             * @default
-             */
-            display_name: string;
-            /**
-             * Email Verified
-             * @default true
-             */
-            email_verified: boolean;
-            /** External Subject */
-            external_subject: string;
-            /** Primary Email */
-            primary_email: string;
         };
         /** _TotpVerifyRequest */
         _TotpVerifyRequest: {
@@ -2546,18 +2454,6 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
-        };
-        /** _UserWithSessionRequest */
-        _UserWithSessionRequest: {
-            /** Email */
-            email: string;
-            /** Session Cookie */
-            session_cookie: string;
-        };
-        /** _WorkspaceAgentRequest */
-        _WorkspaceAgentRequest: {
-            /** Org Slug */
-            org_slug: string;
         };
     };
     responses: never;
