@@ -263,3 +263,91 @@ def dispatch_events(session: AsyncSession, *, events: list[Any]) -> list[Any]:
         payload = _safe(raw)
         publish_general_after_commit(session, org_id=org_id, kind=kind, payload=payload)
     return events
+
+
+# ─── Workflow lifecycle ────────────────────────────────────────────────────
+
+
+async def cancel_workflows_for_ticket(ticket_id) -> int:  # type: ignore[no-untyped-def]
+    """Cancel any non-terminal `workflow_executions` rows for this ticket."""
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.core.workflow import list_active_execution_ids, request_cancel  # noqa: PLC0415
+
+    cancelled = 0
+    async with db_session() as s:
+        active_ids = await list_active_execution_ids(ticket_id, session=s)
+        for wfx_id in active_ids:
+            if await request_cancel(str(wfx_id), session=s):
+                cancelled += 1
+        if cancelled:
+            await s.commit()
+    return cancelled
+
+
+async def start_pr_review(
+    ticket_id,  # type: ignore[no-untyped-def]
+    *,
+    org_id,
+    trigger_reason: str = "pr_ready",
+) -> object:
+    """Start a `pr_review_v1` workflow for a ticket.
+
+    Builds a `TicketSnapshot` from the ticket + PR rows and passes it as
+    `workflow_input` to the engine — commands receive their data from typed
+    inputs populated by the workflow's `inputs_factory` lambdas, not from
+    any context-provider lookup.
+    """
+    from uuid import UUID  # noqa: PLC0415
+
+    from app.core.database import session as db_session  # noqa: PLC0415
+    from app.core.workflow import start as workflow_start  # noqa: PLC0415
+    from app.domain.reviewer.types import TicketSnapshot  # noqa: PLC0415
+    from app.domain.tickets import get_workspace_ticket_context as _get_ctx  # noqa: PLC0415
+
+    del trigger_reason
+    ticket_uuid = ticket_id if isinstance(ticket_id, UUID) else UUID(str(ticket_id))
+    ctx = await _get_ctx(ticket_uuid)
+    if ctx is None:
+        raise RuntimeError(f"ticket {ticket_id} not found")
+
+    # Extract PR fields from the ticket context payload.
+    payload = ctx.payload or {}
+    snapshot = TicketSnapshot(
+        ticket_id=ticket_uuid,
+        org_id=ctx.org_id,
+        plugin_id=ctx.plugin_id,
+        repo_external_id=ctx.repo_external_id,
+        pr_id=ctx.pr_id,
+        pr_external_id=str(payload.get("pr_external_id") or "") or None,
+        head_sha=str(payload.get("head_sha") or "HEAD"),
+        base_sha=str(payload.get("base_sha") or "") or None,
+        is_draft=bool(payload.get("is_draft", False)),
+        is_fork=bool(payload.get("is_fork", False)),
+        labels=tuple(str(l) for l in (payload.get("labels") or [])),
+        author_login=str(payload.get("author_login") or "") or None,
+    )
+
+    async with db_session() as s:
+        wfx_id = await workflow_start(
+            workflow_name="pr_review_v1",
+            ticket_id=str(ticket_uuid),
+            workflow_input=snapshot,
+            session=s,
+        )
+        await s.commit()
+    return wfx_id
+
+
+def _register_workflows() -> None:
+    """Register all reviewer workflows with the workflow engine at import time."""
+    from app.core.workflow import WorkflowError, register_workflow  # noqa: PLC0415
+    from app.domain.reviewer.workflows import ALL_WORKFLOWS  # noqa: PLC0415
+
+    # Auto-discovery via register_workflow populates all regular commands from
+    # the workflow's steps tuple, and all recovery commands from
+    # wf.recovery_commands (including RefreshWorkspaceAuth for pr_review_v1).
+    for wf in ALL_WORKFLOWS:
+        try:
+            register_workflow(wf)
+        except WorkflowError:
+            pass

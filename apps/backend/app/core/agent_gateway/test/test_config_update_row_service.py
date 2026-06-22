@@ -26,6 +26,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+import app.core.agent_gateway.service as _ag_service_module
 from app.core.agent_gateway import bearers, enqueue_command
 from app.core.agent_gateway.models import AgentCommandRow, WorkspaceAgentRow
 from app.core.agent_gateway.service import (
@@ -383,10 +384,7 @@ async def test_events_handler_returns_410_on_missing_row(db_session) -> None:
 async def test_build_config_update_function_removed(_db_session=None) -> None:
     """_build_config_update must not be importable from service.py — regression
     guard against accidental restoration of the synthesize-on-demand path."""
-    import importlib  # noqa: PLC0415
-
-    service = importlib.import_module("app.core.agent_gateway.service")
-    assert not hasattr(service, "_build_config_update"), (
+    assert not hasattr(_ag_service_module, "_build_config_update"), (
         "_build_config_update was restored in service.py; it must stay deleted"
     )
 

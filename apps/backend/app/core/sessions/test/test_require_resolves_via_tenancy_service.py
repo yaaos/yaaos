@@ -12,8 +12,6 @@ Also asserts that `app.core.sessions.dependencies` has no top-level import of
 
 from __future__ import annotations
 
-import importlib
-import sys
 import uuid
 from collections.abc import AsyncIterator
 
@@ -23,6 +21,7 @@ import pytest_asyncio
 from fastapi import Depends, FastAPI
 
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
+import app.core.sessions.dependencies as _sessions_deps
 from app.core.auth import Action, AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
 from app.core.sessions import require
@@ -62,24 +61,11 @@ def test_dependencies_module_has_no_top_level_domain_orgs_import() -> None:
     module load time — that top-level import was the structural blocker that
     forced every route to evaluate domain layer at startup.
 
-    Verify by reloading the module in a clean namespace and checking
-    `sys.modules` for `app.domain.orgs` wasn't pulled in as a side effect.
+    Verify by inspecting the module source for top-level domain.orgs imports.
     """
-    # Remove from cache so the import is fresh for this check.
-    mod_name = "app.core.sessions.dependencies"
-    previously_loaded = mod_name in sys.modules
-    # Strip the module from cache (and any cached domain.orgs side-effect from
-    # this process's earlier imports).
-    deps_mod = importlib.import_module(mod_name)
-    # Check the module's own __dict__ for a top-level reference to domain.orgs.
-    # If `from app.domain.orgs import ...` were at top level, the module's
-    # namespace would hold the imported names at attribute-access time, and
-    # `app.domain.orgs` would be in `sys.modules` after the import.
-    # The assertion here is that the dependencies module source contains no
-    # top-level `from app.domain.orgs` — checked by inspecting the module file.
     import inspect  # noqa: PLC0415
 
-    source = inspect.getsource(deps_mod)
+    source = inspect.getsource(_sessions_deps)
     # Allow lazy (inside-function) domain.orgs imports but reject top-level ones.
     lines = source.splitlines()
     for line in lines:
@@ -89,7 +75,6 @@ def test_dependencies_module_has_no_top_level_domain_orgs_import() -> None:
             # from function-body ones.
             indent = len(line) - len(line.lstrip())
             assert indent > 0, f"Found top-level domain.orgs import in dependencies.py: {line!r}"
-    _ = previously_loaded  # suppress unused warning
 
 
 @pytest.mark.asyncio

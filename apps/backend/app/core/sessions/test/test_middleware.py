@@ -16,7 +16,7 @@ import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 
-from app.core.auth import Action, AuthMiddleware, Role
+from app.core.auth import Action, AuthMiddleware, Role, required_role_for
 from app.core.identity import hash_token, insert_session, insert_user
 from app.core.sessions import public_route, require
 from app.domain.orgs import insert_membership, insert_org
@@ -200,10 +200,13 @@ async def test_legacy_route_without_security_declaration_500s() -> None:
 
 def test_required_role_for_covers_every_action() -> None:
     """Action enum must stay in lockstep with the role registry."""
-    from app.core.auth import _REQUIRED_ROLE  # noqa: PLC0415
-
-    missing = [a for a in Action if a not in _REQUIRED_ROLE]
-    assert missing == [], f"Actions missing from _REQUIRED_ROLE: {missing}"
+    missing = []
+    for a in Action:
+        try:
+            required_role_for(a)
+        except KeyError:
+            missing.append(a)
+    assert missing == [], f"Actions missing from required_role_for: {missing}"
 
 
 @pytest.mark.asyncio

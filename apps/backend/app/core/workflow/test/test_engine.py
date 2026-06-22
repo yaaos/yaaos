@@ -15,6 +15,7 @@ from app.core.workflow import (
     CommandContext,
     Empty,
     Outcome,
+    RetryPolicy,
     TerminalAction,
     Workflow,
     WorkflowCommand,
@@ -345,9 +346,7 @@ async def test_engine_state_persists_to_columns_service(db_session) -> None:
 
     fail_once_step = step(
         _FailOnce,
-        retry_policy=__import__("app.core.workflow.types", fromlist=["RetryPolicy"]).RetryPolicy(
-            max_attempts=2
-        ),
+        retry_policy=RetryPolicy(max_attempts=2),
     )
     cleanup_step = step(_CleanupCommand)
     ticket_wf_input = workflow_input(_TestSnapshot)

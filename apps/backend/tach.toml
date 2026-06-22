@@ -151,7 +151,7 @@ depends_on = ["app.core.config", "app.domain.orgs"]
 
 [[modules]]
 path = "app.testing.e2e_setup"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.sse", "app.core.tenancy", "app.core.webserver", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.sse", "app.core.tenancy", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
@@ -249,6 +249,8 @@ expose = [
   "revoke_all_for_agent",
   "revoke_all_for_arn",
   "revoke_all_for_org",
+  "set_bearer_verify_for_tests",
+  "set_sts_verify_for_tests",
   "set_subscriber_registry_for_tests",
   "shutdown",
   "stale_agent_ids",
@@ -298,7 +300,6 @@ expose = [
   "USER_SCOPED_EXACT",
   "USER_SCOPED_METHOD_EXACT",
   "USER_SCOPED_PREFIXES",
-  "_REQUIRED_ROLE",
   "actor_id_var",
   "actor_kind_var",
   "auth_failure_response",
@@ -695,11 +696,13 @@ expose = [
   "CSP_POLICY",
   "RouteSpec",
   "ShutdownHook",
+  "assert_no_testing_routes_in_prod",
   "create_app",
   "get_specs",
   "iter_web_shutdown_hooks",
   "iter_worker_shutdown_hooks",
   "mount_specs",
+  "mount_testing_endpoints",
   "register_routes",
   "register_web_shutdown_hook",
   "register_worker_shutdown_hook",
@@ -827,7 +830,6 @@ expose = [
   "McpCredentialSecret",
   "ProviderConfig",
   "ProviderNotRegisteredError",
-  "_REGISTRY",
   "clear",
   "connect_callback",
   "create_credential",
@@ -838,6 +840,7 @@ expose = [
   "list_broken_credentials_for_org",
   "mark_last_used",
   "register_provider",
+  "set_providers_for_tests",
   "update_allowlist",
   "validate",
 ]
@@ -1072,6 +1075,10 @@ from = ["app.testing.fake_coding_agent"]
 [[interfaces]]
 expose = ["shutdown_runtime"]
 from = ["app.testing.lifecycle"]
+
+[[interfaces]]
+expose = ["span_capture"]
+from = ["app.testing.observability"]
 
 [[interfaces]]
 expose = ["StubCodingAgentPlugin", "wrap_all_registered_plugins"]

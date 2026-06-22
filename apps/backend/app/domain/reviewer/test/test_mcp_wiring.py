@@ -16,7 +16,7 @@ from pydantic import SecretStr
 
 from app.core.oauth import ProviderConfig
 from app.core.vcs import VCSPullRequest
-from app.domain.integrations import _REGISTRY, create_credential
+from app.domain.integrations import create_credential, set_providers_for_tests
 from app.domain.mcp_proxy import get_token_by_hash, hash_token
 from app.domain.orgs import insert_org
 from app.domain.reviewer import (
@@ -59,14 +59,10 @@ class _StubProvider:
 @pytest.fixture
 def stub_providers():
     """Register two stub providers for the duration of one test."""
-    prior_keys = set(_REGISTRY.keys())
-    _REGISTRY["linear_stub"] = _StubProvider(provider_id="linear_stub")
-    _REGISTRY["notion_stub"] = _StubProvider(provider_id="notion_stub")
-    try:
+    with set_providers_for_tests() as registry:
+        registry["linear_stub"] = _StubProvider(provider_id="linear_stub")
+        registry["notion_stub"] = _StubProvider(provider_id="notion_stub")
         yield
-    finally:
-        for k in set(_REGISTRY.keys()) - prior_keys:
-            _REGISTRY.pop(k, None)
 
 
 async def _seed_org(db_session, slug: str):

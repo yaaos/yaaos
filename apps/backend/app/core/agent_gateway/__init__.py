@@ -19,7 +19,12 @@ Provides:
 """
 
 from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes
-from app.core.agent_gateway.bearers import revoke_all_for_agent, revoke_all_for_arn, revoke_all_for_org
+from app.core.agent_gateway.bearers import (
+    revoke_all_for_agent,
+    revoke_all_for_arn,
+    revoke_all_for_org,
+    set_bearer_verify_for_tests,
+)
 from app.core.agent_gateway.byok_provider import (
     clear_byok_secrets_provider,
     get_byok_secrets_provider,
@@ -68,6 +73,7 @@ from app.core.agent_gateway.service import (
     retire_command,
     stale_agent_ids,
 )
+from app.core.agent_gateway.sts_verifier import set_sts_verify_for_tests
 from app.core.agent_gateway.subscribers import (
     set_subscriber_registry_for_tests,
     shutdown,
@@ -176,6 +182,8 @@ __all__ = [
     "revoke_all_for_agent",
     "revoke_all_for_arn",
     "revoke_all_for_org",
+    "set_bearer_verify_for_tests",
+    "set_sts_verify_for_tests",
     "set_subscriber_registry_for_tests",
     "shutdown",
     "stale_agent_ids",

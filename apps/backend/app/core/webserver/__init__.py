@@ -10,17 +10,23 @@ from app.core.webserver.service import (
     register_web_shutdown_hook,
     register_worker_shutdown_hook,
 )
+from app.core.webserver.testing_mount import (
+    assert_no_testing_routes_in_prod,
+    mount_testing_endpoints,
+)
 
 __all__ = [
     "CSP_POLICY",
     "CSPMiddleware",
     "RouteSpec",
     "ShutdownHook",
+    "assert_no_testing_routes_in_prod",
     "create_app",
     "get_specs",
     "iter_web_shutdown_hooks",
     "iter_worker_shutdown_hooks",
     "mount_specs",
+    "mount_testing_endpoints",
     "register_routes",
     "register_web_shutdown_hook",
     "register_worker_shutdown_hook",

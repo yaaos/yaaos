@@ -42,7 +42,7 @@ from app.core.auth.cookies import (
 )
 from app.core.auth.middleware import AuthMiddleware
 from app.core.auth.rate_limit import AUTH_LIMIT, MUTATE_LIMIT, limiter
-from app.core.auth.role_policy import _REQUIRED_ROLE, Role, required_role_for
+from app.core.auth.role_policy import Role, required_role_for
 from app.core.auth.types import (
     ORG_SCOPED_PREFIXES,
     PUBLIC_EXACT,
@@ -72,7 +72,6 @@ __all__ = [
     "USER_SCOPED_EXACT",
     "USER_SCOPED_METHOD_EXACT",
     "USER_SCOPED_PREFIXES",
-    "_REQUIRED_ROLE",
     "Action",
     "AuthFailure",
     "AuthMiddleware",

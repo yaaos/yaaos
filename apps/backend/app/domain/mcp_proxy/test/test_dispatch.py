@@ -2,8 +2,8 @@
 forwards JSON-RPC to a stubbed upstream and audits each dispatched method.
 
 Stubs:
-  - Provider `IntegrationProvider` registered into `_REGISTRY` so the proxy
-    finds it for `tools/list` + `tools/call`.
+  - Provider `IntegrationProvider` registered via `set_providers_for_tests` so
+    the proxy finds it for `tools/list` + `tools/call`.
   - `httpx.AsyncClient` patched on the proxy module so the upstream call
     resolves to a canned JSON-RPC response without network I/O.
 
@@ -30,7 +30,7 @@ from app.core.identity import insert_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.vcs import VCSPullRequest
-from app.domain.integrations import _REGISTRY, create_credential
+from app.domain.integrations import create_credential, set_providers_for_tests
 from app.domain.mcp_proxy import (
     consume_broken_creds,
     mint_token,
@@ -51,8 +51,8 @@ from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
 
 # Every test in this file drives the MCP proxy end-to-end (real Postgres via
-# `db_session`, stub IntegrationProvider in `_REGISTRY`, stub upstream via
-# monkeypatched httpx.AsyncClient). Service tier.
+# `db_session`, stub IntegrationProvider via `set_providers_for_tests`, stub
+# upstream via monkeypatched httpx.AsyncClient). Service tier.
 pytestmark = pytest.mark.service
 
 
@@ -112,11 +112,9 @@ class _FakeAsyncClient:
 
 @pytest.fixture
 def stub_provider():
-    _REGISTRY["stub_disp"] = _StubProvider()
-    try:
+    with set_providers_for_tests() as registry:
+        registry["stub_disp"] = _StubProvider()
         yield
-    finally:
-        _REGISTRY.pop("stub_disp", None)
 
 
 @pytest.fixture

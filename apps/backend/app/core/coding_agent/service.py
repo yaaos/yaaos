@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.coding_agent.types import Invocation
-    from app.core.workflow.types import CommandContext
+    from app.core.workflow import CommandContext
 
 log = structlog.get_logger("coding_agent")
 

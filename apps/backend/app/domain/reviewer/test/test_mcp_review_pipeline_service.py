@@ -29,7 +29,7 @@ from app.core.identity import insert_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
 from app.core.vcs import VCSPullRequest
-from app.domain.integrations import _REGISTRY, create_credential
+from app.domain.integrations import create_credential, set_providers_for_tests
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.orgs import insert_org
 from app.domain.reviewer import PRReviewAggregate, ReviewScope, ReviewTrigger, SqlAlchemyAggregateRepository
@@ -68,11 +68,9 @@ class _StubProvider:
 
 @pytest.fixture
 def stub_provider():
-    _REGISTRY["stub_pipeline"] = _StubProvider()
-    try:
+    with set_providers_for_tests() as registry:
+        registry["stub_pipeline"] = _StubProvider()
         yield
-    finally:
-        _REGISTRY.pop("stub_pipeline", None)
 
 
 def _app() -> FastAPI:

@@ -32,7 +32,7 @@ async def bearer_verify_isolation():
     The override is ContextVar-bound; tests that need a stub call
     `with set_bearer_verify_for_tests(verify=stub):` inside the test body.
     """
-    from app.core.agent_gateway.bearers import set_bearer_verify_for_tests  # noqa: PLC0415
+    from app.core.agent_gateway import set_bearer_verify_for_tests  # noqa: PLC0415
 
     with set_bearer_verify_for_tests():
         yield
@@ -45,7 +45,7 @@ async def sts_verify_isolation():
     The override is ContextVar-bound; tests that need a stub call
     `with set_sts_verify_for_tests(callback):` inside the test body.
     """
-    from app.core.agent_gateway.sts_verifier import set_sts_verify_for_tests  # noqa: PLC0415
+    from app.core.agent_gateway import set_sts_verify_for_tests  # noqa: PLC0415
 
     with set_sts_verify_for_tests():
         yield

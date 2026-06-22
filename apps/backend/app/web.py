@@ -98,15 +98,24 @@ if get_settings().yaaos_coding_agent_stub:
     wrap_all_registered_plugins()
     wrap_all_registered_workspace_providers()
 
-# 7b. Test-only HTTP surface (`/api/testing/*`) — reset + seed endpoints used by
-# the e2e Playwright suite (and ad-hoc local seeding). Mounted only in dev/test
-# builds; prod wheels exclude the testing/ tree, so this import would fail loud
-# if it ever ran with the layer stripped.
-if get_settings().is_non_prod:
-    from app.testing import e2e_setup  # noqa: F401
-
 # 8. Build the FastAPI app.
 app = webserver.create_app()
+
+# 7b. Test-only HTTP surface (`/api/testing/*`) — reset + seed endpoints used by
+# the e2e Playwright suite (and ad-hoc local seeding). `mount_testing_endpoints`
+# is the production-safety gate (raises RuntimeError if called with prod settings).
+# On non-prod: gate confirms env, then e2e_setup.mount registers routes directly
+# (core/webserver cannot import app.testing — layering: core < testing). Post-mount
+# `assert_no_testing_routes_in_prod` is defense-in-depth — verifies no testing
+# route leaked in. Prod wheels exclude the testing/ tree, so any stray import there
+# fails loud.
+_settings = get_settings()
+if _settings.is_non_prod:
+    webserver.mount_testing_endpoints(app, _settings)  # gate; would raise if is_production
+    from app.testing import e2e_setup as _e2e_setup
+
+    _e2e_setup.mount(app)
+webserver.assert_no_testing_routes_in_prod(app, _settings)
 
 if __name__ == "__main__":
     import uvicorn

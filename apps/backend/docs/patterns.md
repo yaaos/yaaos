@@ -243,7 +243,7 @@ The only DB-wide primitive is `core.database.truncate_all_tables(session)`. Call
 
 ### `/api/testing/*` shim pattern
 
-`app/testing/e2e_setup` exposes thin HTTP shims under `/api/testing/*` (mounted only on non-prod; see bootstrap step 7 in § Bootstrap composition order). Each endpoint is a one-liner that calls a corresponding `service.py` function and returns a JSON dict with the seeded object's identity fields.
+`app/testing/e2e_setup` exposes thin HTTP shims under `/api/testing/*` (mounted only on non-prod; see bootstrap steps 9–10 in § Bootstrap composition order). Each endpoint is a one-liner that calls a corresponding `service.py` function and returns a JSON dict with the seeded object's identity fields.
 
 - `POST /api/testing/seed-agent` → `seed_agent(org_id=...)`: inserts a `workspace_agents` row via `agent_gateway.ensure_agent_row`. Returns `{"id": ..., "instance_id": ..., "org_id": ...}`.
 - `POST /api/testing/seed-workspace` → `seed_workspace(...)`: inserts a `workspaces` row via raw SQL. Returns `{"workspace_id": ...}`.
@@ -624,7 +624,9 @@ Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["pytho
 4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.coding_agent`, `app.core.vcs`, `app.core.workspace`.
 5. Domain modules in dependency order — types first (lessons), then leaf domain modules, then dependents.
 6. Plugins — `claude_code`, `github`.
-7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`. When `is_non_prod`, import `app.testing.e2e_setup` so `/api/testing/*` mounts.
+7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`.
 8. Build the FastAPI app — `webserver.create_app()`.
+9. Test-mode HTTP surface (conditional, non-prod only) — `webserver.mount_testing_endpoints(app, settings)` (production-safety gate; raises if `is_production`), then `e2e_setup.mount(app)` (direct `app.include_router` call — registers `/api/testing/*` routes immediately so they appear in `app.routes` before the liveness check). `core/webserver` cannot import `app.testing` (layering: `core < testing`), so the actual registration happens here in the composition root.
+10. Defense-in-depth — `webserver.assert_no_testing_routes_in_prod(app, settings)` sweeps `app.routes` and raises if a `/api/testing/` path is present while `is_production=True`.
 
 Each module imported in steps 2–6 appends its `shutdown()` hook to the relevant process registry as a side effect of import. By step 8, all hooks are registered before `create_app()` wires them into the lifespan.

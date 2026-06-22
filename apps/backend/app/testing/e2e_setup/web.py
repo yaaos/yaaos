@@ -15,7 +15,6 @@ from fastapi import Depends as _Depends
 from pydantic import BaseModel, Field
 
 from app.core.auth import public_route as _public_route
-from app.core.webserver import RouteSpec, register_routes
 from app.testing.e2e_setup import service
 
 router = APIRouter(dependencies=[_Depends(_public_route)])
@@ -275,6 +274,3 @@ async def delete_user_artifacts(user_id: UUID) -> dict[str, bool]:
     _guard_dev()
     await service.delete_user(user_id)
     return {"deleted": True}
-
-
-register_routes(RouteSpec(module_name="e2e_setup", router=router, url_prefix="/api/testing"))
