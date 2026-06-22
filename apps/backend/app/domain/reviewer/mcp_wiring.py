@@ -19,14 +19,10 @@ from uuid import UUID
 
 import structlog
 
+import app.domain.integrations as mcp_integrations
+import app.domain.mcp_proxy as mcp_proxy
 from app.core.config import get_settings
 from app.core.database import session as db_session
-from app.domain import (
-    integrations as mcp_integrations,
-)
-from app.domain import (
-    mcp_proxy,
-)
 
 log = structlog.get_logger("reviewer.mcp_wiring")
 

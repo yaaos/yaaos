@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-import app.web  # noqa: F401 — side-effect: every module registers its RouteSpec
 from app.core.webserver import mount_specs
+from app.web import app as _web_app  # noqa: F401 — side-effect: every module registers its RouteSpec
 
 # (method, path) tuples that external systems (SPA, GitHub App callback,
 # webhook senders, agent wire) actively depend on. Templated paths use

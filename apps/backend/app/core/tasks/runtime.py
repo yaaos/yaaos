@@ -32,7 +32,8 @@ import structlog
 import uvicorn
 from taskiq.receiver import Receiver
 
-from app.core import database, observability
+import app.core.database as database
+import app.core.observability as observability
 from app.core.config import get_settings
 from app.core.shutdown_registry import iter_worker_shutdown_hooks
 from app.core.tasks.broker import get_broker

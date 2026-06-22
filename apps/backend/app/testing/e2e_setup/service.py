@@ -73,7 +73,7 @@ async def seed_github_install(
     ``orgs.install_coding_agent``) so it emits the same audit rows and events
     that production writes would produce.
     """
-    from app.core import byok as byok_service  # noqa: PLC0415
+    import app.core.byok as byok_service  # noqa: PLC0415
     from app.core.audit_log import Actor  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug, install_coding_agent  # noqa: PLC0415
     from app.plugins.github import record_app_install  # noqa: PLC0415

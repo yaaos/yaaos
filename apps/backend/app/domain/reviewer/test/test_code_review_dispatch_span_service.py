@@ -38,7 +38,7 @@ async def test_code_review_dispatch_compile_invocation_failure_sets_span_error(
     db_session,
 ) -> None:
     """compile_invocation failure records exception event + ERROR on active span."""
-    from app.core import byok  # noqa: PLC0415
+    import app.core.byok as byok  # noqa: PLC0415
     from app.core.audit_log import Actor  # noqa: PLC0415
     from app.core.coding_agent import set_coding_agents_for_tests  # noqa: PLC0415
     from app.core.workflow import CommandContext  # noqa: PLC0415

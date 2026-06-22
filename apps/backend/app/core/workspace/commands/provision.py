@@ -94,7 +94,7 @@ class ProvisionWorkspace(AgentDispatchCommand):
         so credentials are fetched at dispatch time.
         Raises `VcsInstallNotFound` when the org has no active VCS App installation.
         """
-        from app.core import vcs as _vcs  # noqa: PLC0415
+        import app.core.vcs as _vcs  # noqa: PLC0415
 
         providers = list_workspace_providers()
         if not providers:

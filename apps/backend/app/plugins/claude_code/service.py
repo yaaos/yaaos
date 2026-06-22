@@ -21,7 +21,7 @@ import httpx
 import structlog
 from pydantic import SecretStr
 
-from app.core import byok as _byok
+import app.core.byok as _byok
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,

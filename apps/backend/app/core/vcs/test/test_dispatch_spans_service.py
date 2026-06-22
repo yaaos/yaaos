@@ -21,7 +21,7 @@ import httpx
 import pytest
 from opentelemetry.trace import StatusCode
 
-from app.core import vcs as _vcs
+import app.core.vcs as _vcs
 from app.core.vcs import (
     Comment,
     Diff,

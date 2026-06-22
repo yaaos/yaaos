@@ -9,11 +9,11 @@ from dataclasses import dataclass, field
 import pytest
 from pydantic import SecretStr
 
+import app.domain.integrations as integ
 from app.core.audit_log import Actor, list_for_org
 from app.core.identity import insert_user
 from app.core.oauth import ProviderConfig, Tokens
 from app.core.secrets import decrypt
-from app.domain import integrations as integ
 from app.domain.integrations.types import _REGISTRY, IntegrationNotConnectedError
 from app.domain.orgs import insert_org
 

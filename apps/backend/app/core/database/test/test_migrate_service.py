@@ -16,7 +16,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
-from app.core import database
+import app.core.database as database
 
 
 @pytest.mark.asyncio

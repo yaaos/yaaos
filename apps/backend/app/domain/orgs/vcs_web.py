@@ -17,7 +17,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core import vcs as _vcs
+import app.core.vcs as _vcs
 from app.core.auth import Action, org_id_var
 from app.core.database import session as db_session
 from app.core.sessions import current_actor, require

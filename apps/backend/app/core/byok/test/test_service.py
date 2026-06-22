@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.core import byok
+import app.core.byok as byok
 from app.core.audit_log import Actor, list_for_org
 from app.core.auth import Role
 from app.core.byok.models import ByokKeyRow

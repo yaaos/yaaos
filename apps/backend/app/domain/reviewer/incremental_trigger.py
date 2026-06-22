@@ -29,10 +29,10 @@ from uuid import UUID
 import structlog
 from sqlalchemy import desc, select, update
 
-from app.core import vcs as _vcs
+import app.core.vcs as _vcs
+import app.domain.tickets as tickets
 from app.core.database import session as db_session
 from app.core.observability import spawn
-from app.domain import tickets
 from app.domain.reviewer.constants import DEFAULT_EFFORT as _DEFAULT_EFFORT
 from app.domain.reviewer.constants import DEFAULT_MODEL as _DEFAULT_MODEL
 from app.domain.reviewer.lock import acquire_pr_lock

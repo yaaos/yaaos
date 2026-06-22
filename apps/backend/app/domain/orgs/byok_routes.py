@@ -22,7 +22,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel
 
-from app.core import byok as byok_service
+import app.core.byok as byok_service
 from app.core.auth import Action, org_id_var
 from app.core.database import session as db_session
 from app.core.sessions import current_actor, require

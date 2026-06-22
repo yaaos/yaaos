@@ -5,17 +5,17 @@ Two checks, both required:
 
 1. **Raw-SQL scan** — AST-parses every `app/**/models.py` to build
    `table_name → owning_module`, then AST-scans every production `.py`
-   under `app/` (excluding `test/` directories) for `text(...)` /
-   `sa_text(...)` calls with string-literal args. Fails if a referenced
-   table is owned by a module other than the file's module. Non-literal
-   args (f-strings, concatenations, variables) fail by themselves — raw
-   SQL must be a literal so it's auditable.
+   under `app/` (excluding `test/` directories and `app/testing/`) for
+   `text(...)` / `sa_text(...)` calls with string-literal args. Fails if a
+   referenced table is owned by a module other than the file's module.
+   Non-literal args (f-strings, concatenations, variables) fail by
+   themselves — raw SQL must be a literal so it's auditable.
 
-   Test files are excluded from the raw-SQL scan because test helpers
-   legitimately use raw SQL INSERTs to seed precise DB state without going
-   through the production module API. The tach interface check (run by
-   `bin/sync_modules`) already enforces Row-import discipline for both
-   prod and test code.
+   Test files and the `app/testing/` scaffold layer are excluded from the
+   raw-SQL scan because both use raw SQL INSERTs to seed precise DB state
+   without going through the production module API. The tach interface
+   check (run by `bin/sync_modules`) already enforces Row-import discipline
+   for both prod and test code.
 
 2. **Suppression guard** — greps every `.py` under `app/` (prod + tests)
    and fails on any `# tach-ignore` or interface-ignore directive. One
@@ -142,9 +142,10 @@ def scan_raw_sql_violations(
     violations: list[str] = []
 
     for py_file in APP.rglob("*.py"):
-        # Skip test directories — test helpers use raw SQL for seeding data,
-        # which is a different pattern from production cross-module raw SQL.
-        if "test" in py_file.parts:
+        # Skip test directories and the testing scaffold layer — both use raw
+        # SQL for seeding precise DB state, which is a different pattern from
+        # production cross-module raw SQL.
+        if "test" in py_file.parts or py_file.is_relative_to(APP / "testing"):
             continue
 
         # Allowlisted: core/database owns all raw SQL.

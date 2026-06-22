@@ -1239,9 +1239,13 @@ def check_anchor_imports(modules: list[tuple[str, str]]) -> list[str]:
 
     ``import app``, ``from app import core``, ``from app.core import identity``
     all bypass ``_resolve_module_target`` (which requires ``len(parts) >= 3``).
-    Composition roots are exempt.
+    Composition roots are exempt from being checked; importing *from* a
+    composition-root module (e.g. ``from app.web import app``) is also allowed
+    since there is no 3-segment path for those top-level files.
     """
     comp_roots = {p.resolve() for p in COMPOSITION_ROOTS}
+    # Module-path spellings for the composition roots (e.g. ``"app.web"``).
+    comp_root_modules = {f"app.{p.stem}" for p in COMPOSITION_ROOTS}
     errors: list[str] = []
     for py in _iter_app_py_files():
         if py.resolve() in comp_roots:
@@ -1272,8 +1276,15 @@ def check_anchor_imports(modules: list[tuple[str, str]]) -> list[str]:
                         f"anchor-import violation: {rel}:{node.lineno}: "
                         f'"from app import …" — use module-root imports'
                     )
-                # `from app.<layer> import X` where X may or may not be a module
-                if mod.startswith("app.") and mod.count(".") == 1 and node.level == 0:
+                # `from app.<layer> import X` where X may or may not be a module.
+                # Composition-root modules (e.g. ``app.web``) are exempt because
+                # there is no 3-segment path for those top-level files.
+                if (
+                    mod.startswith("app.")
+                    and mod.count(".") == 1
+                    and node.level == 0
+                    and mod not in comp_root_modules
+                ):
                     errors.append(
                         f"anchor-import violation: {rel}:{node.lineno}: "
                         f'"from {mod} import …" — use module-root imports'

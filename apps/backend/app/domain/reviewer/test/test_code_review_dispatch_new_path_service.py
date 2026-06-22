@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.core import byok
+import app.core.byok as byok
 from app.core.audit_log import Actor
 from app.core.workflow import CommandContext
 from app.core.workspace import get_workspace_command_state

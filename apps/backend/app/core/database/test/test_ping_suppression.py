@@ -15,7 +15,7 @@ from opentelemetry.instrumentation.utils import is_instrumentation_enabled
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 
-from app.core import database
+import app.core.database as database
 
 
 @pytest.mark.asyncio

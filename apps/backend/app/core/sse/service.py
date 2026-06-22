@@ -36,7 +36,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.core import redis as redis_client
+import app.core.redis as redis_client
 from app.core.observability import spawn
 
 log = structlog.get_logger("core.sse")

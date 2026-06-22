@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from app.core import byok
+import app.core.byok as byok
 from app.core.audit_log import Actor
 from app.core.tasks import drain_once, get_pending_task_names
 from app.core.workflow import WorkflowState, get_execution_summary

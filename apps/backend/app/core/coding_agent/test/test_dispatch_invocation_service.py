@@ -16,7 +16,6 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-import app.web  # noqa: F401 — registers all models so FK metadata resolves correctly
 from app.core.coding_agent import (
     Invocation,
     dispatch_invocation,
@@ -27,6 +26,7 @@ from app.core.workflow import CommandContext
 from app.core.workspace import WorkspaceClaimFailed, WorkspaceNotFoundError
 from app.testing.e2e_setup import seed_agent, seed_workspace
 from app.testing.fake_coding_agent import FakeCodingAgentPlugin
+from app.web import app as _web_app  # noqa: F401 — registers all models so FK metadata resolves correctly
 
 pytestmark = pytest.mark.service
 

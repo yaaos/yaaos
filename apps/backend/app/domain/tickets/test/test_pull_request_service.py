@@ -11,8 +11,8 @@ from uuid import uuid4
 
 import pytest
 
+import app.domain.tickets as tickets
 from app.core.vcs import VCSPullRequest
-from app.domain import tickets
 from app.domain.tickets import create_from_pr as create_ticket
 
 

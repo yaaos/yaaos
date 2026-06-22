@@ -13,8 +13,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+import app.domain.lessons as lessons
 from app.core.audit_log import Actor
-from app.domain import lessons
 from app.domain.orgs import insert_org
 
 pytestmark = pytest.mark.service

@@ -379,7 +379,7 @@ class GithubIntakeType:
             await s.commit()
 
     async def _handle_closed(self, *, payload: dict[str, Any], org_id: UUID) -> None:
-        from app.domain import reviewer  # noqa: PLC0415
+        import app.domain.reviewer as reviewer  # noqa: PLC0415
         from app.domain.tickets import complete, get_by_external, get_by_pr, update_state  # noqa: PLC0415
 
         pr_payload = payload.get("pull_request") or {}
@@ -420,8 +420,8 @@ class GithubIntakeType:
         org_id: UUID,
         session: AsyncSession,
     ) -> IntakeOutcome:
+        import app.domain.reviewer as reviewer  # noqa: PLC0415
         from app.core.intake import parse_yaaos_command  # noqa: PLC0415
-        from app.domain import reviewer  # noqa: PLC0415
         from app.domain.tickets import get_by_external, get_by_pr  # noqa: PLC0415
 
         comment = payload.get("comment") or {}

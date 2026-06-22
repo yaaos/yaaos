@@ -254,9 +254,30 @@ async def test_identity_exchange_unregistered_arn_returns_403(db_session) -> Non
             )
     assert resp.status_code == 403
     assert resp.json()["detail"]["detail"] == "forbidden_unregistered_arn"
-    rows = (await db_session.execute(select(WorkspaceAgentRow))).scalars().all()
+    # The HTTP handler commits via its own session (outside the test transaction),
+    # so prior successful tests' agent rows are visible here. Scope the query to
+    # rows for this specific ARN — none should exist for the unregistered ARN.
+    rows = (
+        (
+            await db_session.execute(
+                select(WorkspaceAgentRow).where(WorkspaceAgentRow.iam_arn == canonical_arn)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert rows == []
-    bearer_rows = (await db_session.execute(select(BearerTokenRow))).scalars().all()
+    bearer_rows = (
+        (
+            await db_session.execute(
+                select(BearerTokenRow)
+                .join(WorkspaceAgentRow, BearerTokenRow.agent_id == WorkspaceAgentRow.id)
+                .where(WorkspaceAgentRow.iam_arn == canonical_arn)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert bearer_rows == []
 
 
@@ -288,10 +309,20 @@ async def test_identity_exchange_region_mismatch_returns_401(db_session) -> None
             )
     assert resp.status_code == 401
     assert resp.json()["detail"]["detail"] == "sts_verification_failed"
-    # No agent row or bearer issued.
-    rows = (await db_session.execute(select(WorkspaceAgentRow))).scalars().all()
+    # No agent row or bearer issued for this org. Scope by org_id — the handler
+    # commits via its own session so prior tests' rows for the same canonical_arn
+    # (but different org) would otherwise pollute an unfiltered SELECT.
+    rows = (
+        (await db_session.execute(select(WorkspaceAgentRow).where(WorkspaceAgentRow.org_id == org.org_id)))
+        .scalars()
+        .all()
+    )
     assert rows == []
-    bearer_rows = (await db_session.execute(select(BearerTokenRow))).scalars().all()
+    bearer_rows = (
+        (await db_session.execute(select(BearerTokenRow).where(BearerTokenRow.org_id == org.org_id)))
+        .scalars()
+        .all()
+    )
     assert bearer_rows == []
 
 

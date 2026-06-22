@@ -14,10 +14,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from sqlalchemy import text
 
-import app.web  # noqa: F401
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import insert_user, mint_session
 from app.domain.orgs import insert_membership, insert_org
+from app.web import app as _web_app  # noqa: F401
 
 
 def _app() -> FastAPI:

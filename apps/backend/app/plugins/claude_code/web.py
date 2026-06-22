@@ -53,7 +53,7 @@ async def list_repos() -> dict[str, object]:
     are included with `skill_name=null`. Repos in the DB but absent from the
     GitHub list are omitted — the admin must reconnect via GitHub App settings.
     """
-    from app.core import vcs as vcs_mod  # noqa: PLC0415
+    import app.core.vcs as vcs_mod  # noqa: PLC0415
     from app.core.auth import org_id_var  # noqa: PLC0415
     from app.plugins.claude_code.repos import list_repos_with_skill  # noqa: PLC0415
 

@@ -46,8 +46,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from app.core import database
-from app.core import redis as redis_client
+import app.core.database as database
+import app.core.redis as redis_client
 
 # How long (seconds) the health ticker is allowed to go without a tick before
 # the heartbeat is considered stale.  Two ticker intervals (10 s) gives one

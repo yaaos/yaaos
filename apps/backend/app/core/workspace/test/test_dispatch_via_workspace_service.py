@@ -11,7 +11,6 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-import app.web  # noqa: F401
 from app.core.agent_gateway import CleanupWorkspaceCommand
 from app.core.workflow import CommandContext
 from app.core.workspace import (
@@ -21,6 +20,7 @@ from app.core.workspace import (
 )
 from app.core.workspace.models import WorkspaceRow
 from app.testing.e2e_setup import seed_agent, seed_workspace
+from app.web import app as _web_app  # noqa: F401
 
 pytestmark = pytest.mark.service
 

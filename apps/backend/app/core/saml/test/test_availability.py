@@ -8,7 +8,7 @@ availability.
 
 from __future__ import annotations
 
-from app.core import saml as saml_core
+import app.core.saml as saml_core
 from app.domain.orgs import run_assertion_verifier
 
 

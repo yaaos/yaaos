@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from opentelemetry import trace
 from starlette.requests import Request
 
-from app.core import database
+import app.core.database as database
 from app.core.config import get_settings
 from app.core.observability import TRACE_EXCLUDE_INTERNAL_SPANS, TRACE_EXCLUDED_URLS, get_logger
 from app.core.shutdown_registry import iter_web_shutdown_hooks

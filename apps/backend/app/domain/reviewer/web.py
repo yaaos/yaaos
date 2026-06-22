@@ -12,11 +12,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
+import app.domain.tickets as tickets
 from app.core.auth import Action, org_id_var
 from app.core.database import session
 from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
-from app.domain import tickets
 from app.domain.reviewer.models import ReviewRow
 from app.domain.reviewer.service import (
     list_findings_for_pr,
