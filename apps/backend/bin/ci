@@ -63,13 +63,15 @@ uv run semgrep scan \
     app
 
 echo "==> semgrep — project rules (.semgrep)"
-# Project-specific rules know the codebase: each rule declares its own
-# paths.exclude when test scaffolding is exempt (see e.g.
-# .semgrep/no_test_only_imports_outside_tests.yaml). Default is to apply
-# broadly — including to app/testing — so drift in test-scaffolding code
-# doesn't pass silently.
+# Excludes match the third-party invocation above. Per-rule `paths.exclude`
+# inside .semgrep/ is unreliable: semgrep strips the target arg (`app`) from
+# the path it matches against, so a rule glob like `**/app/testing/**` never
+# fires. Until a project rule genuinely needs to scan app/testing/, the CLI
+# flag is the authoritative gate.
 uv run semgrep scan \
     --config .semgrep \
+    --exclude app/testing \
+    --exclude 'test_*.py' \
     --error \
     --metrics off \
     --quiet \
