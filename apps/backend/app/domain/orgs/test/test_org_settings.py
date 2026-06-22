@@ -17,7 +17,7 @@ from app.core.tenancy import get_org_full, update_org_fields
 from app.domain.orgs import insert_membership, insert_org
 
 # org_settings_web and web are loaded by domain.orgs.__init__ — no explicit imports needed
-from app.testing.seed import set_session_last_seen as _set_session_last_seen_for_tests
+from app.testing.e2e_setup import set_session_last_seen as _set_session_last_seen_for_tests
 
 
 def _patch_app() -> FastAPI:

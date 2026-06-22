@@ -44,7 +44,7 @@ from app.core.agent_gateway.types import (
 )
 from app.core.tenancy import update_org_fields
 from app.domain.orgs import insert_org
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 _IDENTITY_ENDPOINT = "/api/v1/agent/identity"
 _SIGNED_PAYLOAD = (
@@ -78,8 +78,8 @@ def _client(ip: str | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, base_url="http://test")
 
 
-async def _make_agent(db_session, *, org_id: UUID | None = None) -> UUID:
-    result = await seed_agent(org_id=org_id or uuid4(), session=db_session)
+async def _make_agent(*, org_id: UUID | None = None) -> UUID:
+    result = await seed_agent(org_id=org_id or uuid4())
     return UUID(str(result["id"]))
 
 
@@ -167,7 +167,7 @@ async def test_claim_next_unconfigured_returns_row_backed_config_update(db_sessi
     """lifecycle='unconfigured' claim returns the ConfigUpdate row (not a
     ProvisionWorkspace even when new_workspaces > 0)."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     provision_cmd = _make_provision_cmd(org_id)
     await enqueue_command(org_id=org_id, command=provision_cmd, session=db_session)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
@@ -204,7 +204,7 @@ async def test_claim_next_configured_returns_config_update_first_when_both_pendi
     workspace spawn injects per-process env (e.g. ANTHROPIC_API_KEY at
     ExecSpawn time, which lives for the workspace's whole life)."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     provision_cmd = _make_provision_cmd(org_id)
     await enqueue_command(org_id=org_id, command=provision_cmd, session=db_session)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
@@ -238,7 +238,7 @@ async def test_duplicate_enqueue_both_claimed_idempotently(db_session) -> None:
     are both claimed in FIFO order and their terminal events ack 200."""
     org = await insert_org(db_session, slug=f"dup-{uuid4().hex[:6]}")
     org_id = org.org_id
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
 
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)

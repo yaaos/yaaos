@@ -129,7 +129,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 - **`SubscriberReconciler` is the at-most-once safety net.** Runs every 5 s on each web pod. For each agent with a registered sender, reads `agent_routes:{agent_id}` (now a ZSET; members are the wfx_id strings) and per wfx_id checks ZCARD truth: ZCARD ≥ 1 and agent not streaming → re-publish subscribe; ZCARD = 0 and agent is streaming → publish unsubscribe. Launched via `RouteSpec.on_startup` and stopped via `shutdown()` on SIGTERM.
 - **`subscriber_sweeper` GCs stale ZSET entries across both key patterns.** A `@scheduled("subscriber_sweeper", "* * * * *")` task runs `ZREMRANGEBYSCORE` on every `workflow_subscribers:*` key AND every `agent_routes:*` key every minute, removing members whose score (unix timestamp) is older than 60 s. Covers crashed SSE pods that never called `untrack`.
 - **No activity flows from agent → SPA when nobody's watching** — the `SubscriberRegistry` only sends `subscribe` on `0 → 1` subscriber-count transitions.
-- **`seed_agent` lives in `app/testing/seed`.** The production `ensure_agent_row` API is what callers use; `seed_agent` is a test convenience wrapper that adds a random instance_id and optional heartbeat back-dating. Cross-module tests import it from `app.testing.seed`.
+- **`seed_agent` lives in `app/testing/e2e_setup`.** The production `ensure_agent_row` API is what callers use; `seed_agent` is a test convenience wrapper that adds a random instance_id, opens its own session, and commits. Cross-module tests import it from `app.testing.e2e_setup`.
 
 ## Gotchas
 
@@ -207,4 +207,4 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_heartbeat_service.py` covers: `heartbeat()` advances both ZSET scores without adding a new member and without publishing to the agent control channel; heartbeat with no prior `track()` does not raise.
 
-Registry isolation between tests is provided by the `subscriber_registry_isolation` autouse fixture in `app/testing/isolation`. Seed an agent row via `app.testing.seed.seed_agent`.
+Registry isolation between tests is provided by the `subscriber_registry_isolation` autouse fixture in `app/testing/isolation`. Seed an agent row via `app.testing.e2e_setup.seed_agent`.

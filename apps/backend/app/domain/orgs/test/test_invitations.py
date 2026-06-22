@@ -21,7 +21,7 @@ from app.domain.orgs import (
     invite,
     remove_member,
 )
-from app.testing.seed import read_email_inbox
+from app.domain.orgs import read_sent_emails as read_email_inbox
 
 
 async def _bootstrap_org_and_owner(db):

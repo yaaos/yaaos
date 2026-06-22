@@ -31,11 +31,11 @@ from app.core.agent_gateway.types import (
     WriteFilesCommand,
     WriteFilesEntry,
 )
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 
-async def _make_agent(db_session, *, org_id: UUID | None = None) -> UUID:
-    result = await seed_agent(org_id=org_id or uuid4(), session=db_session)
+async def _make_agent(*, org_id: UUID | None = None) -> UUID:
+    result = await seed_agent(org_id=org_id or uuid4())
     return UUID(str(result["id"]))
 
 
@@ -74,7 +74,7 @@ def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceC
 async def test_unconfigured_claim_returns_config_update(db_session) -> None:
     """Unconfigured claim with a pending ConfigUpdate row returns that command."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     ws_cmd = _make_write_cmd(uuid4())
     await enqueue_command(org_id=org_id, command=ws_cmd, session=db_session)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
@@ -105,7 +105,7 @@ async def test_unconfigured_claim_returns_config_update(db_session) -> None:
 @pytest.mark.service
 async def test_unconfigured_claim_returns_none_when_no_config_update_pending(db_session) -> None:
     """Unconfigured claim returns None when no ConfigUpdate row is pending for this agent."""
-    agent_id = await _make_agent(db_session)
+    agent_id = await _make_agent()
     command = await claim_next(
         agent_id,
         lifecycle="unconfigured",
@@ -125,7 +125,7 @@ async def test_unconfigured_claim_returns_none_when_no_config_update_pending(db_
 async def test_configured_claim_returns_provision_workspace(db_session) -> None:
     """Configured claim with new_workspaces=1 returns one ProvisionWorkspace."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd, session=db_session)
     await db_session.flush()
@@ -146,7 +146,7 @@ async def test_configured_claim_returns_provision_workspace(db_session) -> None:
 @pytest.mark.service
 async def test_configured_claim_returns_none_when_empty(db_session) -> None:
     """Configured claim with nothing enqueued returns None."""
-    agent_id = await _make_agent(db_session)
+    agent_id = await _make_agent()
     command = await claim_next(
         agent_id,
         lifecycle="configured",
@@ -166,7 +166,7 @@ async def test_configured_claim_returns_pending_config_update(db_session) -> Non
     be claimable in the configured lifecycle. Without this branch the row sits
     pending forever and the agent never picks up the new credentials."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await db_session.flush()
 
@@ -192,7 +192,7 @@ async def test_configured_claim_prefers_config_update_over_provision_workspace(d
     per-process env (e.g. ANTHROPIC_API_KEY at ExecSpawn time, which lives for
     the workspace's whole life)."""
     org_id = uuid4()
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     provision_cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=provision_cmd, session=db_session)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)

@@ -34,7 +34,7 @@ from app.core.workspace.service import (
     failsafe_agent_loss,
 )
 from app.core.workspace.types import WorkspaceStatus
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 
 class _RaisingProvider:
@@ -112,7 +112,7 @@ async def _make_row(
 ) -> WorkspaceRow:
     """Build a WorkspaceRow. Seeds an agent row when `owning_agent_id` is omitted."""
     if owning_agent_id is None:
-        agent = await seed_agent(org_id=uuid4(), session=db_session)
+        agent = await seed_agent(org_id=uuid4())
         owning_agent_id = agent["id"]
     return WorkspaceRow(
         id=uuid7(),
@@ -304,8 +304,8 @@ async def test_failsafe_agent_loss_per_pod_only_expires_stale_owner(db_session) 
     workspaces are expired (reason `agent_loss`); the live agent's workspace
     stays ACTIVE. Per-pod, not per-org."""
     org_id = uuid4()
-    stale = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=600)
-    live = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=2)
+    stale = await seed_agent(org_id=org_id)
+    live = await seed_agent(org_id=org_id)
 
     stale_ws = WorkspaceRow(
         id=uuid7(),
@@ -373,7 +373,7 @@ async def test_failsafe_agent_loss_uses_command_row_correlation(db_session) -> N
     command. The workflow_execution_id must come from agent_commands, not from
     the shed workspaces.current_holder_workflow_id column."""
     org_id = uuid4()
-    stale = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=600)
+    stale = await seed_agent(org_id=org_id)
     workspace_id = uuid7()
     command_id = uuid7()
 

@@ -241,6 +241,17 @@ Pick shape (a) only when callers genuinely compose with sibling writes. Don't ad
 
 The only DB-wide primitive is `core.database.truncate_all_tables(session)`. Call it from within an `async with db_session() as s:` block followed by `await s.commit()`.
 
+### `/api/testing/*` shim pattern
+
+`app/testing/e2e_setup` exposes thin HTTP shims under `/api/testing/*` (mounted only on non-prod; see bootstrap step 7 in § Bootstrap composition order). Each endpoint is a one-liner that calls a corresponding `service.py` function and returns a JSON dict with the seeded object's identity fields.
+
+- `POST /api/testing/seed-agent` → `seed_agent(org_id=...)`: inserts a `workspace_agents` row via `agent_gateway.ensure_agent_row`. Returns `{"id": ..., "instance_id": ..., "org_id": ...}`.
+- `POST /api/testing/seed-workspace` → `seed_workspace(...)`: inserts a `workspaces` row via raw SQL. Returns `{"workspace_id": ...}`.
+- `DELETE /api/testing/user/{user_id}/artifacts` → `delete_user(user_id)`: deletes the user row and cascades to child rows owned by `core/identity`.
+- Other seed helpers (`seed_github_install`, `seed_lesson`, etc.) follow the same shape.
+
+All `service.py` functions open their own session and commit — each seed call is an independent committed write. Playwright specs that need isolation call the `DELETE /api/testing/reset` endpoint (via `truncate_all_tables`) at the start of each spec. Service tests drive `service.py` directly (not via HTTP) and use the `db_session` fixture for transactional rollback.
+
 ### Idempotent migrations
 
 Alembic tracks applied revisions in `alembic_version`; a revision already at head is a no-op. Revisions that create tables or add columns should use `IF NOT EXISTS` variants (`op.execute(text("CREATE TABLE IF NOT EXISTS ..."))`, or Alembic's `create_table_if_not_exists` / `add_column_if_not_exists`) where the DDL may have been partially applied, so re-running a migration after a partial failure is always safe.
@@ -448,7 +459,7 @@ Naming: `test_<flow>_service.py` in the owning module's `test/` directory. Owner
 
 Marker: every service test is decorated `@pytest.mark.service`. Run only the service tier with `pytest -m service`; run the fast unit-only loop with `pytest -m "not service"`. The default `bin/ci` invocation runs both — the marker is for developer ergonomics, not a CI skip.
 
-Assert on the **durable state production reads** — audit rows by kind, posted-comment count via the stub vcs plugin, finding state in the aggregate, `last_refresh_status`, the email inbox (via `app.testing.seed.read_email_inbox()`), event-bus publications. Don't assert on intermediate log lines unless the log is the contract.
+Assert on the **durable state production reads** — audit rows by kind, posted-comment count via the stub vcs plugin, finding state in the aggregate, `last_refresh_status`, the email inbox (via `app.domain.orgs.read_sent_emails()`), event-bus publications. Don't assert on intermediate log lines unless the log is the contract.
 
 ### Integration test pattern
 

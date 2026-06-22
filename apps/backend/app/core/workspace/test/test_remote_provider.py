@@ -20,20 +20,16 @@ from app.core.workspace.remote_provider import (
     RemoteAgentWorkspaceProvider,
     dispatch_provision_workspace,
 )
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 
 async def _seed_reachable_agent(
-    db_session,
     *,
     org_id=None,
-    heartbeat_age_seconds: int = 0,
 ) -> dict:
     org_id = org_id or uuid4()
     return await seed_agent(
         org_id=org_id,
-        session=db_session,
-        heartbeat_age_seconds=heartbeat_age_seconds,
     )
 
 
@@ -89,7 +85,7 @@ async def test_ensure_agent_row_updates_existing(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_record_heartbeat_bumps_last_heartbeat_at(db_session) -> None:
-    seeded = await _seed_reachable_agent(db_session, heartbeat_age_seconds=60)
+    seeded = await _seed_reachable_agent()
     agent_id = seeded["id"]
     info_before = await get_agent_info(agent_id, session=db_session)
     assert info_before is not None
@@ -121,7 +117,7 @@ async def test_connection_status_not_configured(db_session) -> None:
 @pytest.mark.asyncio
 async def test_connection_status_connected(db_session) -> None:
     org_id = uuid4()
-    await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
+    await _seed_reachable_agent(org_id=org_id)
     status = await connection_status_for_org(org_id, session=db_session)
     assert status["state"] == "connected"
     assert status["pod_count"] == 1
@@ -130,8 +126,20 @@ async def test_connection_status_connected(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_connection_status_lost_when_heartbeat_stale(db_session) -> None:
+
+    from sqlalchemy import text  # noqa: PLC0415
+
     org_id = uuid4()
-    await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=180)
+    seeded = await _seed_reachable_agent(org_id=org_id)
+    # Age the heartbeat to 180 s ago so it falls outside the 90 s connected window.
+    await db_session.execute(
+        text(
+            "UPDATE workspace_agents SET last_heartbeat_at = now() - INTERVAL '180 seconds'"
+            " WHERE id = :agent_id"
+        ),
+        {"agent_id": seeded["id"]},
+    )
+    await db_session.flush()
     status = await connection_status_for_org(org_id, session=db_session)
     assert status["state"] == "lost"
     assert status["pod_count"] == 1
@@ -146,7 +154,7 @@ async def test_dispatch_provision_workspace_enqueues_pending_row(db_session) -> 
     from app.core.agent_gateway import claim_next  # noqa: PLC0415
 
     org_id = uuid4()
-    seeded = await _seed_reachable_agent(db_session, org_id=org_id, heartbeat_age_seconds=5)
+    seeded = await _seed_reachable_agent(org_id=org_id)
     workspace_id = uuid7()
 
     result = await dispatch_provision_workspace(
@@ -183,7 +191,7 @@ async def test_dispatch_provision_workspace_enqueues_pending_row(db_session) -> 
 
 @pytest.mark.asyncio
 async def test_provider_health_check_healthy_with_reachable_pods(db_session) -> None:
-    await _seed_reachable_agent(db_session, heartbeat_age_seconds=5)
+    await _seed_reachable_agent()
     await db_session.commit()
     provider = RemoteAgentWorkspaceProvider()
     status = await provider.health_check()

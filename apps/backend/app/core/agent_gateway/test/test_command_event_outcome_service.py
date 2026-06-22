@@ -24,8 +24,8 @@ from app.core.agent_gateway import (
 )
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.domain.orgs import insert_org
+from app.testing.e2e_setup import seed_workspace
 from app.testing.observability import span_capture
-from app.testing.seed import seed_workspace
 
 # ── App factory ───────────────────────────────────────────────────────────
 
@@ -116,7 +116,6 @@ async def test_command_event_recorded_returns_200_with_outcome(db_session) -> No
         sha="deadbeef",
         current_command_id=cmd_id,
         agent_id=agent_id,
-        caller_session=db_session,
     )
     provision = ProvisionWorkspaceCommand(
         command_id=cmd_id,
@@ -176,7 +175,6 @@ async def test_command_event_span_carries_outcome_attribute(db_session) -> None:
         sha="deadbeef",
         current_command_id=cmd_id,
         agent_id=agent_id,
-        caller_session=db_session,
     )
     provision = ProvisionWorkspaceCommand(
         command_id=cmd_id,

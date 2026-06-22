@@ -113,6 +113,15 @@ async def delete_email(session: AsyncSession, *, user_id: UUID, email_id: UUID) 
     return result.first() is not None
 
 
+async def delete_user(db: AsyncSession, *, user_id: UUID) -> None:
+    """Hard-delete a user row. Cascades at the DB level to emails, OAuth
+    identities, and sessions — callers that need cross-module cleanup
+    (e.g. memberships) must handle those separately."""
+    from sqlalchemy import delete as _sql_delete  # noqa: PLC0415
+
+    await db.execute(_sql_delete(UserRow).where(UserRow.id == user_id))
+
+
 async def find_user_by_email(session: AsyncSession, email: str) -> UserRow | None:
     """Lookup by any verified email. Returns None if no match or only matches
     are on deactivated users (lazy-reuse rule)."""

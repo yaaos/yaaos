@@ -177,13 +177,14 @@ async def test_bootstrap_rejects_invalid_email_then_accepts(github_user_lookup) 
 
 
 async def _cleanup_user_and_org(s, *, user_id, org_id) -> None:
-    from app.testing.seed import delete_org, delete_user_artifacts  # noqa: PLC0415
+    from app.core.identity import delete_user  # noqa: PLC0415
+    from app.core.tenancy import delete_org  # noqa: PLC0415
 
     # Cleanup for rows committed by the bootstrap subprocess outside the
     # transactional fixture. Deleting the org cascades to its memberships;
-    # owning module keeps the table names in one place.
+    # deleting the user cascades to emails, OAuth identities, and sessions.
     await delete_org(s, org_id)
-    await delete_user_artifacts(s, user_id=user_id)
+    await delete_user(s, user_id=user_id)
 
 
 # Avoid the static reference to `httpx` flagging as unused.

@@ -17,8 +17,8 @@ from app.core.workflow import CommandContext
 from app.core.workspace import get_workspace_command_state
 from app.domain.orgs import create_org
 from app.domain.reviewer.commands import CodeReview, CodeReviewInputs
-from app.testing.seed import seed_agent as _seed_agent
-from app.testing.seed import seed_workspace as _seed_workspace
+from app.testing.e2e_setup import seed_agent as _seed_agent
+from app.testing.e2e_setup import seed_workspace as _seed_workspace
 
 pytestmark = pytest.mark.service
 
@@ -38,14 +38,13 @@ async def test_code_review_dispatch_new_path(
     org_id = org.id
 
     # Seed a reachable agent + workspace so dispatch's ownership guard passes.
-    agent_row = await _seed_agent(org_id=org_id, session=db_session)
+    agent_row = await _seed_agent(org_id=org_id)
     agent_id = agent_row["id"]
     ws_id_str = await _seed_workspace(
         org_id=org_id,
         provider_id="in_process",
         sha="deadbeef",
         agent_id=agent_id,
-        caller_session=db_session,
     )
     ws_id = UUID(str(ws_id_str))
 

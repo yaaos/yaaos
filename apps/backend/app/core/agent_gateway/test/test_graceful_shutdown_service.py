@@ -28,7 +28,7 @@ from app.core.audit_log import list_for_entity
 from app.core.tenancy import update_org_fields
 from app.core.workspace import WorkspaceStatus, get_workspace_info
 from app.domain.orgs import insert_membership, insert_org
-from app.testing.seed import seed_agent, seed_workspace
+from app.testing.e2e_setup import seed_agent, seed_workspace
 
 # ── App / client helpers ─────────────────────────────────────────────────
 
@@ -88,9 +88,7 @@ async def _seed_org_and_agent(db_session, *, iam_arn: str = "arn:aws:iam::111122
     await update_org_fields(db_session, org.org_id, registered_iam_arn=iam_arn, aws_region="us-east-1")
     agent = await seed_agent(
         org_id=org.org_id,
-        session=db_session,
         iam_arn=iam_arn,
-        heartbeat_age_seconds=5,
     )
     return org, agent
 
@@ -186,7 +184,6 @@ async def test_delete_identity_expires_held_workspaces_and_synthesizes_failure(d
         sha="abc",
         current_command_id=command_id,
         agent_id=agent["id"],
-        caller_session=db_session,
     )
     await db_session.commit()
 
@@ -245,7 +242,7 @@ async def test_arn_change_revokes_old_arn_bearers(db_session) -> None:
     org_id = org.org_id
     old_arn = "arn:aws:iam::111122223333:role/yaaos"
 
-    agent = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=5)
+    agent = await seed_agent(org_id=org_id)
     await db_session.commit()
 
     from app.core.agent_gateway import bearers  # noqa: PLC0415
@@ -285,7 +282,7 @@ async def test_arn_clear_revokes_old_arn_bearers(db_session) -> None:
     org_id = org.org_id
     old_arn = "arn:aws:iam::111122223333:role/yaaos"
 
-    agent = await seed_agent(org_id=org_id, session=db_session, heartbeat_age_seconds=5)
+    agent = await seed_agent(org_id=org_id)
     await db_session.commit()
 
     from app.core.agent_gateway import bearers  # noqa: PLC0415

@@ -44,21 +44,20 @@ async def test_code_review_dispatch_compile_invocation_failure_sets_span_error(
     from app.core.workflow import CommandContext  # noqa: PLC0415
     from app.domain.orgs import create_org  # noqa: PLC0415
     from app.domain.reviewer.commands import CodeReview, CodeReviewInputs  # noqa: PLC0415
-    from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
-    from app.testing.seed import seed_workspace as _seed_workspace  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_agent as _seed_agent  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_workspace as _seed_workspace  # noqa: PLC0415
 
     # Seed a real org so the byok key insert FK passes.
     org = await create_org(db_session, slug=f"t-{uuid4().hex[:8]}", display_name="t")
     org_id = org.id
 
     # Seed the DB rows dispatch needs to pass its workspace-owner guard.
-    agent_row = await _seed_agent(org_id=org_id, session=db_session)
+    agent_row = await _seed_agent(org_id=org_id)
     ws_id = await _seed_workspace(
         org_id=org_id,
         provider_id="in_process",
         sha="deadbeef",
         agent_id=agent_row["id"],
-        caller_session=db_session,
     )
     # CodeReview.dispatch loads the Anthropic key before calling build_invocation.
     await byok.set(org_id, "anthropic", "sk-test-key", actor=Actor.system(), session=db_session)

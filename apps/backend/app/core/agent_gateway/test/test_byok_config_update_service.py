@@ -24,7 +24,7 @@ from app.core.agent_gateway.service import enqueue_config_update_for_agent
 from app.core.agent_gateway.types import AgentCommandKind, AgentConfig
 from app.core.audit_log import Actor
 from app.domain.orgs import insert_org
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -35,8 +35,8 @@ async def _make_org(db_session) -> UUID:
     return org.org_id
 
 
-async def _make_agent(db_session, *, org_id=None):
-    result = await seed_agent(org_id=org_id or uuid4(), session=db_session)
+async def _make_agent(*, org_id=None):
+    result = await seed_agent(org_id=org_id or uuid4())
     return result["id"]
 
 
@@ -120,8 +120,8 @@ async def test_enqueue_config_update_for_all_org_agents_inserts_rows(db_session)
 
     org_id = uuid4()  # No FK constraint on workspace_agents.org_id — a bare UUID is fine here.
     # Register two agents for the same org.
-    agent_id_1 = await _make_agent(db_session, org_id=org_id)
-    agent_id_2 = await _make_agent(db_session, org_id=org_id)
+    agent_id_1 = await _make_agent(org_id=org_id)
+    agent_id_2 = await _make_agent(org_id=org_id)
     # Seed a ConfigUpdate for each so they are "configured".
     await enqueue_config_update_for_agent(agent_id_1, org_id=org_id, session=db_session)
     await enqueue_config_update_for_agent(agent_id_2, org_id=org_id, session=db_session)
@@ -171,7 +171,7 @@ async def test_byok_set_triggers_config_update_for_org_agents(db_session) -> Non
     import app.core.byok as byok  # noqa: PLC0415
 
     org_id = await _make_org(db_session)
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await db_session.flush()
 
@@ -214,7 +214,7 @@ async def test_byok_clear_triggers_config_update_for_org_agents(db_session) -> N
     import app.core.byok as byok  # noqa: PLC0415
 
     org_id = await _make_org(db_session)
-    agent_id = await _make_agent(db_session, org_id=org_id)
+    agent_id = await _make_agent(org_id=org_id)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     # Set a key first.
     await byok.set(org_id, "anthropic", "sk-test", actor=Actor.system(), session=db_session)

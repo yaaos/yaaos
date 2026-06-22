@@ -12,11 +12,11 @@ from app.core.workspace import (
     try_claim,
 )
 from app.core.workspace.models import WorkspaceRow
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 
 async def _seed_active_workspace(db_session) -> WorkspaceRow:
-    agent = await seed_agent(org_id=uuid4(), session=db_session)
+    agent = await seed_agent(org_id=uuid4())
     row = WorkspaceRow(
         id=uuid7(),
         org_id=uuid4(),
@@ -53,7 +53,7 @@ async def test_try_claim_persists_owning_agent_id(db_session) -> None:
     """When the caller passes `agent_id` (create-dispatch path), it's written
     onto the row alongside `current_command_id` so the workspace is hard-tied
     to its owning pod. owning_agent_id has a FK to workspace_agents.id."""
-    seeded = await seed_agent(org_id=uuid4(), session=db_session)
+    seeded = await seed_agent(org_id=uuid4())
     await db_session.flush()
 
     ws = await _seed_active_workspace(db_session)

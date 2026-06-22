@@ -37,7 +37,7 @@ from app.core.workflow import (
     step,
 )
 from app.core.workspace import register_workspace_provider
-from app.testing.seed import seed_workspace as _seed_workspace_for_tests
+from app.testing.e2e_setup import seed_workspace as _seed_workspace_for_tests
 from app.testing.workflow_harness import set_engine_for_tests
 
 
@@ -86,19 +86,18 @@ def _make_provision_command() -> ProvisionWorkspaceCommand:
 
 async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dict:
     from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
-    from app.testing.seed import seed_agent  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_agent  # noqa: PLC0415
 
     cmd_id = uuid7()
     wfx_id = uuid4()
     org_id = uuid4()
-    agent = await seed_agent(org_id=org_id, session=db_session)
+    agent = await seed_agent(org_id=org_id)
     ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
         provider_id="remote_agent",
         sha="deadbeef",
         current_command_id=cmd_id if claimed_by_command else None,
         agent_id=agent["id"],
-        caller_session=db_session,
     )
     if claimed_by_command:
         # Persist the matching `agent_commands` row pre-stamped with the
@@ -234,17 +233,16 @@ async def test_terminal_event_advances_workflow_to_done(db_session, workspace_pr
         # engine stamps `workflow_execution_id` on the agent_commands row at
         # dispatch time, and `record_agent_event` resolves the workflow via
         # that column rather than via the workspace.
-        from app.testing.seed import seed_agent as _seed_agent  # noqa: PLC0415
+        from app.testing.e2e_setup import seed_agent as _seed_agent  # noqa: PLC0415
 
         _ws_org_id = uuid4()
-        _ws_agent = await _seed_agent(org_id=_ws_org_id, session=db_session)
+        _ws_agent = await _seed_agent(org_id=_ws_org_id)
         seeded_ws_id = await _seed_workspace_for_tests(
             org_id=_ws_org_id,
             provider_id="remote_agent",
             sha="deadbeef",
             current_command_id=cmd_id,
             agent_id=_ws_agent["id"],
-            caller_session=db_session,
         )
 
         event = AgentEvent(
@@ -346,16 +344,15 @@ async def test_progress_event_does_not_advance_workflow(db_session, workspace_pr
         cmd_id = wfx.pending_agent_command_id
         assert cmd_id is not None
 
-        from app.testing.seed import seed_agent as _seed_agent2  # noqa: PLC0415
+        from app.testing.e2e_setup import seed_agent as _seed_agent2  # noqa: PLC0415
 
-        _ws_agent2 = await _seed_agent2(org_id=ws_org_id, session=db_session)
+        _ws_agent2 = await _seed_agent2(org_id=ws_org_id)
         await _seed_workspace_for_tests(
             org_id=ws_org_id,
             provider_id="remote_agent",
             sha="deadbeef",
             current_command_id=cmd_id,
             agent_id=_ws_agent2["id"],
-            caller_session=db_session,
         )
 
         # Post a PROGRESS event — workflow must stay in AWAITING_AGENT.

@@ -13,7 +13,8 @@ HTTP routes have been mounted in the calling process.
 
 from __future__ import annotations
 
-from uuid import UUID
+from datetime import datetime
+from uuid import UUID, uuid4
 
 # Trigger-imports: importing each module's __init__ ensures `Base.metadata` is
 # fully populated so `truncate_all_tables` sees the complete schema regardless
@@ -328,6 +329,133 @@ def stage_oauth_test_profile(
     )
 
 
+# ── agent / workspace seed helpers ──────────────────────────────────
+
+
+async def seed_agent(
+    *,
+    org_id: UUID,
+    iam_arn: str = "arn:aws:iam::123456789012:role/yaaos-agent",
+    version: str = "0.0.1",
+    instance_id: str | None = None,
+) -> dict:
+    """Insert a workspace-agent row via public service APIs.
+
+    Opens its own session and commits. Returns ``{"id": ..., "instance_id":
+    ..., "org_id": ...}``. Callers that need a backdated ``last_heartbeat_at``
+    update the row manually after this call using their own session.
+    """
+    from app.core.agent_gateway import ensure_agent_row  # noqa: PLC0415
+
+    _instance_id = instance_id or f"test-instance-{uuid4().hex[:8]}"
+    async with db_session() as s:
+        agent_id = await ensure_agent_row(
+            org_id=org_id,
+            instance_id=_instance_id,
+            iam_arn=iam_arn,
+            version=version,
+            session=s,
+        )
+        await s.commit()
+    return {"id": agent_id, "instance_id": _instance_id, "org_id": org_id}
+
+
+async def seed_workspace(
+    *,
+    org_id: UUID,
+    provider_id: str,
+    sha: str,
+    agent_id: UUID,
+    current_command_id: UUID | None = None,
+    status: str | None = None,
+) -> str:
+    """Insert a workspace row for test purposes.
+
+    Opens its own session and commits. Returns the workspace id string.
+    ``agent_id`` (required) sets the owning_agent_id column.
+    ``current_command_id`` is optional — set it when the test needs to simulate
+    a claimed workspace.
+
+    Uses raw SQL to avoid importing WorkspaceRow across module boundaries.
+    The workspaces.id column uses uuidv7() server-default (v7 enforced by DB
+    check-constraint).
+    """
+    import json as _json  # noqa: PLC0415
+    from datetime import UTC, timedelta  # noqa: PLC0415
+
+    from sqlalchemy import text  # noqa: PLC0415
+
+    _status = status or "active"
+    _expires_at = datetime.now(UTC) + timedelta(hours=1)
+    _spec = _json.dumps({"sha": sha})
+
+    async with db_session() as s:
+        result = await s.execute(
+            text(
+                "INSERT INTO workspaces"
+                " (org_id, owning_agent_id, provider_id, spec, status, expires_at, current_command_id,"
+                " destroy_attempts)"
+                " VALUES (:org_id, :agent_id, :provider_id, cast(:spec as jsonb), :status, :expires_at,"
+                " :cmd_id, 0)"
+                " RETURNING id"
+            ),
+            {
+                "org_id": org_id,
+                "agent_id": agent_id,
+                "provider_id": provider_id,
+                "spec": _spec,
+                "status": _status,
+                "expires_at": _expires_at,
+                "cmd_id": current_command_id,
+            },
+        )
+        ws_id = result.scalar_one()
+        await s.commit()
+    return str(ws_id)
+
+
+async def delete_org(org_id: UUID) -> None:
+    """Hard-delete an org row. Opens its own session and commits. Cascades at
+    the DB level to memberships, invitations, and all child rows."""
+    from app.core.tenancy import delete_org as _tenancy_delete_org  # noqa: PLC0415
+
+    async with db_session() as s:
+        await _tenancy_delete_org(s, org_id)
+        await s.commit()
+
+
+async def delete_user(user_id: UUID) -> None:
+    """Hard-delete a user row. Opens its own session and commits. Cascades at
+    the DB level to emails, OAuth identities, and sessions — callers that
+    need cross-module cleanup (e.g. memberships) must call those separately
+    before this."""
+    from app.core.identity import delete_user as _identity_delete_user  # noqa: PLC0415
+
+    async with db_session() as s:
+        await _identity_delete_user(s, user_id=user_id)
+        await s.commit()
+
+
+async def set_session_last_seen(
+    db: object,
+    *,
+    token_hash: str,
+    last_seen_at: datetime,
+) -> None:
+    """Write ``last_seen_at`` for a session row identified by ``token_hash``.
+    Uses the caller's session; does not commit."""
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+
+    from app.core.identity import get_session_by_hash  # noqa: PLC0415
+
+    if not isinstance(db, AsyncSession):
+        raise TypeError("set_session_last_seen: first arg must be AsyncSession")
+    row = await get_session_by_hash(db, token_hash)
+    assert row is not None, f"session not found for hash: {token_hash[:8]}..."
+    row.last_seen_at = last_seen_at
+    await db.flush()
+
+
 async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:
     """Seed a reachable ``workspace_agents`` row for the given org slug.
 
@@ -339,13 +467,12 @@ async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:
     """
     from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
-    from app.testing.seed import seed_agent  # noqa: PLC0415
 
     org = await get_org_by_slug(org_slug)
     if org is None:
         raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
+    result = await seed_agent(org_id=org.id)
     async with db_session() as s:
-        result = await seed_agent(org_id=org.id, session=s)
         publish_general_after_commit(
             s,
             org_id=org.id,
@@ -397,9 +524,9 @@ async def deregister_workspace_agent(*, agent_id: UUID) -> dict[str, str]:
 def read_and_clear_email_inbox() -> list[dict[str, str]]:
     """Return + clear the in-memory inbox ``domain.orgs.email.send_plain`` writes
     to in test env."""
-    from app.testing.seed import read_email_inbox  # noqa: PLC0415
+    from app.domain.orgs import read_sent_emails  # noqa: PLC0415
 
-    inbox = read_email_inbox()
+    inbox = read_sent_emails()
     out = [{"to": m.to, "subject": m.subject, "body": m.body} for m in inbox]
     inbox.clear()
     return out
@@ -407,15 +534,21 @@ def read_and_clear_email_inbox() -> list[dict[str, str]]:
 
 __all__ = [
     "DEFAULT_ORG_ID",
+    "delete_org",
+    "delete_user",
     "deregister_workspace_agent",
     "is_dev_env",
     "read_and_clear_email_inbox",
     "reset",
+    "seed_agent",
     "seed_bootstrap_owner",
+    "seed_broken_integration",
     "seed_github_install",
     "seed_lesson",
     "seed_repo_skill",
     "seed_user_with_session",
+    "seed_workspace",
     "seed_workspace_agent",
+    "set_session_last_seen",
     "stage_oauth_test_profile",
 ]

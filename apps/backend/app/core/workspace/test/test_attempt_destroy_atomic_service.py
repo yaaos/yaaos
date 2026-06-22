@@ -22,7 +22,7 @@ from uuid import UUID, uuid4, uuid7
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from app.core.audit_log import list_for_entity
 from app.core.database import get_sessionmaker
@@ -30,7 +30,7 @@ from app.core.workspace import register_workspace_provider
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.service import _attempt_destroy
 from app.core.workspace.types import WorkspaceStatus
-from app.testing.seed import delete_workspace_agent, seed_agent
+from app.testing.e2e_setup import seed_agent
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
@@ -90,7 +90,7 @@ async def _clean(seeded: _Seeded) -> None:
         # Workspaces first — owning_agent_id FK is ON DELETE RESTRICT.
         await s.execute(delete(WorkspaceRow).where(WorkspaceRow.id.in_(seeded.workspace_ids)))
         for agent_id in seeded.agent_ids:
-            await delete_workspace_agent(agent_id, session=s)
+            await s.execute(text("DELETE FROM workspace_agents WHERE id = :id"), {"id": agent_id})
         await s.commit()
 
 
@@ -112,10 +112,8 @@ async def test_attempt_destroy_single_flight_under_concurrency(
     org_id = uuid4()
     sessionmaker = get_sessionmaker()
 
-    async with sessionmaker() as s:
-        agent = await seed_agent(org_id=org_id, session=s)
-        agent_id = agent["id"]
-        await s.commit()
+    agent = await seed_agent(org_id=org_id)
+    agent_id = agent["id"]
     _seeded.agent_ids.append(agent_id)
 
     workspace_id = uuid7()

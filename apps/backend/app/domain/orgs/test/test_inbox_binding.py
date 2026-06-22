@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.domain.orgs import read_sent_emails as read_email_inbox
 from app.domain.orgs.email import (
     SentEmail,
     _global_inbox,
@@ -11,7 +12,6 @@ from app.domain.orgs.email import (
     send_plain,
     set_email_inbox_for_tests,
 )
-from app.testing.seed import read_email_inbox
 
 # ── Isolation ─────────────────────────────────────────────────────────────
 

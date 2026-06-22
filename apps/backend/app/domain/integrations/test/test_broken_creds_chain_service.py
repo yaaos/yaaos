@@ -33,6 +33,7 @@ from app.domain.integrations.scheduler import run_health_check_once
 from app.domain.integrations.types import _REGISTRY
 from app.domain.mcp_proxy import consume_broken_creds, mint_token
 from app.domain.orgs import insert_membership, insert_org
+from app.domain.orgs import read_sent_emails as read_email_inbox
 from app.domain.reviewer import (
     PRReviewAggregate,
     ReviewScope,
@@ -42,7 +43,6 @@ from app.domain.reviewer import (
 from app.domain.reviewer import prefix_broken_creds_warning as _prefix_broken_creds_warning
 from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
-from app.testing.seed import read_email_inbox
 
 
 def _config() -> ProviderConfig:

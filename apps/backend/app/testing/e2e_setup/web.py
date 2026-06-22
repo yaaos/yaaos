@@ -217,4 +217,64 @@ async def deregister_workspace_agent(req: _DeregisterWorkspaceAgentRequest) -> d
     return await service.deregister_workspace_agent(agent_id=req.id)
 
 
+class _SeedAgentRequest(BaseModel):
+    org_id: UUID
+    iam_arn: str = Field(default="arn:aws:iam::123456789012:role/yaaos-agent", min_length=1)
+    version: str = Field(default="0.0.1", min_length=1)
+    instance_id: str | None = Field(default=None, min_length=1)
+
+
+@router.post("/seed/agent")
+async def seed_agent(req: _SeedAgentRequest) -> dict[str, str]:
+    """Insert a workspace-agent row and return ``{"id": "<uuid>", "instance_id": ...}``."""
+    _guard_dev()
+    result = await service.seed_agent(
+        org_id=req.org_id,
+        iam_arn=req.iam_arn,
+        version=req.version,
+        instance_id=req.instance_id,
+    )
+    return {"id": str(result["id"]), "instance_id": result["instance_id"]}
+
+
+class _SeedWorkspaceRequest(BaseModel):
+    org_id: UUID
+    provider_id: str = Field(default="remote_agent", min_length=1)
+    sha: str = Field(..., min_length=1)
+    agent_id: UUID
+    current_command_id: UUID | None = None
+    status: str | None = None
+
+
+@router.post("/seed/workspace")
+async def seed_workspace(req: _SeedWorkspaceRequest) -> dict[str, str]:
+    """Insert a workspace row and return ``{"workspace_id": "<uuid>"}``."""
+    _guard_dev()
+    ws_id = await service.seed_workspace(
+        org_id=req.org_id,
+        provider_id=req.provider_id,
+        sha=req.sha,
+        agent_id=req.agent_id,
+        current_command_id=req.current_command_id,
+        status=req.status,
+    )
+    return {"workspace_id": ws_id}
+
+
+@router.delete("/orgs/{org_id}")
+async def delete_org(org_id: UUID) -> dict[str, bool]:
+    """Hard-delete an org row (cascades to all child rows)."""
+    _guard_dev()
+    await service.delete_org(org_id)
+    return {"deleted": True}
+
+
+@router.delete("/users/{user_id}/artifacts")
+async def delete_user_artifacts(user_id: UUID) -> dict[str, bool]:
+    """Hard-delete a user row and all identity-owned child rows."""
+    _guard_dev()
+    await service.delete_user(user_id)
+    return {"deleted": True}
+
+
 register_routes(RouteSpec(module_name="e2e_setup", router=router, url_prefix="/api/testing"))

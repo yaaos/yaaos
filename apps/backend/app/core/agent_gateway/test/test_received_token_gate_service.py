@@ -24,7 +24,7 @@ from app.core.agent_gateway import (
     enqueue_command,
     record_agent_event,
 )
-from app.testing.seed import seed_agent
+from app.testing.e2e_setup import seed_agent
 
 
 async def _seed_and_claim(db_session) -> tuple[UUID, str]:
@@ -35,7 +35,7 @@ async def _seed_and_claim(db_session) -> tuple[UUID, str]:
     the rollback fixture handles cleanup.
     """
     org_id = uuid4()
-    agent = await seed_agent(org_id=org_id, session=db_session)
+    agent = await seed_agent(org_id=org_id)
     agent_id: UUID = agent["id"]
 
     cmd_id = uuid7()

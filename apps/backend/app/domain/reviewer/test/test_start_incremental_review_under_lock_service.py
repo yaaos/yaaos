@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from app.core.database import get_sessionmaker
 from app.core.vcs import VCSPullRequest
@@ -31,7 +31,6 @@ from app.domain.reviewer.models import ReviewRow
 from app.domain.tickets import attach_pr_to_ticket
 from app.domain.tickets import create_from_pr as create_ticket
 from app.domain.tickets import upsert as upsert_pr
-from app.testing.seed import delete_pull_request, delete_ticket
 from app.testing.stub_vcs import register_stub_vcs
 from app.testing.workflow_harness import set_engine_for_tests
 
@@ -62,11 +61,11 @@ async def _clean(seeded: _Seeded) -> None:
     # pull_requests.ticket_id → tickets.id (NOT NULL), so delete PR before ticket.
     async with sessionmaker() as s:
         if seeded.pr_id is not None:
-            await delete_pull_request(seeded.pr_id, session=s)
+            await s.execute(text("DELETE FROM pull_requests WHERE id = :id"), {"id": seeded.pr_id})
         await s.commit()
     async with sessionmaker() as s:
         if seeded.ticket_id is not None:
-            await delete_ticket(seeded.ticket_id, session=s)
+            await s.execute(text("DELETE FROM tickets WHERE id = :id"), {"id": seeded.ticket_id})
         await s.commit()
 
 

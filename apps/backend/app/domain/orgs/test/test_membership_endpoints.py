@@ -18,7 +18,7 @@ from app.domain.orgs import insert_membership, insert_org
 from app.domain.orgs import invite as invite_service
 
 # web is loaded by domain.orgs.__init__ — no explicit import needed
-from app.testing.seed import read_email_inbox
+from app.domain.orgs import read_sent_emails as read_email_inbox
 
 
 def _app() -> FastAPI:
@@ -210,7 +210,7 @@ async def test_remove_member_revokes_sessions(seeded, db_session) -> None:
         )
     assert resp.status_code == 200
     from app.core.database import get_sessionmaker  # noqa: PLC0415
-    from app.testing.seed import delete_org as _delete_org_for_tests  # noqa: PLC0415
+    from app.core.tenancy import delete_org as _delete_org_for_tests  # noqa: PLC0415
 
     async with get_sessionmaker()() as s:
         assert await lookup_session(s, member_session.raw_token) is None
@@ -243,7 +243,7 @@ async def test_change_role_rotates_sessions(seeded, db_session) -> None:
     async with get_sessionmaker()() as s:
         assert await lookup_session(s, member_session.raw_token) is None
         # Cleanup the seeded org so other tests see a clean slate.
-        from app.testing.seed import delete_org as _delete_org_for_tests  # noqa: PLC0415
+        from app.core.tenancy import delete_org as _delete_org_for_tests  # noqa: PLC0415
 
         await _delete_org_for_tests(s, org.org_id)
         await s.commit()

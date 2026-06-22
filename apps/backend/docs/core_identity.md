@@ -36,6 +36,6 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 
 ## Gotchas
 
-- `_set_session_last_seen_for_tests` and `_delete_user_artifacts_for_tests` are NOT in `__all__`. Cross-module callers use `set_session_last_seen` / `delete_user_artifacts` from `app.testing.seed`.
+- `_set_session_last_seen_for_tests` and `_delete_user_artifacts_for_tests` are NOT in `__all__`. Cross-module callers use `set_session_last_seen` from `app.testing.e2e_setup` or `delete_user` from `app.testing.e2e_setup`.
 - Partial unique index `uq_user_emails_email_active` on `lower(email) WHERE verified_at IS NOT NULL` — verified emails are globally unique; deactivation frees them lazily.
 

@@ -98,7 +98,7 @@ async def email_inbox_isolation():
     """Bind a fresh email inbox for each test.
 
     Autouse so every test gets an isolated inbox. Tests that need to read
-    sent emails call `read_email_inbox()` from `app.testing.seed`.
+    sent emails call `read_sent_emails()` from `app.domain.orgs`.
     """
     from app.domain.orgs import set_email_inbox_for_tests  # noqa: PLC0415
 

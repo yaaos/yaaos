@@ -20,7 +20,7 @@ from app.core.workspace import (
     dispatch_via_workspace,
 )
 from app.core.workspace.models import WorkspaceRow
-from app.testing.seed import seed_agent, seed_workspace
+from app.testing.e2e_setup import seed_agent, seed_workspace
 
 pytestmark = pytest.mark.service
 
@@ -42,14 +42,13 @@ def _ctx(wfe_id: UUID | None = None) -> CommandContext:
     )
 
 
-async def _seed_active_workspace(org_id: UUID, session) -> UUID:  # type: ignore[no-untyped-def]
-    agent = await seed_agent(org_id=org_id, session=session)
+async def _seed_active_workspace(org_id: UUID, _session=None) -> UUID:  # type: ignore[no-untyped-def]
+    agent = await seed_agent(org_id=org_id)
     ws_id_str = await seed_workspace(
         org_id=org_id,
         provider_id="remote_agent",
         sha="abc",
         agent_id=agent["id"],
-        caller_session=session,
     )
     return UUID(ws_id_str)
 
@@ -130,7 +129,7 @@ async def test_dispatch_via_workspace_claim_busy_raises(db_session) -> None:
     """WorkspaceClaimFailed raised when workspace already has a current_command_id."""
     org_id = uuid.uuid4()
     # Seed a pre-claimed workspace.
-    agent = await seed_agent(org_id=org_id, session=db_session)
+    agent = await seed_agent(org_id=org_id)
     ws_id = UUID(
         await seed_workspace(
             org_id=org_id,
@@ -138,7 +137,6 @@ async def test_dispatch_via_workspace_claim_busy_raises(db_session) -> None:
             sha="abc",
             agent_id=agent["id"],
             current_command_id=uuid.uuid4(),  # pre-claimed
-            caller_session=db_session,
         )
     )
 
@@ -158,7 +156,7 @@ async def test_dispatch_via_workspace_claim_inactive_raises(db_session) -> None:
     """WorkspaceClaimFailed raised when workspace status is not 'active'."""
     org_id = uuid.uuid4()
     # Seed an expired workspace.
-    agent = await seed_agent(org_id=org_id, session=db_session)
+    agent = await seed_agent(org_id=org_id)
     ws_id = UUID(
         await seed_workspace(
             org_id=org_id,
@@ -166,7 +164,6 @@ async def test_dispatch_via_workspace_claim_inactive_raises(db_session) -> None:
             sha="abc",
             agent_id=agent["id"],
             status="expired",
-            caller_session=db_session,
         )
     )
 

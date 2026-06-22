@@ -30,8 +30,8 @@ from app.domain.orgs import create_org
 from app.domain.reviewer.types import TicketSnapshot
 from app.domain.reviewer.workflows import pr_review_v1
 from app.domain.tickets import create_from_pr as create_ticket
-from app.testing.seed import seed_agent as _seed_agent_for_tests
-from app.testing.seed import seed_workspace as _seed_workspace_for_tests
+from app.testing.e2e_setup import seed_agent as _seed_agent_for_tests
+from app.testing.e2e_setup import seed_workspace as _seed_workspace_for_tests
 from app.testing.workflow_harness import set_engine_for_tests
 
 
@@ -226,13 +226,12 @@ async def test_pr_review_v1_with_findings_persists_to_db(db_session, workspace_p
     pr_id = pr.id
 
     # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
-    agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
+    agent_row = await _seed_agent_for_tests(org_id=org_id)
     seeded_ws_id = await _seed_workspace_for_tests(
         org_id=org_id,
         provider_id="in_process",
         sha="deadbeef",
         agent_id=agent_row["id"],
-        caller_session=db_session,
     )
     await db_session.commit()
 
@@ -382,14 +381,13 @@ async def test_pr_review_v1_runs_end_to_end_remote_agent(db_session, _registered
         await _drain_workflow_outbox(db_session)
 
         # CodeReview.dispatch requires owning_agent_id — seed a real agent row (FK constraint).
-        agent_row = await _seed_agent_for_tests(org_id=org_id, session=db_session)
+        agent_row = await _seed_agent_for_tests(org_id=org_id)
         sim_workspace_id = str(
             await _seed_workspace_for_tests(
                 org_id=org_id,
                 provider_id="in_process",
                 sha="deadbeefcafef00d",
                 agent_id=agent_row["id"],
-                caller_session=db_session,
             )
         )
         await db_session.commit()

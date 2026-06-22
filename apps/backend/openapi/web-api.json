@@ -1963,6 +1963,99 @@
         "title": "_SamlSignRequest",
         "type": "object"
       },
+      "_SeedAgentRequest": {
+        "properties": {
+          "iam_arn": {
+            "default": "arn:aws:iam::123456789012:role/yaaos-agent",
+            "minLength": 1,
+            "title": "Iam Arn",
+            "type": "string"
+          },
+          "instance_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instance Id"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "version": {
+            "default": "0.0.1",
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id"
+        ],
+        "title": "_SeedAgentRequest",
+        "type": "object"
+      },
+      "_SeedWorkspaceRequest": {
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "current_command_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Command Id"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "provider_id": {
+            "default": "remote_agent",
+            "minLength": 1,
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "sha": {
+            "minLength": 1,
+            "title": "Sha",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "org_id",
+          "sha",
+          "agent_id"
+        ],
+        "title": "_SeedWorkspaceRequest",
+        "type": "object"
+      },
       "_SsoConfigBody": {
         "properties": {
           "email_domains": {
