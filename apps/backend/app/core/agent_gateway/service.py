@@ -22,7 +22,7 @@ import hmac
 import secrets
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 if TYPE_CHECKING:
     from app.core.audit_log import Actor
@@ -1279,14 +1279,14 @@ class ShutdownResult(BaseModel):
     """Per-agent outcome of a bulk ``shutdown_agents`` call."""
 
     agent_id: UUID
-    outcome: str  # draining | already_draining | already_shutdown | not_found
+    outcome: Literal["draining", "already_draining", "already_shutdown", "not_found"]
 
 
 class CancelShutdownResult(BaseModel):
     """Per-agent outcome of a bulk ``cancel_shutdown_agents`` call."""
 
     agent_id: UUID
-    outcome: str  # active | not_draining | already_shutdown | not_found
+    outcome: Literal["active", "not_draining", "already_shutdown", "not_found"]
 
 
 class _AgentShutdownRequestedAudit(BaseModel):
