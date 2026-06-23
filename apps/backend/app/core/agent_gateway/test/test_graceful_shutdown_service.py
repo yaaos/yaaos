@@ -2,7 +2,7 @@
 
 Service tests for:
 - DELETE revokes bearer, sets agent offline + last_shutdown_at, expires held
-  Workspaces, synthesizes terminal command failures, publishes agent_liveness_changed.
+  Workspaces, synthesizes terminal command failures, publishes agent_changed.
 - ARN change/clear in patch_org_settings calls revoke_all_for_arn on the old ARN;
   a bearer issued under the old ARN then 401s on next verify.
 - Region-mismatch identity exchange writes one `identity_exchange_failed` audit

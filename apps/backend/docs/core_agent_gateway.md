@@ -29,7 +29,7 @@ The agent sends this as its last act on clean shutdown (SIGTERM/SIGINT), after s
 1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
 2. Revokes the bearer (reason `graceful_shutdown`).
 3. Calls `WorkspaceAgentReportSink.handle_agent_loss` — expires held workspaces, synthesizes `completed_failure` events for any in-flight `current_command_id` so WorkflowExecutions resume rather than hanging in `AWAITING_AGENT`.
-4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card offline without waiting for the sweeper's next tick.
+4. Publishes `agent_changed` SSE so the dashboard flips the card offline without waiting for the sweeper's next tick.
 
 Returns 204. Idempotent — a revoked bearer 401s before the handler runs. Best-effort on the agent side: errors are logged but never prevent process exit.
 
@@ -41,13 +41,13 @@ Called on each `_reaper_sweep_once` tick from `core/workspace` (the loop host). 
 - `60 s – 5 min` → `stale`
 - `> 5 min` → `offline`
 
-Writes `state` only on transition (idempotent on the same tick). Returns a list of agent UUIDs that newly became `offline` this sweep. Emits one `agent_liveness_changed` SSE event per transitioned agent via `publish_general_after_commit` on the org's general channel — cache-invalidate only, no state in payload.
+Writes `state` only on transition (idempotent on the same tick). Returns a list of agent UUIDs that newly became `offline` this sweep. Emits one `agent_changed` SSE event per transitioned agent via `publish_general_after_commit` on the org's general channel; payload carries `{agent_id}`.
 
 Cron-beat dedup (via `scheduled_runs ON CONFLICT DO NOTHING`) is the primary cross-pod exclusivity for `requeue_stale_claimed` and `compute_agent_liveness_transitions`; row-level `FOR UPDATE SKIP LOCKED` on the SELECT in each function is the defense-in-depth backstop against overlapping reaper bodies when a slow sweep crosses a cron-beat boundary.
 
 ## `GET /api/orgs/{slug}/agents`
 
-Returns agents for the current org within the 1-hour UI-retention window. Fields: `id`, `instance_id`, `state`, `last_heartbeat_at`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count`, `version`. Excludes agents whose last heartbeat is older than 1 hour (rows stay in the DB). Requires `ORG_READ` (visible to all org members). Implemented in `app/domain/orgs/org_settings_web.py`; delegates to `list_agents_for_org`.
+Returns agents for the current org within the 1-hour UI-retention window. Fields: `id`, `instance_id`, `state`, `lifecycle`, `last_heartbeat_at`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count`, `version`. Excludes agents whose last heartbeat is older than 1 hour (rows stay in the DB). Requires `ORG_READ` (visible to all org members). Implemented in `app/domain/orgs/org_settings_web.py`; delegates to `list_agents_for_org`.
 
 ## Identity exchange — `POST /api/v1/agent/identity`
 
@@ -100,12 +100,19 @@ Commands are persisted in `agent_commands` before delivery. The queue provides:
 
 `enqueue_config_update_for_agent(agent_id, *, org_id, session)` is the identity-exchange-specific helper: wraps `enqueue_command` for a `ConfigUpdateCommand` built from `get_settings()`, then immediately pre-stamps `agent_id` on the row so the unconfigured-lifecycle claim SELECT can find it by `(kind='ConfigUpdate', agent_id=this agent)` without a workspace sweep. Called in the same transaction as `ensure_agent_row`. Enqueues unconditionally — duplicate rows drain in FIFO order and `ApplyConfig` is idempotent.
 
-The `claim_next` lifecycle gate: `unconfigured` → SELECT for `ConfigUpdate` rows pre-stamped to this `agent_id` (FIFO, `FOR UPDATE SKIP LOCKED`); `configured` → three-SELECT priority chain — `ConfigUpdate` pinned to this agent (so post-boot key/cert rotations from `enqueue_config_update_for_all_org_agents` actually drain), then unassigned `ProvisionWorkspace`, then agent-pinned workspace commands. ConfigUpdate sits at priority 1 because credentials and OTLP endpoint must land before the next `ProvisionWorkspace` injects per-workspace env at `ExecSpawn` time (the env is set once and lives for the workspace's whole life).
+The `claim_next` lifecycle gate: `lifecycle='unconfigured'` → SELECT for `ConfigUpdate` rows pre-stamped to this `agent_id` (FIFO, `FOR UPDATE SKIP LOCKED`); `lifecycle` in `('active', 'draining')` → three-SELECT priority chain — `ConfigUpdate` pinned to this agent (so post-boot key/cert rotations from `enqueue_config_update_for_all_org_agents` actually drain), then unassigned `ProvisionWorkspace`, then agent-pinned workspace commands. ConfigUpdate sits at priority 1 because credentials and OTLP endpoint must land before the next `ProvisionWorkspace` injects per-workspace env at `ExecSpawn` time (the env is set once and lives for the workspace's whole life).
 
 The `received` EventKind is non-terminal: it cancels the lease requeue on the row (`claimed → delivered`). Terminal events retire the row to `done`.
 
 ## Why / invariants
 
+- **`workspace_agents.lifecycle` — drain lifecycle FSM.** Two orthogonal axes track agent state: `state` (liveness: `reachable/stale/offline`) and `lifecycle` (drain: `unconfigured/active/draining/shutdown`). `lifecycle` transitions:
+  - `unconfigured → active` — `mark_agent_configured` CAS (compare-and-swap UPDATE WHERE lifecycle='unconfigured'); called by `record_agent_event` when a `ConfigUpdate` `completed_success` event arrives.
+  - `draining` and `shutdown` are valid column values (CHECK-permitted); no service function writes them — only `unconfigured → active` is wired.
+  - `shutdown → unconfigured` (on re-exchange) — `ensure_agent_row` UPSERT CASE expression; a freshly reconnecting agent that previously completed a full drain restarts at `unconfigured`.
+  - All other UPSERT calls (bearer refresh) preserve the existing lifecycle value.
+  - `mark_agent_offline` writes liveness state only — never touches `lifecycle`.
+  - Every lifecycle change emits `agent_changed` SSE after commit.
 - **`DELETE /api/v1/agent/identity` runs inside `org_context`** — the same auth chain as all operational endpoints; the bearer-derived identity provides `org_id` + `agent_id`. Not on the public allowlist.
 - **`revoke_all_for_arn(arn, reason, session)` revokes by `issued_iam_arn`** — called by `patch_org_settings` on ARN change or clear so old-ARN agents 401 on their next request. Returns the count of revoked rows; caller commits.
 - **Region-mismatch failures write an org-level audit row** — kind `identity_exchange_failed`, only when the canonical ARN matched a registered org (so `org_id` is known). Failures that can't be attributed to an org (unregistered ARN, parse/endpoint/replay/AWS rejections) remain structlog-only. The audit payload carries `category`, `attempted_arn`, `source_ip`.
@@ -149,7 +156,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 ## Data owned
 
-- `workspace_agents` — per-agent-instance identity rows; one per `(org_id, instance_id)`. Columns: `instance_id` (role-session-name from STS ARN), `iam_arn`, `version`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count` (populated by `record_heartbeat` as `len(workspaces)`; not set by identity exchange), `last_heartbeat_at`, `last_shutdown_at`, `state`.
+- `workspace_agents` — per-agent-instance identity rows; one per `(org_id, instance_id)`. Columns: `instance_id` (role-session-name from STS ARN), `iam_arn`, `version`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count` (populated by `record_heartbeat` as `len(workspaces)`; not set by identity exchange), `last_heartbeat_at`, `last_shutdown_at`, `state`, `lifecycle` (drain FSM: `unconfigured|active|draining|shutdown`; DEFAULT `'unconfigured'`; CHECK constraint on column).
 - `bearer_tokens` — `(token_hash, issued_at, expires_at, revoked_at, revoked_reason, last_seen_at, source_ip, issued_iam_arn)`. Revocation reasons: `arn_change` (ARN rotation via settings), `mode_switch`, `disconnect`, `manual_rotate`, `agent_loss` (per-agent), `graceful_shutdown` (DELETE handler). `revoke_all_for_arn` revokes by `issued_iam_arn`; `revoke_all_for_agent` by `agent_id`; `revoke_all_for_org` by `org_id`.
 - `agent_commands` — durable command queue. Columns: `id` (UUIDv7 PK = FIFO key), `org_id`, `workspace_id` (NULL for org-scoped commands), `workflow_execution_id` (NULL for agent-scoped commands like `ConfigUpdate`; set by `enqueue_command` when a Workspace `WorkflowCommand.dispatch` originates the row — owns the command→workflow correlation read by `record_agent_event`), `command_kind`, `payload` (JSONB), `status` (`pending|claimed|delivered|done`), `agent_id` (NULL until claimed), `claimed_at`, `attempt`, `created_at`. Indexes: `(agent_id, status, id)` + `(status, command_kind, id)`. CHECK `ck_agent_commands_id_uuidv7` (`uuid_extract_version(id)=7`) enforces the time-ordered FIFO key at the row boundary — producers mint `command_id` app-side with `uuid7()`, and this constraint catches a stray `uuid4` that the semgrep taint rule cannot see across the producer-DTO → `enqueue_command` hop (added `NOT VALID`, so rows predating the guard are grandfathered). See [patterns.md § UUID primary keys](patterns.md).
 
@@ -169,7 +176,9 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_claim_lifecycle_service.py` covers `claim_next` lifecycle gate: unconfigured leaves DB rows untouched; configured returns a single ProvisionWorkspace command; empty queue returns `None`; a ConfigUpdate enqueued after the agent is configured (BYOK rotation fan-out) is claimable in the configured lifecycle; when both kinds are pending, configured claim returns ConfigUpdate before ProvisionWorkspace.
 
-`test/test_liveness_sweeper_service.py` covers: `compute_agent_liveness_transitions` flips `reachable → stale` at 60s, `stale → offline` and `reachable → offline` beyond 5 min, writes only on transition, returns newly-offline IDs, emits SSE; `GET /api/orgs/{slug}/agents` returns within-retention agents with `claimed_workspace_count`; excludes agents beyond 1h window; excludes other-org agents; requires auth.
+`test/test_liveness_sweeper_service.py` covers: `compute_agent_liveness_transitions` flips `reachable → stale` at 60s, `stale → offline` and `reachable → offline` beyond 5 min, writes only on transition, returns newly-offline IDs, emits SSE; `GET /api/orgs/{slug}/agents` returns within-retention agents with `claimed_workspace_count` and `lifecycle`; excludes agents beyond 1h window; excludes other-org agents; requires auth.
+
+`test/test_lifecycle_service.py` covers: `ensure_agent_row` fresh insert → `lifecycle='unconfigured'`; UPSERT on re-exchange preserves `draining`; UPSERT from `shutdown` resets to `unconfigured`; `mark_agent_configured` CAS flips `unconfigured → active`; CAS is no-op on `active` or `draining`; CAS win publishes `agent_changed` SSE with `agent_id` payload; `record_agent_event` ConfigUpdate `completed_success` triggers `mark_agent_configured`; `record_heartbeat` publishes `agent_changed` SSE.
 
 `test/test_requeue_stale_claimed_concurrent_service.py` covers: two concurrent `requeue_stale_claimed` calls on independent sessions against the same N stale-claimed rows produce a combined requeue count of exactly N (not 2N) and each row's `attempt` increments by exactly 1 — proving `FOR UPDATE SKIP LOCKED` prevents double-processing.
 

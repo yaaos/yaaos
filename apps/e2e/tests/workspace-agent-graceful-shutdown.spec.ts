@@ -9,7 +9,7 @@
  * 2. Navigate to the dashboard — the agent card shows "online" (reachable).
  * 3. Stop the agent container cleanly (SIGTERM via docker stop).
  * 4. The agent sends DELETE /api/v1/agent/identity before exiting.
- * 5. The SSE `agent_liveness_changed` event invalidates the agents query.
+ * 5. The SSE `agent_changed` event invalidates the agents query.
  * 6. The card flips to "offline" within ~5 seconds, without a page reload.
  */
 
@@ -76,7 +76,7 @@ test.describe("workspace agent graceful shutdown", () => {
     });
     expect(r.ok()).toBeTruthy();
 
-    // SSE agent_liveness_changed must flip the card to offline within 10s
+    // SSE agent_changed must flip the card to offline within 10s
     // without a page reload.
     const offlineIndicator = agentCard.getByTestId("agent-state-offline");
     await expect(offlineIndicator).toBeVisible({ timeout: 10_000 });

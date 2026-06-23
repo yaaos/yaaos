@@ -24,7 +24,7 @@
 
 ## Live updates
 
-Pure SSE — no polling. `agent_liveness_changed` events invalidate `["agents"]`; `ticket_status_changed`, `review_*`, and `finding_*` events invalidate `["tickets"]` and `["tickets", "dashboard"]`. On every `(re)connect`, `onopen` reconciles by invalidating `["agents"]` and list-level ticket keys.
+Pure SSE — no polling. `agent_changed` events invalidate `["agents"]`; `ticket_status_changed`, `review_*`, and `finding_*` events invalidate `["tickets"]` and `["tickets", "dashboard"]`. On every `(re)connect`, `onopen` reconciles by invalidating `["agents"]` and list-level ticket keys.
 
 ## Public interface
 

@@ -458,9 +458,9 @@ async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:
 
     Inserts the row with ``state="reachable"`` and a recent ``last_heartbeat_at``
     so the dashboard's 1-hour retention window includes it immediately. Publishes
-    ``agent_liveness_changed`` after commit so the dashboard's pure-SSE path
-    invalidates the agents query without a manual reload. Returns the agent's
-    ``id`` and ``instance_id``.
+    ``agent_changed`` after commit so the dashboard's pure-SSE path invalidates
+    the agents query without a manual reload. Returns the agent's ``id`` and
+    ``instance_id``.
     """
     from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
@@ -473,8 +473,8 @@ async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:
         publish_general_after_commit(
             s,
             org_id=org.id,
-            kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
-            payload={},
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(result["id"])},
         )
         await s.commit()
     return {"id": str(result["id"]), "instance_id": result["instance_id"]}
@@ -485,14 +485,14 @@ async def deregister_workspace_agent(*, agent_id: UUID) -> dict[str, str]:
 
     Mirrors ``DELETE /api/v1/agent/identity`` for the agent with the given
     canonical ``id``: marks the row offline + ``last_shutdown_at``, runs
-    agent-loss cleanup, and publishes ``agent_liveness_changed`` so the
-    dashboard flips the card offline live. Drives the graceful-shutdown
-    Playwright spec without a real bearer or running container.
+    agent-loss cleanup, and publishes ``agent_changed`` so the dashboard
+    flips the card offline live. Drives the graceful-shutdown Playwright spec
+    without a real bearer or running container.
     """
     from app.core.agent_gateway import (  # noqa: PLC0415
         get_agent_info,
         get_report_sink,
-        mark_agent_shutdown,
+        mark_agent_offline,
     )
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
@@ -506,13 +506,13 @@ async def deregister_workspace_agent(*, agent_id: UUID) -> dict[str, str]:
 
     async with org_context(org_id, ActorKind.WORKSPACE, actor_id=agent_id):
         async with db_session() as s:
-            await mark_agent_shutdown(agent_id, session=s)
+            await mark_agent_offline(agent_id, session=s)
             await get_report_sink().handle_agent_loss({agent_id}, s)
             publish_general_after_commit(
                 s,
                 org_id=org_id,
-                kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
-                payload={},
+                kind=GeneralEventKind.AGENT_CHANGED,
+                payload={"agent_id": str(agent_id)},
             )
             await s.commit()
     return {"id": str(agent_id), "instance_id": info["instance_id"]}

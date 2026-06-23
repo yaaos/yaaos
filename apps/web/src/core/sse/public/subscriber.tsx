@@ -44,7 +44,7 @@ import type { ServerEvent } from "./types";
  * - `finding_raised` | `finding_re_observed` | `finding_anchor_updated` |
  *   `finding_state_changed` | `finding_acknowledged` |
  *   `finding_resolution_detected` | `finding_stale_detected` → ["tickets"], ["tickets", "dashboard"]
- * - `agent_liveness_changed` → ["agents"]
+ * - `agent_changed` → ["agents"]
  */
 
 // ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ function _handleEvent(evt: ServerEvent): void {
       _scheduleInvalidate(["tickets"]);
       _scheduleInvalidate(["tickets", "dashboard"]);
       break;
-    case "agent_liveness_changed":
+    case "agent_changed":
       _scheduleInvalidate(["agents"]);
       break;
     default:

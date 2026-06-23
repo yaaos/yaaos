@@ -56,7 +56,7 @@ from app.core.agent_gateway.service import (
     claim_next,
     enqueue_config_update_for_agent,
     ensure_agent_row,
-    mark_agent_shutdown,
+    mark_agent_offline,
     record_agent_event,
     record_heartbeat,
     record_workspace_event,
@@ -387,7 +387,7 @@ async def deregister_identity(
     2. Revokes the bearer so subsequent calls 401 immediately.
     3. Expires any workspaces owned by this agent and synthesizes terminal
        failure events for in-flight commands so their WorkflowExecutions resume.
-    4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card
+    4. Publishes `agent_changed` SSE so the dashboard flips the card
        offline without waiting for the sweeper's next tick.
 
     Returns 204. Idempotent — calling on an already-offline/revoked agent is
@@ -396,7 +396,7 @@ async def deregister_identity(
     async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
         async with db_session() as s:
             # 1. Mark offline eagerly.
-            await mark_agent_shutdown(agent.agent_id, session=s)
+            await mark_agent_offline(agent.agent_id, session=s)
 
             # 2. Revoke this bearer immediately.
             await bearers.revoke(agent.bearer_id, "graceful_shutdown", session=s)
@@ -408,8 +408,8 @@ async def deregister_identity(
             publish_general_after_commit(
                 s,
                 org_id=agent.org_id,
-                kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
-                payload={},
+                kind=GeneralEventKind.AGENT_CHANGED,
+                payload={"agent_id": str(agent.agent_id)},
             )
 
             await s.commit()

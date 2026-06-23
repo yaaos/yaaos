@@ -28,7 +28,7 @@ import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel, Field, RootModel, TypeAdapter
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -813,6 +813,17 @@ async def record_heartbeat(
         # The column is populated here (not at identity exchange) because the agent
         # only knows its active workspace set at heartbeat time.
         row.claimed_workspace_count = len(request.workspaces)
+        # Publish agent_changed after commit so the SPA's agents card updates
+        # claimed_workspace_count in near-real-time (30s normal cadence; 5s
+        # during drain). One Redis pub/sub per heartbeat — negligible load.
+        from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+        publish_general_after_commit(
+            session,
+            org_id=row.org_id,
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(row.id)},
+        )
     else:
         # Heartbeat arrived for an agent the control plane doesn't know about —
         # this happens transiently after a restart before identity exchange
@@ -963,6 +974,17 @@ async def record_agent_event(
                 payload=event.model_dump(mode="json"),
             )
         return
+
+    # ConfigUpdate completed_success → CAS-flip lifecycle unconfigured → active.
+    # Must run BEFORE release_command_claim so the row is stable before any
+    # downstream SSE. CAS is a no-op if lifecycle is already active/draining/shutdown
+    # (see Invariant — ConfigUpdate during drain in architecture.md).
+    if (
+        event.kind == AgentEventKind.COMPLETED_SUCCESS
+        and cmd_row.command_kind == AgentCommandKind.CONFIG_UPDATE
+        and cmd_row.agent_id is not None
+    ):
+        await mark_agent_configured(agent_id=cmd_row.agent_id, session=session)
 
     # Terminal — release the single-flight workspace claim BEFORE routing to
     # the next step or finalizer, so the next `try_claim` sees
@@ -1126,6 +1148,8 @@ async def ensure_agent_row(
         memory_bytes=memory_bytes,
         last_heartbeat_at=now,
         state="reachable",
+        # lifecycle DEFAULT 'unconfigured' applies on INSERT (column-level DEFAULT).
+        # The UPSERT set_ clause below handles the CONFLICT branch.
     )
     exc = insert_stmt.excluded
     upsert_stmt = insert_stmt.on_conflict_do_update(
@@ -1138,21 +1162,44 @@ async def ensure_agent_row(
             "memory_bytes": func.coalesce(exc.memory_bytes, WorkspaceAgentRow.memory_bytes),
             "last_heartbeat_at": exc.last_heartbeat_at,
             "state": exc.state,
+            # Preserve lifecycle across bearer-refresh (a re-exchange while
+            # draining must not reset backend lifecycle="draining" to unconfigured).
+            # Exception: reconnect of a previously-shutdown agent resets to
+            # unconfigured — treat it as a fresh agent.
+            "lifecycle": case(
+                (WorkspaceAgentRow.lifecycle == "shutdown", "unconfigured"),
+                else_=WorkspaceAgentRow.lifecycle,
+            ),
         },
-    ).returning(WorkspaceAgentRow.id)
-    agent_id: UUID = (await session.execute(upsert_stmt)).scalar_one()
-    return agent_id
+    ).returning(WorkspaceAgentRow.id, WorkspaceAgentRow.org_id)
+    result_row = (await session.execute(upsert_stmt)).one()
+    agent_id_val: UUID = result_row[0]
+    agent_org_id: UUID = result_row[1]
+
+    # Publish agent_changed after commit so the SPA picks up boot/reconnect
+    # events unconditionally — no payload diffing needed; the SPA refetches.
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    publish_general_after_commit(
+        session,
+        org_id=agent_org_id,
+        kind=GeneralEventKind.AGENT_CHANGED,
+        payload={"agent_id": str(agent_id_val)},
+    )
+
+    return agent_id_val
 
 
-async def mark_agent_shutdown(
+async def mark_agent_offline(
     agent_id: UUID,
     *,
     session: AsyncSession,
 ) -> None:
     """Set `state=offline` + `last_shutdown_at=now` on the agent row.
 
-    Called by the graceful-shutdown DELETE handler immediately before revoking
-    bearers + triggering workspace cleanup. Caller commits.
+    Writes liveness state only — never touches `lifecycle`.  Called by the
+    graceful-shutdown DELETE handler immediately before revoking bearers +
+    triggering workspace cleanup. Caller commits.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
@@ -1164,6 +1211,43 @@ async def mark_agent_shutdown(
         row.state = "offline"
         row.last_shutdown_at = now
         await session.flush()
+
+
+async def mark_agent_configured(
+    *,
+    agent_id: UUID,
+    session: AsyncSession,
+) -> None:
+    """Atomic CAS: `lifecycle='active' WHERE id=? AND lifecycle='unconfigured'`.
+
+    Called by `record_agent_event` on a ConfigUpdate `completed_success`.
+    No-op when `lifecycle` is already `active`, `draining`, or `shutdown` —
+    applying a config never overrides an in-progress drain.  When the CAS
+    flips a row, publishes `agent_changed` after commit.
+
+    Caller commits.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    result = await session.execute(
+        update(WorkspaceAgentRow)
+        .where(
+            WorkspaceAgentRow.id == agent_id,
+            WorkspaceAgentRow.lifecycle == "unconfigured",
+        )
+        .values(lifecycle="active")
+        .returning(WorkspaceAgentRow.org_id)
+    )
+    org_id_val = result.scalar_one_or_none()
+    if org_id_val is not None:
+        # CAS won — publish SSE so the SPA card refreshes immediately.
+        publish_general_after_commit(
+            session,
+            org_id=org_id_val,
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(agent_id)},
+        )
 
 
 async def get_agent_info(
@@ -1310,7 +1394,7 @@ async def compute_agent_liveness_transitions(
 
     Writes `state` only when a transition occurs — idempotent on the same tick.
     Returns the list of agent UUIDs that newly became offline on this sweep.
-    Emits one ``agent_liveness_changed`` SSE event per transitioned agent via
+    Emits one ``agent_changed`` SSE event per transitioned agent via
     ``publish_general_after_commit`` so the dashboard invalidates live.
 
     Lives in ``core/agent_gateway`` because it owns the ``workspace_agents``
@@ -1370,8 +1454,8 @@ async def compute_agent_liveness_transitions(
         publish_general_after_commit(
             session,
             org_id=row.org_id,
-            kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
-            payload={},
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(row.id)},
         )
 
     return newly_offline
@@ -1415,6 +1499,7 @@ async def list_agents_for_org(
             "id": row.id,
             "instance_id": row.instance_id,
             "state": row.state,
+            "lifecycle": row.lifecycle,
             "last_heartbeat_at": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None,
             "os": row.os,
             "cpu_count": row.cpu_count,

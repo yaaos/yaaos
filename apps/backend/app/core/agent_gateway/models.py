@@ -32,6 +32,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
@@ -69,6 +70,11 @@ class WorkspaceAgentRow(Base):
     # claimed_workspace_count: populated by the heartbeat path (not identity exchange).
     claimed_workspace_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     state: Mapped[str] = mapped_column(String, nullable=False, default="reachable")
+    # lifecycle: drain lifecycle state — unconfigured → active → draining → shutdown.
+    # Orthogonal to `state` (liveness). Default applied by DB column DEFAULT on INSERT;
+    # the UPSERT path in ensure_agent_row preserves the existing value (with
+    # shutdown → unconfigured on reconnect).
+    lifecycle: Mapped[str] = mapped_column(Text, nullable=False, default="unconfigured")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

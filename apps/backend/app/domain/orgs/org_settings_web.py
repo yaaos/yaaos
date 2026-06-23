@@ -361,6 +361,7 @@ class AgentView(BaseModel):
     id: UUID
     instance_id: str
     state: str
+    lifecycle: str
     last_heartbeat_at: str | None
     os: str | None
     cpu_count: int | None
@@ -391,6 +392,7 @@ async def list_org_agents(slug: str) -> list[AgentView]:
             id=r["id"],
             instance_id=r["instance_id"],
             state=r["state"],
+            lifecycle=r["lifecycle"],
             last_heartbeat_at=r["last_heartbeat_at"],
             os=r["os"],
             cpu_count=r["cpu_count"],

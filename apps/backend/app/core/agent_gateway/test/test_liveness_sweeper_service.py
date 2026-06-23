@@ -70,6 +70,7 @@ async def _seed_agent_row(
         iam_arn=f"arn:aws:iam::123456789012:role/test-{_id}",
         version="0.0.1",
         state=state,
+        lifecycle="active",
         claimed_workspace_count=0,
     )
     if heartbeat_age_seconds >= 0:
@@ -196,7 +197,7 @@ async def test_liveness_offline_agent_stays_offline(db_session) -> None:
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_liveness_emits_sse_on_transition(db_session, redis_or_skip) -> None:
-    """Each liveness transition emits one agent_liveness_changed SSE event."""
+    """Each liveness transition emits one agent_changed SSE event."""
     import asyncio  # noqa: PLC0415
 
     from app.core.agent_gateway.service import compute_agent_liveness_transitions  # noqa: PLC0415
@@ -233,7 +234,7 @@ async def test_liveness_emits_sse_on_transition(db_session, redis_or_skip) -> No
     except asyncio.CancelledError, TimeoutError:
         pass
 
-    assert any(e.get("kind") == GeneralEventKind.AGENT_LIVENESS_CHANGED for e in received)
+    assert any(e.get("kind") == GeneralEventKind.AGENT_CHANGED for e in received)
 
 
 # ── Tests: GET /api/orgs/{slug}/agents ────────────────────────────────────
@@ -333,3 +334,30 @@ async def test_agents_list_excludes_other_org_agents(db_session) -> None:
     ids = {r["id"] for r in result}
     assert agent_a.id in ids
     assert agent_b.id not in ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_AgentView_serializes_lifecycle(db_session) -> None:
+    """GET /api/orgs/{slug}/agents response includes the `lifecycle` field."""
+    org, _user_id, session_token = await _make_org_and_session(db_session)
+    slug = org.slug
+
+    # Seed one agent; set lifecycle explicitly to verify it is returned.
+    agent_row = await _seed_agent_row(
+        db_session, org_id=org.org_id, state="reachable", heartbeat_age_seconds=30
+    )
+    agent_row.lifecycle = "active"
+    await db_session.flush()
+    await db_session.commit()
+
+    async with _client() as c:
+        resp = await c.get(
+            f"/api/orgs/{slug}/agents",
+            headers={"X-Yaaos-Org-Slug": slug, "Cookie": f"yaaos_session={session_token}"},
+        )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert isinstance(data, list) and len(data) >= 1
+    item = next(d for d in data if d["id"] == str(agent_row.id))
+    assert item["lifecycle"] == "active"

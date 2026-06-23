@@ -78,7 +78,7 @@ test.describe("dashboard workspace agents row", () => {
     // Seed a fresh agent via the testing surface.
     const { instance_id } = await seedAgent(request, { org_slug: "acme" });
 
-    // The SSE `agent_liveness_changed` event should invalidate the agents query
+    // The SSE `agent_changed` event should invalidate the agents query
     // and cause the card to appear without a manual reload.
     // Allow a few seconds for the SSE round-trip + cache invalidation.
     const agentCard = page.getByTestId(`agent-card-instance-${instance_id}`).first();

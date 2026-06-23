@@ -7,7 +7,7 @@
  *     stat cards; bands are still shown but typically empty.
  *
  * Live updates are SSE-driven (`ticket_status_changed`, `review_*`, `finding_*`,
- * `agent_liveness_changed` → TanStack Query invalidation). No polling.
+ * `agent_changed` → TanStack Query invalidation). No polling.
  */
 
 import type { Ticket } from "@core/api/public/client";

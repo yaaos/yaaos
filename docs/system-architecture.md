@@ -40,7 +40,7 @@ SPA mounts one org-keyed `EventSource` on `GET /api/sse/general?org=<slug>` (`wi
 
 Events carry `ticket_id`, `previous_status`, `new_status`. There is no polling fallback (`refetchOnWindowFocus` is off, no `refetchInterval` on SSE-driven queries); SSE is the only live-update path for the dashboard. The client reconciles list-level caches on every (re)connect (`onopen`) and the server emits a connect prelude so that fires promptly.
 
-**Agent liveness.** The `core/workspace` reaper loop calls `compute_agent_liveness_transitions` each tick. That function reads `workspace_agents.last_heartbeat_at` and writes `state` (reachable / stale / offline) only on transition. Each transition emits one `agent_liveness_changed` event on the org's general channel. The SPA's subscriber maps `agent_liveness_changed` → invalidate `["agents"]`; the dashboard `AgentCard` row refreshes live without polling. The `GET /api/orgs/{slug}/agents` endpoint returns agents within a 1-hour UI-retention window.
+**Agent liveness.** The `core/workspace` reaper loop calls `compute_agent_liveness_transitions` each tick. That function reads `workspace_agents.last_heartbeat_at` and writes `state` (reachable / stale / offline) only on transition. Each transition, heartbeat, lifecycle flip, and identity exchange emits one `agent_changed` event on the org's general channel; payload carries `{agent_id}`. The SPA's subscriber maps `agent_changed` → invalidate `["agents"]`; the dashboard `AgentCard` row refreshes live without polling. The `GET /api/orgs/{slug}/agents` endpoint returns agents within a 1-hour UI-retention window.
 
 ### GitHub auth chain
 

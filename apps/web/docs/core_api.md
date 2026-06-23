@@ -64,7 +64,7 @@ Auth hooks live in `queries.ts` so all layers can call them without importing fr
 - `useLogoutAll()` — mutation, all-sessions sign-out.
 `domain/auth/queries.ts` re-exports these for backward compatibility within the auth domain.
 
-`useAgents(orgSlug)` — fetches `GET /api/orgs/{slug}/agents`. Returns `AgentRow[]` within the 1-hour retention window. Invalidated live via `agent_liveness_changed` SSE. Returns an empty array when `orgSlug` is empty (no request issued).
+`useAgents(orgSlug)` — fetches `GET /api/orgs/{slug}/agents`. Returns `AgentRow[]` within the 1-hour retention window. Invalidated live via `agent_changed` SSE. Returns an empty array when `orgSlug` is empty (no request issued).
 
 ### Mutation hooks
 

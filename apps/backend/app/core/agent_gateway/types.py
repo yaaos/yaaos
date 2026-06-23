@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer, field_validator
 
 # ── Discriminator + shared base ─────────────────────────────────────────
 
@@ -325,11 +325,26 @@ class HeartbeatResponse(BaseModel):
 class ClaimRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
     wait_seconds: int = Field(ge=0, le=55)
-    lifecycle: Literal["unconfigured", "configured"] = "unconfigured"
+    lifecycle: Literal["unconfigured", "active", "draining", "shutdown"] = "unconfigured"
     # new_workspaces: capacity for new ProvisionWorkspace commands (max_workspaces - active count).
     new_workspaces: int = Field(ge=0, default=0)
     # workspace_ids: idle workspaces awaiting a command (subset of Active workspaces).
     workspace_ids: tuple[UUID, ...] = ()
+
+    @field_validator("lifecycle", mode="before")
+    @classmethod
+    def _coerce_legacy_lifecycle(cls, v: object) -> object:
+        """Coerce the legacy `"configured"` wire value to `"active"`.
+
+        Older Go agents still emit `lifecycle="configured"` after receiving
+        their first ConfigUpdate; the agent now reports `"active"` directly.
+        This validator migrates the legacy value at parse time so downstream
+        code only ever sees the current enum set. Safe to drop once no
+        deployed agent emits `"configured"`.
+        """
+        if v == "configured":
+            return "active"
+        return v
 
 
 # ── Agent reference ───────────────────────────────────────────────────

@@ -1574,7 +1574,7 @@ export interface paths {
          *     2. Revokes the bearer so subsequent calls 401 immediately.
          *     3. Expires any workspaces owned by this agent and synthesizes terminal
          *        failure events for in-flight commands so their WorkflowExecutions resume.
-         *     4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card
+         *     4. Publishes `agent_changed` SSE so the dashboard flips the card
          *        offline without waiting for the sweeper's next tick.
          *
          *     Returns 204. Idempotent — calling on an already-offline/revoked agent is
@@ -1795,6 +1795,8 @@ export interface components {
             instance_id: string;
             /** Last Heartbeat At */
             last_heartbeat_at: string | null;
+            /** Lifecycle */
+            lifecycle: string;
             /** Memory Bytes */
             memory_bytes: number | null;
             /** Os */
@@ -1844,7 +1846,7 @@ export interface components {
              * @default unconfigured
              * @enum {string}
              */
-            lifecycle: "unconfigured" | "configured";
+            lifecycle: "unconfigured" | "active" | "draining" | "shutdown";
             /**
              * New Workspaces
              * @default 0

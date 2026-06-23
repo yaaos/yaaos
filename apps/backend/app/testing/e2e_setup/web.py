@@ -208,9 +208,9 @@ class _DeregisterWorkspaceAgentRequest(BaseModel):
 async def deregister_workspace_agent(req: _DeregisterWorkspaceAgentRequest) -> dict[str, str]:
     """Simulate an agent's graceful-shutdown signal for the given canonical id.
 
-    Marks the agent offline + publishes ``agent_liveness_changed`` so the
-    dashboard flips the card without a running container. Drives the
-    graceful-shutdown Playwright spec.
+    Marks the agent offline + publishes ``agent_changed`` so the dashboard
+    flips the card without a running container. Drives the graceful-shutdown
+    Playwright spec.
     """
     _guard_dev()
     return await service.deregister_workspace_agent(agent_id=req.id)

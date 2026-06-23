@@ -203,7 +203,7 @@ export function useDashboard() {
 }
 
 /** Per-org workspace agents within the 1-hour retention window.
- *  Invalidated live via `agent_liveness_changed` SSE; no polling. */
+ *  Invalidated live via `agent_changed` SSE; no polling. */
 export interface AgentRow {
   id: string;
   instance_id: string;
