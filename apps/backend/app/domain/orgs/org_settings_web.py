@@ -35,7 +35,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.core.agent_gateway import revoke_all_for_arn
+from app.core.agent_gateway import CancelShutdownResult, ShutdownResult, revoke_all_for_arn
 from app.core.auth import Action, Role, org_id_var, public_route
 from app.core.database import session as db_session
 from app.core.identity import find_session_by_hash, get_user, hash_token, list_emails_for_user
@@ -408,12 +408,16 @@ class _AgentShutdownRequest(BaseModel):
     agent_ids: list[UUID]
 
 
-class _AgentShutdownResponse(BaseModel):
-    results: list
+class _BulkShutdownResponse(BaseModel):
+    results: list[ShutdownResult]
+
+
+class _BulkCancelShutdownResponse(BaseModel):
+    results: list[CancelShutdownResult]
 
 
 @router.post("/{slug}/agents/shutdown", dependencies=[Depends(require(Action.WORKSPACE_AGENT_SHUTDOWN))])
-async def bulk_shutdown_agents(slug: str, body: _AgentShutdownRequest) -> _AgentShutdownResponse:
+async def bulk_shutdown_agents(slug: str, body: _AgentShutdownRequest) -> _BulkShutdownResponse:
     """Bulk request to transition agents to ``lifecycle='draining'``.
 
     Returns per-row outcomes: ``draining | already_draining | already_shutdown | not_found``.
@@ -442,13 +446,13 @@ async def bulk_shutdown_agents(slug: str, body: _AgentShutdownRequest) -> _Agent
             session=s,
         )
         await s.commit()
-    return _AgentShutdownResponse(results=[r.model_dump(mode="json") for r in results])
+    return _BulkShutdownResponse(results=results)
 
 
 @router.post(
     "/{slug}/agents/cancel-shutdown", dependencies=[Depends(require(Action.WORKSPACE_AGENT_SHUTDOWN))]
 )
-async def bulk_cancel_shutdown_agents(slug: str, body: _AgentShutdownRequest) -> _AgentShutdownResponse:
+async def bulk_cancel_shutdown_agents(slug: str, body: _AgentShutdownRequest) -> _BulkCancelShutdownResponse:
     """Bulk request to cancel an in-progress drain, returning agents to ``lifecycle='active'``.
 
     Returns per-row outcomes: ``active | not_draining | already_shutdown | not_found``.
@@ -477,7 +481,7 @@ async def bulk_cancel_shutdown_agents(slug: str, body: _AgentShutdownRequest) ->
             session=s,
         )
         await s.commit()
-    return _AgentShutdownResponse(results=[r.model_dump(mode="json") for r in results])
+    return _BulkCancelShutdownResponse(results=results)
 
 
 register_routes(RouteSpec(module_name="orgs", router=router, url_prefix="/api/orgs"))

@@ -361,6 +361,32 @@
         "title": "AuditEntryView",
         "type": "object"
       },
+      "CancelShutdownResult": {
+        "description": "Per-agent outcome of a bulk ``cancel_shutdown_agents`` call.",
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "active",
+              "not_draining",
+              "already_shutdown",
+              "not_found"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "outcome"
+        ],
+        "title": "CancelShutdownResult",
+        "type": "object"
+      },
       "ChangeRoleRequest": {
         "properties": {
           "role": {
@@ -1318,6 +1344,32 @@
         "title": "SetVcsResponse",
         "type": "object"
       },
+      "ShutdownResult": {
+        "description": "Per-agent outcome of a bulk ``shutdown_agents`` call.",
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "draining",
+              "already_draining",
+              "already_shutdown",
+              "not_found"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "outcome"
+        ],
+        "title": "ShutdownResult",
+        "type": "object"
+      },
       "StepActivityResponse": {
         "description": "Persisted coding-agent activity blob for one workflow step.\n\n`activity` is null when the step ran no coding-agent invocation or the\nweekly partition holding its row has aged out.",
         "properties": {
@@ -1663,20 +1715,6 @@
         "title": "_AgentShutdownRequest",
         "type": "object"
       },
-      "_AgentShutdownResponse": {
-        "properties": {
-          "results": {
-            "items": {},
-            "title": "Results",
-            "type": "array"
-          }
-        },
-        "required": [
-          "results"
-        ],
-        "title": "_AgentShutdownResponse",
-        "type": "object"
-      },
       "_AssertionBody": {
         "properties": {
           "SAMLResponse": {
@@ -1688,6 +1726,38 @@
           "SAMLResponse"
         ],
         "title": "_AssertionBody",
+        "type": "object"
+      },
+      "_BulkCancelShutdownResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CancelShutdownResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "_BulkCancelShutdownResponse",
+        "type": "object"
+      },
+      "_BulkShutdownResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ShutdownResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "_BulkShutdownResponse",
         "type": "object"
       },
       "_CreateOrgRequest": {
@@ -5937,7 +6007,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/_AgentShutdownResponse"
+                  "$ref": "#/components/schemas/_BulkCancelShutdownResponse"
                 }
               }
             },
@@ -6022,7 +6092,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/_AgentShutdownResponse"
+                  "$ref": "#/components/schemas/_BulkShutdownResponse"
                 }
               }
             },

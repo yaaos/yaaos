@@ -6,6 +6,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
+import type { components } from "../generated/schema";
 import {
   type Lesson,
   type StepActivityResponse,
@@ -208,18 +209,16 @@ export function useAgents(orgSlug: string) {
 }
 
 // ── Agent bulk-action mutations ───────────────────────────────────────────────
+// All four type aliases below are derived from the backend OpenAPI schema —
+// edit the backend response models (apps/backend/app/domain/orgs/org_settings_web.py
+// + apps/backend/app/core/agent_gateway/service.py) and regenerate via
+// `apps/backend/bin/dump_web_openapi` + `apps/web/bin/gen-api-types`.
 
-export type ShutdownOutcome = "draining" | "already_draining" | "already_shutdown" | "not_found";
+export type ShutdownOutcome = components["schemas"]["ShutdownResult"]["outcome"];
+export type CancelShutdownOutcome = components["schemas"]["CancelShutdownResult"]["outcome"];
 
-export type CancelShutdownOutcome = "active" | "not_draining" | "already_shutdown" | "not_found";
-
-export interface ShutdownResult {
-  results: Array<{ agent_id: string; outcome: ShutdownOutcome }>;
-}
-
-export interface CancelShutdownResult {
-  results: Array<{ agent_id: string; outcome: CancelShutdownOutcome }>;
-}
+export type ShutdownResult = components["schemas"]["_BulkShutdownResponse"];
+export type CancelShutdownResult = components["schemas"]["_BulkCancelShutdownResponse"];
 
 /** Compute the toast message for a bulk-shutdown response. Exported for unit testing. */
 export function shutdownToastMessage(results: ShutdownResult["results"]): string {

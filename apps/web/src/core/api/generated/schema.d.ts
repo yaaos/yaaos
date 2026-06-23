@@ -1881,6 +1881,22 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * CancelShutdownResult
+         * @description Per-agent outcome of a bulk ``cancel_shutdown_agents`` call.
+         */
+        CancelShutdownResult: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "active" | "not_draining" | "already_shutdown" | "not_found";
+        };
         /** ChangeRoleRequest */
         ChangeRoleRequest: {
             role: components["schemas"]["Role"];
@@ -2284,6 +2300,22 @@ export interface components {
             state?: components["schemas"]["VcsStateResponse"] | null;
         };
         /**
+         * ShutdownResult
+         * @description Per-agent outcome of a bulk ``shutdown_agents`` call.
+         */
+        ShutdownResult: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "draining" | "already_draining" | "already_shutdown" | "not_found";
+        };
+        /**
          * StepActivityResponse
          * @description Persisted coding-agent activity blob for one workflow step.
          *
@@ -2416,15 +2448,20 @@ export interface components {
             /** Agent Ids */
             agent_ids: string[];
         };
-        /** _AgentShutdownResponse */
-        _AgentShutdownResponse: {
-            /** Results */
-            results: unknown[];
-        };
         /** _AssertionBody */
         _AssertionBody: {
             /** Samlresponse */
             SAMLResponse: string;
+        };
+        /** _BulkCancelShutdownResponse */
+        _BulkCancelShutdownResponse: {
+            /** Results */
+            results: components["schemas"]["CancelShutdownResult"][];
+        };
+        /** _BulkShutdownResponse */
+        _BulkShutdownResponse: {
+            /** Results */
+            results: components["schemas"]["ShutdownResult"][];
         };
         /** _CreateOrgRequest */
         _CreateOrgRequest: {
@@ -4508,7 +4545,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["_AgentShutdownResponse"];
+                    "application/json": components["schemas"]["_BulkCancelShutdownResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4547,7 +4584,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["_AgentShutdownResponse"];
+                    "application/json": components["schemas"]["_BulkShutdownResponse"];
                 };
             };
             /** @description Validation Error */
