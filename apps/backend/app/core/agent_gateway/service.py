@@ -1378,9 +1378,16 @@ async def shutdown_agents(
 ) -> list[ShutdownResult]:
     """Bulk request to transition agents to ``lifecycle='draining'``.
 
-    Per-agent loop: ``SELECT … FOR UPDATE`` by ``(id, org_id)``; dispatches on
-    current lifecycle; CAS UPDATE on win.  Never raises — per-row outcomes are
-    surfaced via ``ShutdownResult.outcome``.  Caller commits.
+    Per-agent loop: non-locking ``SELECT`` to discover current lifecycle for
+    dispatch + audit; CAS UPDATE on ``(id, lifecycle ∈ {unconfigured, active})``
+    is the atomic gate.  No row-level locks are held, so two overlapping admin
+    bulk calls cannot deadlock on opposing row-lock acquisition order.
+
+    Per-row lifecycle outcomes are surfaced via ``ShutdownResult.outcome``;
+    DB / SSE-queue exceptions raised inside the loop (``enqueue_command``,
+    ``session.execute``, ``audit``, ``publish_general_after_commit``) propagate
+    to the caller and abort the batch, rolling back every successful peer.
+    Caller commits.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
     from app.core.audit_log import audit  # noqa: PLC0415
@@ -1391,12 +1398,10 @@ async def shutdown_agents(
     for aid in agent_ids:
         row = (
             await session.execute(
-                select(WorkspaceAgentRow)
-                .where(
+                select(WorkspaceAgentRow).where(
                     WorkspaceAgentRow.id == aid,
                     WorkspaceAgentRow.org_id == org_id,
                 )
-                .with_for_update()
             )
         ).scalar_one_or_none()
 
@@ -1474,7 +1479,14 @@ async def cancel_shutdown_agents(
 ) -> list[CancelShutdownResult]:
     """Bulk request to transition agents from ``lifecycle='draining'`` back to ``active``.
 
-    Symmetric to ``shutdown_agents`` — never raises, per-row outcomes.  Caller commits.
+    Symmetric to ``shutdown_agents``: non-locking ``SELECT`` for dispatch +
+    audit; CAS UPDATE on ``(id, lifecycle='draining')`` is the atomic gate.
+    No row-level locks, so two overlapping admin bulk calls cannot deadlock on
+    opposing row-lock acquisition order.
+
+    Per-row lifecycle outcomes are surfaced via ``CancelShutdownResult.outcome``;
+    DB / SSE-queue exceptions propagate to the caller and abort the batch,
+    rolling back every successful peer.  Caller commits.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
     from app.core.audit_log import audit  # noqa: PLC0415
@@ -1485,12 +1497,10 @@ async def cancel_shutdown_agents(
     for aid in agent_ids:
         row = (
             await session.execute(
-                select(WorkspaceAgentRow)
-                .where(
+                select(WorkspaceAgentRow).where(
                     WorkspaceAgentRow.id == aid,
                     WorkspaceAgentRow.org_id == org_id,
                 )
-                .with_for_update()
             )
         ).scalar_one_or_none()
 
