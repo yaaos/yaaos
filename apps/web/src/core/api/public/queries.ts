@@ -5,6 +5,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   type Lesson,
   type StepActivityResponse,
@@ -203,6 +204,91 @@ export function useAgents(orgSlug: string) {
       orgSlug
         ? apiFetch<AgentRow[]>(`/api/orgs/${encodeURIComponent(orgSlug)}/agents`)
         : Promise.resolve([]),
+  });
+}
+
+// ── Agent bulk-action mutations ───────────────────────────────────────────────
+
+export type ShutdownOutcome = "draining" | "already_draining" | "already_shutdown" | "not_found";
+
+export type CancelShutdownOutcome = "active" | "not_draining" | "already_shutdown" | "not_found";
+
+export interface ShutdownResult {
+  results: Array<{ agent_id: string; outcome: ShutdownOutcome }>;
+}
+
+export interface CancelShutdownResult {
+  results: Array<{ agent_id: string; outcome: CancelShutdownOutcome }>;
+}
+
+/** Compute the toast message for a bulk-shutdown response. Exported for unit testing. */
+export function shutdownToastMessage(results: ShutdownResult["results"]): string {
+  const M = results.length;
+  const successCount = results.filter((r) => r.outcome === "draining").length;
+  const noOpCount = M - successCount;
+  if (noOpCount === 0) {
+    return `Shut down ${M} ${M === 1 ? "agent" : "agents"}.`;
+  }
+  if (successCount === 0) {
+    return "No agents were shut down — all were already draining, shut down, or not found.";
+  }
+  return `Shut down ${successCount} of ${M} agents; ${noOpCount} were already draining, shut down, or not found.`;
+}
+
+/** Compute the toast message for a bulk cancel-shutdown response. Exported for unit testing. */
+export function cancelShutdownToastMessage(results: CancelShutdownResult["results"]): string {
+  const M = results.length;
+  const successCount = results.filter((r) => r.outcome === "active").length;
+  const noOpCount = M - successCount;
+  const alreadyShutdownCount = results.filter((r) => r.outcome === "already_shutdown").length;
+  if (noOpCount === 0) {
+    return `Canceled shutdown for ${M} ${M === 1 ? "agent" : "agents"}.`;
+  }
+  if (successCount === 0) {
+    let msg = "No agents were canceled — already shut down or not draining.";
+    if (alreadyShutdownCount >= M / 2) {
+      msg += " Restart the deployment to bring shut-down agents back.";
+    }
+    return msg;
+  }
+  return `Canceled shutdown for ${successCount} of ${M} agents; ${noOpCount} were not draining, already shut down, or not found.`;
+}
+
+/** Bulk-shutdown: set all selected active agents to lifecycle=draining. */
+export function useShutdownAgents(orgSlug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { agent_ids: string[] }) =>
+      apiFetch<ShutdownResult>(`/api/orgs/${encodeURIComponent(orgSlug)}/agents/shutdown`, {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["agents", orgSlug] });
+      toast(shutdownToastMessage(data.results));
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
+  });
+}
+
+/** Bulk cancel-shutdown: restore selected draining agents to lifecycle=active. */
+export function useCancelShutdownAgents(orgSlug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { agent_ids: string[] }) =>
+      apiFetch<CancelShutdownResult>(
+        `/api/orgs/${encodeURIComponent(orgSlug)}/agents/cancel-shutdown`,
+        { method: "POST", body: JSON.stringify(vars) },
+      ),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["agents", orgSlug] });
+      toast(cancelShutdownToastMessage(data.results));
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
   });
 }
 

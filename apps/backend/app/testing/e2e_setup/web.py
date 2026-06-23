@@ -185,6 +185,34 @@ async def saml_sign(req: _SamlSignRequest) -> dict[str, str]:
     return {"token": token}
 
 
+class _MemberForOrgRequest(BaseModel):
+    org_slug: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=3)
+    github_id: str = Field(..., min_length=1)
+    role: str = Field(default="builder", pattern="^(owner|admin|builder)$")
+    display_name: str = Field(default="Member")
+    provider: str = Field(default="github")
+
+
+@router.post("/seed/member_for_org")
+async def seed_member_for_org(req: _MemberForOrgRequest) -> dict[str, str]:
+    """Create a user + OAuth identity + org membership on an existing org.
+
+    Used by e2e specs that need a non-owner role (e.g. builder-readonly tests).
+    Returns ``{"user_id": ..., "org_id": ..., "org_slug": ...}``.
+    """
+    _guard_dev()
+    ids = await service.seed_member_for_org(
+        org_slug=req.org_slug,
+        email=req.email,
+        github_id=req.github_id,
+        role=req.role,
+        display_name=req.display_name,
+        provider=req.provider,
+    )
+    return {"status": "seeded", **ids}
+
+
 class _WorkspaceAgentRequest(BaseModel):
     org_slug: str = Field(..., min_length=1)
     lifecycle: str | None = Field(
@@ -279,3 +307,23 @@ async def delete_user_artifacts(user_id: UUID) -> dict[str, bool]:
     _guard_dev()
     await service.delete_user(user_id)
     return {"deleted": True}
+
+
+class _SetOrgIamArnRequest(BaseModel):
+    org_slug: str
+    iam_arn: str
+    aws_region: str = "us-east-1"
+
+
+@router.post("/seed/org_iam_arn")
+async def set_org_iam_arn(req: _SetOrgIamArnRequest) -> dict[str, str]:
+    """Override an org's IAM ARN to a custom value.
+
+    Useful in tests that need a configured org (non-null ``registered_iam_arn``)
+    without the test-agent Docker container registering to it — supply an ARN
+    that mock-aws never returns.
+    """
+    _guard_dev()
+    return await service.set_org_iam_arn(
+        org_slug=req.org_slug, iam_arn=req.iam_arn, aws_region=req.aws_region
+    )

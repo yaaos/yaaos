@@ -70,6 +70,12 @@ Auth hooks live in `queries.ts` so all layers can call them without importing fr
 
 Each mutation invalidates the query keys it affects on success. Key taxonomy: [patterns.md § Query keys](patterns.md#query-keys). Hook-to-endpoint mapping is in `queries.ts`.
 
+**Agent bulk-action mutations** (`queries.ts`):
+- `useShutdownAgents(orgSlug)` — `POST /api/orgs/{slug}/agents/shutdown` `{ agent_ids }`. On success: invalidates `["agents", orgSlug]`, dispatches mixed-outcome toast via `shutdownToastMessage`. On error: destructive toast, selection NOT cleared.
+- `useCancelShutdownAgents(orgSlug)` — `POST /api/orgs/{slug}/agents/cancel-shutdown` `{ agent_ids }`. On success: invalidates `["agents", orgSlug]`, dispatches toast via `cancelShutdownToastMessage`. On error: destructive toast.
+- `shutdownToastMessage(results)` / `cancelShutdownToastMessage(results)` — exported pure functions; all-success / mixed / all-no-op paths. Cancel all-no-op appends a restart hint when `already_shutdown >= 50%` of total.
+- Outcome types: `ShutdownOutcome`, `CancelShutdownOutcome`, `ShutdownResult`, `CancelShutdownResult`.
+
 ## Data owned
 
 None. The `QueryClient` lives in `main.tsx`; hooks here just read/write it.

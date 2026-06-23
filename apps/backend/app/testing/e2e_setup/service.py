@@ -453,6 +453,61 @@ async def set_session_last_seen(
     await set_session_last_seen_for_tests(db, token_hash=token_hash, last_seen_at=last_seen_at)
 
 
+async def seed_member_for_org(
+    *,
+    org_slug: str,
+    email: str,
+    github_id: str,
+    role: str = "builder",
+    display_name: str = "Member",
+    provider: str = "github",
+) -> dict[str, str]:
+    """Create a user + verified email + OAuth identity + org membership on an
+    existing org. The org must already exist (seeded via bootstrap_owner).
+
+    Returns ``{"user_id": ..., "org_id": ..., "org_slug": ...}``.
+    """
+    from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.core.auth import Role  # noqa: PLC0415
+    from app.core.identity import (  # noqa: PLC0415
+        add_email,
+        create_user,
+        link_oauth_identity,
+    )
+    from app.domain.orgs import create_membership, get_org_by_slug  # noqa: PLC0415
+
+    org = await get_org_by_slug(org_slug)
+    if org is None:
+        raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
+
+    async with db_session() as s:
+        user = await create_user(s, display_name=display_name)
+        await add_email(
+            s,
+            user_id=user.id,
+            email=email.lower(),
+            is_primary=True,
+            verified=True,
+        )
+        await link_oauth_identity(
+            s,
+            user_id=user.id,
+            provider=provider,
+            external_subject=str(github_id),
+            verified=True,
+        )
+        await create_membership(
+            s,
+            user_id=user.id,
+            org_id=org.id,
+            role=Role(role),
+            handle=email.split("@", 1)[0][:64].lower(),
+            actor=Actor.system(),
+        )
+        await s.commit()
+        return {"user_id": str(user.id), "org_id": str(org.id), "org_slug": org_slug}
+
+
 async def seed_workspace_agent(*, org_slug: str, lifecycle: str | None = None) -> dict[str, str]:
     """Seed a reachable ``workspace_agents`` row for the given org slug.
 
@@ -545,6 +600,25 @@ def read_and_clear_email_inbox() -> list[dict[str, str]]:
     return out
 
 
+async def set_org_iam_arn(*, org_slug: str, iam_arn: str, aws_region: str = "us-east-1") -> dict[str, str]:
+    """Override an org's IAM ARN to an arbitrary value.
+
+    Useful in tests that need a *configured* org (non-null ``registered_iam_arn``)
+    without the test-agent Docker container registering to it — set ``iam_arn``
+    to a value that mock-aws never returns so the agent's identity exchange
+    finds no matching org.
+    """
+    from app.core.tenancy import get_org_by_slug, update_org_fields  # noqa: PLC0415
+
+    async with db_session() as s:
+        org = await get_org_by_slug(s, slug=org_slug)
+        if org is None:
+            raise ValueError(f"org not found: {org_slug!r}")
+        await update_org_fields(s, org.id, registered_iam_arn=iam_arn, aws_region=aws_region)
+        await s.commit()
+    return {"org_slug": org_slug, "iam_arn": iam_arn}
+
+
 __all__ = [
     "DEFAULT_ORG_ID",
     "delete_org",
@@ -558,10 +632,12 @@ __all__ = [
     "seed_broken_integration",
     "seed_github_install",
     "seed_lesson",
+    "seed_member_for_org",
     "seed_repo_skill",
     "seed_user_with_session",
     "seed_workspace",
     "seed_workspace_agent",
+    "set_org_iam_arn",
     "set_session_last_seen",
     "stage_oauth_test_profile",
 ]

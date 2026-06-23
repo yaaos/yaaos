@@ -5,6 +5,7 @@ export const AGENTS_FIXTURE = [
     id: "a1",
     instance_id: "pod-abc",
     state: "reachable",
+    lifecycle: "active",
     last_heartbeat_at: "2026-05-23T00:00:00Z",
     os: "linux",
     cpu_count: 4,

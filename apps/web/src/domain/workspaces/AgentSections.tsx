@@ -9,9 +9,17 @@
  *
  * Sort within each section: last_heartbeat_at desc NULLS LAST.
  * Sections with zero agents are not rendered (hide-empty rule).
+ *
+ * Admin controls (checkboxes + bulk buttons) appear only in Active and
+ * Draining sections when isAdmin=true. Selection state and mutation hooks
+ * live in the parent (WorkspacesContent); props wire them in. Existing tests
+ * that render AgentSections without admin props continue to work because
+ * all admin props are optional with safe defaults.
  */
 
 import type { AgentRow } from "@core/api/public/queries";
+import { Button } from "@shared/components/ui/button";
+import { Checkbox } from "@shared/components/ui/checkbox";
 import { cn } from "@shared/utils/public/cn";
 import { Activity, Cpu, HardDrive, Monitor } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -102,7 +110,15 @@ function useRelativeTime(iso: string | null): string {
 
 // ── Agent card ────────────────────────────────────────────────────────────────
 
-function AgentCard({ agent }: { agent: AgentRow }) {
+interface AgentCardProps {
+  agent: AgentRow;
+  isAdmin: boolean;
+  hasAdminControls: boolean;
+  selected: boolean;
+  onToggle: (id: string, selected: boolean) => void;
+}
+
+function AgentCard({ agent, isAdmin, hasAdminControls, selected, onToggle }: AgentCardProps) {
   const lastSeen = useRelativeTime(agent.last_heartbeat_at);
   const memGb =
     agent.memory_bytes != null
@@ -119,6 +135,15 @@ function AgentCard({ agent }: { agent: AgentRow }) {
     >
       {/* Header: instance name + status pair */}
       <div className="flex items-start justify-between gap-2">
+        {isAdmin && hasAdminControls && (
+          <Checkbox
+            className="mt-0.5 shrink-0"
+            checked={selected}
+            onCheckedChange={(checked) => onToggle(agent.id, !!checked)}
+            data-testid={`workspaces-agent-card-${agent.instance_id}-select`}
+            aria-label={`Select agent ${agent.instance_id}`}
+          />
+        )}
         <span className="text-sm font-medium truncate" title={agent.instance_id}>
           {agent.instance_id}
         </span>
@@ -171,34 +196,109 @@ function AgentCard({ agent }: { agent: AgentRow }) {
 
 // ── Section component ─────────────────────────────────────────────────────────
 
+type SectionName = "active" | "draining" | "unconfigured" | "inactive";
+
 const SECTION_META: Record<
-  "active" | "draining" | "unconfigured" | "inactive",
-  { title: string; testid: string }
+  SectionName,
+  {
+    title: string;
+    testid: string;
+    selectAllTestid?: string;
+    actionTestid?: string;
+    actionLabel?: string;
+  }
 > = {
-  active: { title: "Active", testid: "workspaces-section-active" },
-  draining: { title: "Draining", testid: "workspaces-section-draining" },
+  active: {
+    title: "Active",
+    testid: "workspaces-section-active",
+    selectAllTestid: "workspaces-section-active-select-all",
+    actionTestid: "workspaces-section-active-shutdown",
+    actionLabel: "Shut down",
+  },
+  draining: {
+    title: "Draining",
+    testid: "workspaces-section-draining",
+    selectAllTestid: "workspaces-section-draining-select-all",
+    actionTestid: "workspaces-section-draining-cancel-shutdown",
+    actionLabel: "Cancel shutdown",
+  },
   unconfigured: { title: "Unconfigured", testid: "workspaces-section-unconfigured" },
   inactive: { title: "Inactive", testid: "workspaces-section-inactive" },
 };
 
-function Section({
-  name,
-  agents,
-}: {
-  name: "active" | "draining" | "unconfigured" | "inactive";
+interface SectionProps {
+  name: SectionName;
   agents: AgentRow[];
-}) {
+  isAdmin: boolean;
+  selection: Set<string>;
+  setSelection: (s: Set<string>) => void;
+  onActionClick: () => void;
+}
+
+function Section({ name, agents, isAdmin, selection, setSelection, onActionClick }: SectionProps) {
   const meta = SECTION_META[name];
   const sorted = sortByHeartbeat(agents);
+  const hasControls = name === "active" || name === "draining";
+
+  const allSelected = sorted.length > 0 && sorted.every((a) => selection.has(a.id));
+  const someSelected = sorted.some((a) => selection.has(a.id));
+
+  function handleSelectAll() {
+    if (allSelected) {
+      setSelection(new Set());
+    } else {
+      setSelection(new Set(sorted.map((a) => a.id)));
+    }
+  }
+
+  function handleToggle(id: string, checked: boolean) {
+    const next = new Set(selection);
+    if (checked) {
+      next.add(id);
+    } else {
+      next.delete(id);
+    }
+    setSelection(next);
+  }
 
   return (
     <section data-testid={meta.testid} className="mb-6">
-      <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-        {meta.title}
-      </h2>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          {isAdmin && hasControls && meta.selectAllTestid && (
+            <Checkbox
+              checked={someSelected ? (allSelected ? true : "indeterminate") : false}
+              onCheckedChange={handleSelectAll}
+              data-testid={meta.selectAllTestid}
+              aria-label={`Select all ${meta.title} agents`}
+            />
+          )}
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+            {meta.title}
+          </h2>
+        </div>
+        {isAdmin && hasControls && meta.actionTestid && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={selection.size === 0}
+            onClick={onActionClick}
+            data-testid={meta.actionTestid}
+          >
+            {meta.actionLabel}
+          </Button>
+        )}
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {sorted.map((agent) => (
-          <AgentCard key={agent.id} agent={agent} />
+          <AgentCard
+            key={agent.id}
+            agent={agent}
+            isAdmin={isAdmin}
+            hasAdminControls={hasControls}
+            selected={selection.has(agent.id)}
+            onToggle={handleToggle}
+          />
         ))}
       </div>
     </section>
@@ -207,19 +307,75 @@ function Section({
 
 // ── AgentSections (root export) ───────────────────────────────────────────────
 
-interface AgentSectionsProps {
+export interface AgentSectionsProps {
   agents: AgentRow[];
+  /** When true, checkboxes and bulk-action buttons appear on active/draining
+   *  sections. False (default) hides all admin controls. */
+  isAdmin?: boolean;
+  activeSelection?: Set<string>;
+  setActiveSelection?: (s: Set<string>) => void;
+  drainingSelection?: Set<string>;
+  setDrainingSelection?: (s: Set<string>) => void;
+  /** Called when the admin clicks the "Shut down" button on the Active section. */
+  onShutdownClick?: () => void;
+  /** Called when the admin clicks the "Cancel shutdown" button on the Draining section. */
+  onCancelShutdownClick?: () => void;
 }
 
-export function AgentSections({ agents }: AgentSectionsProps) {
+export function AgentSections({
+  agents,
+  isAdmin = false,
+  activeSelection = new Set(),
+  setActiveSelection = () => {},
+  drainingSelection = new Set(),
+  setDrainingSelection = () => {},
+  onShutdownClick = () => {},
+  onCancelShutdownClick = () => {},
+}: AgentSectionsProps) {
   const { active, draining, unconfigured, inactive } = partitionAgents(agents);
 
   return (
     <>
-      {active.length > 0 && <Section name="active" agents={active} />}
-      {draining.length > 0 && <Section name="draining" agents={draining} />}
-      {unconfigured.length > 0 && <Section name="unconfigured" agents={unconfigured} />}
-      {inactive.length > 0 && <Section name="inactive" agents={inactive} />}
+      {active.length > 0 && (
+        <Section
+          name="active"
+          agents={active}
+          isAdmin={isAdmin}
+          selection={activeSelection}
+          setSelection={setActiveSelection}
+          onActionClick={onShutdownClick}
+        />
+      )}
+      {draining.length > 0 && (
+        <Section
+          name="draining"
+          agents={draining}
+          isAdmin={isAdmin}
+          selection={drainingSelection}
+          setSelection={setDrainingSelection}
+          onActionClick={onCancelShutdownClick}
+        />
+      )}
+      {unconfigured.length > 0 && (
+        <Section
+          name="unconfigured"
+          agents={unconfigured}
+          isAdmin={false}
+          selection={new Set()}
+          setSelection={() => {}}
+          onActionClick={() => {}}
+        />
+      )}
+      {inactive.length > 0 && (
+        <Section
+          name="inactive"
+          agents={inactive}
+          isAdmin={false}
+          selection={new Set()}
+          setSelection={() => {}}
+          onActionClick={() => {}}
+        />
+      )}
     </>
   );
 }

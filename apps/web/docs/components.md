@@ -34,7 +34,8 @@
 
 | File | Purpose |
 |---|---|
-| `dialog.tsx` | Modal dialog. Composed by ConfirmModal. |
+| `alert-dialog.tsx` | Destructive or high-stakes confirmation modal (Radix `AlertDialog`). No close X — use `AlertDialogCancel` / `AlertDialogAction` buttons. Used by `ShutdownDialog` and `CancelShutdownDialog`. |
+| `dialog.tsx` | General-purpose modal dialog. Composed by ConfirmModal. |
 | `popover.tsx` | Anchored floating panel. Used by Org switcher, Notifications. |
 
 ### Display
