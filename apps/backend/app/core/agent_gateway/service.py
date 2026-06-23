@@ -1303,6 +1303,18 @@ class _AgentShutdownCompleteAudit(BaseModel):
     pass
 
 
+class _AgentDisconnectedAudit(BaseModel):
+    """Payload for ``workspace_agent.disconnected`` audit rows.
+
+    Written by ``mark_agent_disconnected`` when the DELETE handler runs the
+    non-draining path (lifecycle was ``active`` or ``unconfigured``),
+    indicating an unexpected agent disconnection rather than an admin-initiated
+    drain.
+    """
+
+    lifecycle: str
+
+
 # ── Drain lifecycle service functions ───────────────────────────────────────
 
 
@@ -1367,6 +1379,60 @@ async def mark_agent_shutdown_complete(
     )
 
     return True
+
+
+async def mark_agent_disconnected(
+    *,
+    agent_id: UUID,
+    org_id: UUID,
+    bearer_id: UUID,
+    lifecycle: str,
+    session: AsyncSession,
+) -> None:
+    """Finalize an unexpected disconnect (lifecycle was ``active`` or
+    ``unconfigured`` at the DELETE call).
+
+    Runs the five side effects of the non-drain shutdown path inside the
+    caller's transaction: (1) mark liveness offline; (2) revoke the
+    disconnecting bearer; (3) hand owned workspaces to
+    ``report_sink.handle_agent_loss``; (4) write the
+    ``workspace_agent.disconnected`` audit; (5) publish ``agent_changed``
+    SSE-after-commit.
+
+    Symmetric to ``mark_agent_shutdown_complete`` — encapsulates the four-
+    step finalization the DELETE handler used to inline.  Caller commits.
+    """
+    from app.core.agent_gateway import bearers as _bearers  # noqa: PLC0415
+    from app.core.audit_log import Actor, ActorKind, audit  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    # 1. Mark liveness offline.
+    await mark_agent_offline(agent_id, session=session)
+
+    # 2. Revoke this bearer immediately.
+    await _bearers.revoke(bearer_id, "graceful_shutdown", session=session)
+
+    # 3. Expire owned workspaces + synthesize terminal failures.
+    await get_report_sink().handle_agent_loss({agent_id}, session)
+
+    # 4. Audit the unexpected disconnect.
+    await audit(
+        "workspace_agent",
+        agent_id,
+        "workspace_agent.disconnected",
+        _AgentDisconnectedAudit(lifecycle=lifecycle),
+        Actor(kind=ActorKind.WORKSPACE, workspace_id=agent_id),
+        org_id=org_id,
+        session=session,
+    )
+
+    # 5. SSE — cache-invalidate so the dashboard flips the card offline.
+    publish_general_after_commit(
+        session,
+        org_id=org_id,
+        kind=GeneralEventKind.AGENT_CHANGED,
+        payload={"agent_id": str(agent_id)},
+    )
 
 
 async def shutdown_agents(

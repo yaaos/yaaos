@@ -241,6 +241,7 @@ expose = [
   "list_agents_for_org",
   "lookup_org_by_arn",
   "mark_agent_configured",
+  "mark_agent_disconnected",
   "mark_agent_offline",
   "mark_agent_shutdown_complete",
   "pin_command_to_agent",

@@ -1620,9 +1620,9 @@ export interface paths {
          *       Whether or not this caller wins the CAS, return 204.
          *     - ``shutdown``: idempotent re-fire.  Return 204 with no further side effects
          *       (bearer already revoked; audit already written).
-         *     - ``active`` / ``unconfigured``: unexpected disconnect.  Run the existing path:
-         *       mark offline + revoke bearer + handle_agent_loss + ``workspace_agent.disconnected``
-         *       audit + SSE.
+         *     - ``active`` / ``unconfigured``: unexpected disconnect.  Delegate to
+         *       ``mark_agent_disconnected`` (mark offline + revoke bearer + handle_agent_loss
+         *       + ``workspace_agent.disconnected`` audit + SSE atomically).
          *
          *     Returns 204 in all branches. Idempotent.
          */

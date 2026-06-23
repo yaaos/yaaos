@@ -56,7 +56,7 @@ from app.core.agent_gateway.service import (
     claim_next,
     enqueue_config_update_for_agent,
     ensure_agent_row,
-    mark_agent_offline,
+    mark_agent_disconnected,
     mark_agent_shutdown_complete,
     record_agent_event,
     record_heartbeat,
@@ -84,7 +84,7 @@ from app.core.auth import org_context, public_route, require_org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.observability import spawn as _spawn
-from app.core.sse import GeneralEventKind, publish_general_after_commit, publish_workspace_activity
+from app.core.sse import publish_workspace_activity
 from app.core.webserver import RouteSpec, register_routes
 
 log = structlog.get_logger("agent_gateway.web")
@@ -103,17 +103,6 @@ class _IdentityExchangeFailedAudit(BaseModel):
     category: str
     attempted_arn: str
     source_ip: str | None
-
-
-class _AgentDisconnectedAudit(BaseModel):
-    """Payload for ``workspace_agent.disconnected`` audit rows.
-
-    Written when the DELETE handler runs the non-draining path (lifecycle was
-    ``active`` or ``unconfigured``), indicating an unexpected agent disconnection
-    rather than an admin-initiated drain.
-    """
-
-    lifecycle: str
 
 
 # ── Bearer verifier (real ledger lookup) ────────────────────────────────
@@ -399,9 +388,9 @@ async def deregister_identity(
       Whether or not this caller wins the CAS, return 204.
     - ``shutdown``: idempotent re-fire.  Return 204 with no further side effects
       (bearer already revoked; audit already written).
-    - ``active`` / ``unconfigured``: unexpected disconnect.  Run the existing path:
-      mark offline + revoke bearer + handle_agent_loss + ``workspace_agent.disconnected``
-      audit + SSE.
+    - ``active`` / ``unconfigured``: unexpected disconnect.  Delegate to
+      ``mark_agent_disconnected`` (mark offline + revoke bearer + handle_agent_loss
+      + ``workspace_agent.disconnected`` audit + SSE atomically).
 
     Returns 204 in all branches. Idempotent.
     """
@@ -432,34 +421,13 @@ async def deregister_identity(
 
             else:
                 # Unexpected disconnect (lifecycle is active or unconfigured).
-                # 1. Mark offline eagerly.
-                await mark_agent_offline(agent.agent_id, session=s)
-
-                # 2. Revoke this bearer immediately.
-                await bearers.revoke(agent.bearer_id, "graceful_shutdown", session=s)
-
-                # 3. Expire owned workspaces + synthesize terminal failures.
-                await get_report_sink().handle_agent_loss({agent.agent_id}, s)
-
-                # 4. Audit the unexpected disconnect.
-                await audit(
-                    "workspace_agent",
-                    agent.agent_id,
-                    "workspace_agent.disconnected",
-                    _AgentDisconnectedAudit(lifecycle=lifecycle),
-                    Actor(kind=ActorKind.WORKSPACE, workspace_id=agent.agent_id),
+                await mark_agent_disconnected(
+                    agent_id=agent.agent_id,
                     org_id=agent.org_id,
+                    bearer_id=agent.bearer_id,
+                    lifecycle=lifecycle,
                     session=s,
                 )
-
-                # 5. SSE — cache-invalidate so the dashboard flips the card offline.
-                publish_general_after_commit(
-                    s,
-                    org_id=agent.org_id,
-                    kind=GeneralEventKind.AGENT_CHANGED,
-                    payload={"agent_id": str(agent.agent_id)},
-                )
-
                 await s.commit()
 
     log.info(

@@ -28,7 +28,7 @@ The agent sends this as its last act on clean shutdown (SIGTERM/SIGINT), after s
 
 - **`lifecycle='draining'`** (the managed-drain path): calls `mark_agent_shutdown_complete` atomically — CAS `draining → shutdown`, revokes bearer, writes `workspace_agent.shutdown_complete` audit. Then calls `handle_agent_loss`.
 - **`lifecycle='shutdown'`** (idempotent re-fire): no-op — bearer already revoked, lifecycle already terminal. Returns 204 without extra side effects.
-- **`lifecycle='active'` or `'unconfigured'`** (unexpected disconnect): existing path — sets `state=offline + last_shutdown_at=now`, revokes bearer, calls `handle_agent_loss`, writes `workspace_agent.disconnected` audit, publishes `agent_changed` SSE.
+- **`lifecycle='active'` or `'unconfigured'`** (unexpected disconnect): calls `mark_agent_disconnected` atomically — sets `state=offline + last_shutdown_at=now`, revokes bearer, calls `handle_agent_loss`, writes `workspace_agent.disconnected` audit, publishes `agent_changed` SSE.
 
 `handle_agent_loss` expiries held workspaces and synthesizes `completed_failure` events for any in-flight `current_command_id` so WorkflowExecutions resume rather than hanging in `AWAITING_AGENT`.
 
