@@ -57,6 +57,7 @@ from app.core.agent_gateway.service import (
     enqueue_config_update_for_agent,
     ensure_agent_row,
     mark_agent_offline,
+    mark_agent_shutdown_complete,
     record_agent_event,
     record_heartbeat,
     record_workspace_event,
@@ -102,6 +103,17 @@ class _IdentityExchangeFailedAudit(BaseModel):
     category: str
     attempted_arn: str
     source_ip: str | None
+
+
+class _AgentDisconnectedAudit(BaseModel):
+    """Payload for ``workspace_agent.disconnected`` audit rows.
+
+    Written when the DELETE handler runs the non-draining path (lifecycle was
+    ``active`` or ``unconfigured``), indicating an unexpected agent disconnection
+    rather than an admin-initiated drain.
+    """
+
+    lifecycle: str
 
 
 # ── Bearer verifier (real ledger lookup) ────────────────────────────────
@@ -377,47 +389,84 @@ async def exchange_identity(
 async def deregister_identity(
     agent: bearers.BearerContext = Depends(_bearer_dep),
 ) -> Response:
-    """Graceful-shutdown "going away" signal.
+    """Lifecycle-aware graceful-shutdown "going away" signal.
 
-    The agent sends this as the last action of its SIGTERM/SIGINT handler,
-    after stopping its heartbeat + claim loops and draining the WS. The
-    control plane eagerly:
+    Branches on the agent's current ``lifecycle`` under a ``SELECT … FOR UPDATE``
+    so racing DELETE calls and the liveness sweeper resolve deterministically:
 
-    1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
-    2. Revokes the bearer so subsequent calls 401 immediately.
-    3. Expires any workspaces owned by this agent and synthesizes terminal
-       failure events for in-flight commands so their WorkflowExecutions resume.
-    4. Publishes `agent_changed` SSE so the dashboard flips the card
-       offline without waiting for the sweeper's next tick.
+    - ``draining``: call ``mark_agent_shutdown_complete`` (CAS + bearer revoke +
+      audit + SSE atomically), then ``handle_agent_loss`` for workspace cleanup.
+      Whether or not this caller wins the CAS, return 204.
+    - ``shutdown``: idempotent re-fire.  Return 204 with no further side effects
+      (bearer already revoked; audit already written).
+    - ``active`` / ``unconfigured``: unexpected disconnect.  Run the existing path:
+      mark offline + revoke bearer + handle_agent_loss + ``workspace_agent.disconnected``
+      audit + SSE.
 
-    Returns 204. Idempotent — calling on an already-offline/revoked agent is
-    harmless (bearer verify fails → 401 before this handler runs).
+    Returns 204 in all branches. Idempotent.
     """
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
     async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
         async with db_session() as s:
-            # 1. Mark offline eagerly.
-            await mark_agent_offline(agent.agent_id, session=s)
+            # Read current lifecycle under FOR UPDATE so racing callers serialize.
+            agent_row = (
+                await s.execute(
+                    _select(WorkspaceAgentRow).where(WorkspaceAgentRow.id == agent.agent_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            lifecycle = agent_row.lifecycle if agent_row is not None else "active"
 
-            # 2. Revoke this bearer immediately.
-            await bearers.revoke(agent.bearer_id, "graceful_shutdown", session=s)
+            if lifecycle == "shutdown":
+                # Idempotent re-fire: bearer already revoked; nothing to do.
+                pass
 
-            # 3. Expire owned workspaces + synthesize terminal failures.
-            await get_report_sink().handle_agent_loss({agent.agent_id}, s)
+            elif lifecycle == "draining":
+                # mark_agent_shutdown_complete handles CAS + bearer revoke + audit + SSE.
+                await mark_agent_shutdown_complete(agent_id=agent.agent_id, session=s)
+                # Workspace cleanup runs regardless of who won the CAS.
+                await get_report_sink().handle_agent_loss({agent.agent_id}, s)
+                await s.commit()
 
-            # 4. SSE — cache-invalidate so the dashboard flips the card offline.
-            publish_general_after_commit(
-                s,
-                org_id=agent.org_id,
-                kind=GeneralEventKind.AGENT_CHANGED,
-                payload={"agent_id": str(agent.agent_id)},
-            )
+            else:
+                # Unexpected disconnect (lifecycle is active or unconfigured).
+                # 1. Mark offline eagerly.
+                await mark_agent_offline(agent.agent_id, session=s)
 
-            await s.commit()
+                # 2. Revoke this bearer immediately.
+                await bearers.revoke(agent.bearer_id, "graceful_shutdown", session=s)
+
+                # 3. Expire owned workspaces + synthesize terminal failures.
+                await get_report_sink().handle_agent_loss({agent.agent_id}, s)
+
+                # 4. Audit the unexpected disconnect.
+                await audit(
+                    "workspace_agent",
+                    agent.agent_id,
+                    "workspace_agent.disconnected",
+                    _AgentDisconnectedAudit(lifecycle=lifecycle),
+                    Actor(kind=ActorKind.WORKSPACE, workspace_id=agent.agent_id),
+                    org_id=agent.org_id,
+                    session=s,
+                )
+
+                # 5. SSE — cache-invalidate so the dashboard flips the card offline.
+                publish_general_after_commit(
+                    s,
+                    org_id=agent.org_id,
+                    kind=GeneralEventKind.AGENT_CHANGED,
+                    payload={"agent_id": str(agent.agent_id)},
+                )
+
+                await s.commit()
 
     log.info(
         "agent_gateway.graceful_shutdown",
         agent_id=str(agent.agent_id),
         org_id=str(agent.org_id),
+        lifecycle=lifecycle,
     )
     return Response(status_code=204)
 

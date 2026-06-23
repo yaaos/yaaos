@@ -20,8 +20,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+if TYPE_CHECKING:
+    from app.core.audit_log import Actor
 from uuid import UUID
 
 import structlog
@@ -1250,6 +1254,257 @@ async def mark_agent_configured(
         )
 
 
+# ── Drain lifecycle Pydantic result + audit models ─────────────────────────
+
+
+class ShutdownResult(BaseModel):
+    """Per-agent outcome of a bulk ``shutdown_agents`` call."""
+
+    agent_id: UUID
+    outcome: str  # draining | already_draining | already_shutdown | not_found
+
+
+class CancelShutdownResult(BaseModel):
+    """Per-agent outcome of a bulk ``cancel_shutdown_agents`` call."""
+
+    agent_id: UUID
+    outcome: str  # active | not_draining | already_shutdown | not_found
+
+
+class _AgentShutdownRequestedAudit(BaseModel):
+    previous_lifecycle: str
+
+
+class _AgentCancelShutdownRequestedAudit(BaseModel):
+    previous_lifecycle: str
+
+
+class _AgentShutdownCompleteAudit(BaseModel):
+    pass
+
+
+# ── Drain lifecycle service functions ───────────────────────────────────────
+
+
+async def mark_agent_shutdown_complete(
+    *,
+    agent_id: UUID,
+    session: AsyncSession,
+) -> bool:
+    """Atomic CAS ``lifecycle='shutdown' WHERE id=? AND lifecycle='draining'``.
+
+    Executes all four side effects inside the caller's transaction:
+    (1) CAS UPDATE; (2) revoke all active bearers; (3) write
+    ``workspace_agent.shutdown_complete`` audit; (4) publish ``agent_changed``
+    SSE-after-commit.
+
+    Returns ``True`` when this caller wins the CAS; ``False`` when the row was
+    already past ``draining`` (another pod beat this one — no side effects).
+    Propagates bearer-revoke exceptions so the caller's transaction rolls back,
+    keeping the CAS consistent.
+
+    Caller commits.
+    """
+    from app.core.agent_gateway import bearers as _bearers  # noqa: PLC0415
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+    from app.core.audit_log import Actor, ActorKind, audit  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    # 1. CAS UPDATE.
+    result = await session.execute(
+        update(WorkspaceAgentRow)
+        .where(
+            WorkspaceAgentRow.id == agent_id,
+            WorkspaceAgentRow.lifecycle == "draining",
+        )
+        .values(lifecycle="shutdown")
+        .returning(WorkspaceAgentRow.org_id)
+    )
+    org_id_val = result.scalar_one_or_none()
+    if org_id_val is None:
+        return False
+
+    # 2. Revoke all active bearers (propagate on failure — rolls back the CAS).
+    await _bearers.revoke_all_for_agent(agent_id, "shutdown_complete", session=session)
+
+    # 3. Audit.
+    await audit(
+        "workspace_agent",
+        agent_id,
+        "workspace_agent.shutdown_complete",
+        _AgentShutdownCompleteAudit(),
+        Actor(kind=ActorKind.SYSTEM),
+        org_id=org_id_val,
+        session=session,
+    )
+
+    # 4. SSE — cache-invalidate so the SPA card flips lifecycle.
+    publish_general_after_commit(
+        session,
+        org_id=org_id_val,
+        kind=GeneralEventKind.AGENT_CHANGED,
+        payload={"agent_id": str(agent_id)},
+    )
+
+    return True
+
+
+async def shutdown_agents(
+    *,
+    org_id: UUID,
+    agent_ids: Sequence[UUID],
+    actor: Actor,
+    session: AsyncSession,
+) -> list[ShutdownResult]:
+    """Bulk request to transition agents to ``lifecycle='draining'``.
+
+    Per-agent loop: ``SELECT … FOR UPDATE`` by ``(id, org_id)``; dispatches on
+    current lifecycle; CAS UPDATE on win.  Never raises — per-row outcomes are
+    surfaced via ``ShutdownResult.outcome``.  Caller commits.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+    from app.core.audit_log import audit  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    results: list[ShutdownResult] = []
+
+    for aid in agent_ids:
+        row = (
+            await session.execute(
+                select(WorkspaceAgentRow)
+                .where(
+                    WorkspaceAgentRow.id == aid,
+                    WorkspaceAgentRow.org_id == org_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+
+        if row is None:
+            results.append(ShutdownResult(agent_id=aid, outcome="not_found"))
+            continue
+
+        lc = row.lifecycle
+        if lc == "shutdown":
+            results.append(ShutdownResult(agent_id=aid, outcome="already_shutdown"))
+            continue
+        if lc == "draining":
+            results.append(ShutdownResult(agent_id=aid, outcome="already_draining"))
+            continue
+
+        # CAS: unconfigured | active → draining
+        prev_lc = row.lifecycle
+        cas = await session.execute(
+            update(WorkspaceAgentRow)
+            .where(
+                WorkspaceAgentRow.id == aid,
+                WorkspaceAgentRow.lifecycle.in_(["unconfigured", "active"]),
+            )
+            .values(lifecycle="draining")
+            .returning(WorkspaceAgentRow.org_id)
+        )
+        if cas.scalar_one_or_none() is None:
+            # Lost the race (another pod moved it between our SELECT and UPDATE).
+            results.append(ShutdownResult(agent_id=aid, outcome="already_draining"))
+            continue
+
+        await audit(
+            "workspace_agent",
+            aid,
+            "workspace_agent.shutdown_requested",
+            _AgentShutdownRequestedAudit(previous_lifecycle=prev_lc),
+            actor,
+            org_id=org_id,
+            session=session,
+        )
+        publish_general_after_commit(
+            session,
+            org_id=org_id,
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(aid)},
+        )
+        results.append(ShutdownResult(agent_id=aid, outcome="draining"))
+
+    return results
+
+
+async def cancel_shutdown_agents(
+    *,
+    org_id: UUID,
+    agent_ids: Sequence[UUID],
+    actor: Actor,
+    session: AsyncSession,
+) -> list[CancelShutdownResult]:
+    """Bulk request to transition agents from ``lifecycle='draining'`` back to ``active``.
+
+    Symmetric to ``shutdown_agents`` — never raises, per-row outcomes.  Caller commits.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+    from app.core.audit_log import audit  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    results: list[CancelShutdownResult] = []
+
+    for aid in agent_ids:
+        row = (
+            await session.execute(
+                select(WorkspaceAgentRow)
+                .where(
+                    WorkspaceAgentRow.id == aid,
+                    WorkspaceAgentRow.org_id == org_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+
+        if row is None:
+            results.append(CancelShutdownResult(agent_id=aid, outcome="not_found"))
+            continue
+
+        lc = row.lifecycle
+        if lc == "shutdown":
+            results.append(CancelShutdownResult(agent_id=aid, outcome="already_shutdown"))
+            continue
+        if lc in ("unconfigured", "active"):
+            results.append(CancelShutdownResult(agent_id=aid, outcome="not_draining"))
+            continue
+
+        # CAS: draining → active
+        prev_lc = row.lifecycle
+        cas = await session.execute(
+            update(WorkspaceAgentRow)
+            .where(
+                WorkspaceAgentRow.id == aid,
+                WorkspaceAgentRow.lifecycle == "draining",
+            )
+            .values(lifecycle="active")
+            .returning(WorkspaceAgentRow.org_id)
+        )
+        if cas.scalar_one_or_none() is None:
+            # Lost the race.
+            results.append(CancelShutdownResult(agent_id=aid, outcome="not_draining"))
+            continue
+
+        await audit(
+            "workspace_agent",
+            aid,
+            "workspace_agent.cancel_shutdown_requested",
+            _AgentCancelShutdownRequestedAudit(previous_lifecycle=prev_lc),
+            actor,
+            org_id=org_id,
+            session=session,
+        )
+        publish_general_after_commit(
+            session,
+            org_id=org_id,
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(aid)},
+        )
+        results.append(CancelShutdownResult(agent_id=aid, outcome="active"))
+
+    return results
+
+
 async def get_agent_info(
     agent_id: UUID,
     *,
@@ -1442,6 +1697,12 @@ async def compute_agent_liveness_transitions(
 
         if target_state == "offline":
             newly_offline.append(row.id)
+            # Stuck-drain recovery: if the agent crashed mid-drain (lifecycle is
+            # still "draining" but it stopped heartbeating), settle the lifecycle
+            # to "shutdown" atomically in this same sweep tick.  The CAS inside
+            # mark_agent_shutdown_complete is a no-op for non-draining rows, so
+            # this call is safe for ALL newly-offline rows.
+            await mark_agent_shutdown_complete(agent_id=row.id, session=session)
 
         log.info(
             "agent_gateway.liveness_transition",

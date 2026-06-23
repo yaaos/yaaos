@@ -51,7 +51,10 @@ from app.core.agent_gateway.run_sink import (
     register_run_sink,
 )
 from app.core.agent_gateway.service import (
+    CancelShutdownResult,
+    ShutdownResult,
     acknowledge_command_received,
+    cancel_shutdown_agents,
     claim_next,
     compute_agent_liveness_transitions,
     connection_status_for_org,
@@ -66,12 +69,14 @@ from app.core.agent_gateway.service import (
     list_agents_for_org,
     mark_agent_configured,
     mark_agent_offline,
+    mark_agent_shutdown_complete,
     pin_command_to_agent,
     record_agent_event,
     record_heartbeat,
     record_workspace_event,
     requeue_stale_claimed,
     retire_command,
+    shutdown_agents,
     stale_agent_ids,
 )
 from app.core.agent_gateway.sts_verifier import set_sts_verify_for_tests
@@ -124,6 +129,7 @@ __all__ = [
     "AgentRef",
     "AgentRunSink",
     "AuthBlock",
+    "CancelShutdownResult",
     "ClaimRequest",
     "CleanupWorkspaceCommand",
     "ConfigUpdateCommand",
@@ -140,6 +146,7 @@ __all__ = [
     "ProvisionWorkspaceCommand",
     "RefreshWorkspaceAuthCommand",
     "RepoRef",
+    "ShutdownResult",
     "StaleClaimError",
     "UnauthorizedError",
     "WorkspaceAgentReportSink",
@@ -150,6 +157,7 @@ __all__ = [
     "WriteFilesCommand",
     "WriteFilesEntry",
     "acknowledge_command_received",
+    "cancel_shutdown_agents",
     "claim_next",
     "clear_byok_secrets_provider",
     "clear_run_sink",
@@ -171,6 +179,7 @@ __all__ = [
     "lookup_org_by_arn",
     "mark_agent_configured",
     "mark_agent_offline",
+    "mark_agent_shutdown_complete",
     "pin_command_to_agent",
     "record_agent_event",
     "record_heartbeat",
@@ -188,6 +197,7 @@ __all__ = [
     "set_sts_verify_for_tests",
     "set_subscriber_registry_for_tests",
     "shutdown",
+    "shutdown_agents",
     "stale_agent_ids",
 ]
 

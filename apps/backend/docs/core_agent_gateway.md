@@ -24,12 +24,13 @@ The `SubscriberRegistry` keys the WS sender on the bearer-derived `agent_id`.
 
 ## Graceful shutdown — `DELETE /api/v1/agent/identity`
 
-The agent sends this as its last act on clean shutdown (SIGTERM/SIGINT), after stopping heartbeat + claim loops and draining the WS. The control plane eagerly:
+The agent sends this as its last act on clean shutdown (SIGTERM/SIGINT), after stopping heartbeat + claim loops and draining the WS. The handler branches on `lifecycle`:
 
-1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
-2. Revokes the bearer (reason `graceful_shutdown`).
-3. Calls `WorkspaceAgentReportSink.handle_agent_loss` — expires held workspaces, synthesizes `completed_failure` events for any in-flight `current_command_id` so WorkflowExecutions resume rather than hanging in `AWAITING_AGENT`.
-4. Publishes `agent_changed` SSE so the dashboard flips the card offline without waiting for the sweeper's next tick.
+- **`lifecycle='draining'`** (the managed-drain path): calls `mark_agent_shutdown_complete` atomically — CAS `draining → shutdown`, revokes bearer, writes `workspace_agent.shutdown_complete` audit. Then calls `handle_agent_loss`.
+- **`lifecycle='shutdown'`** (idempotent re-fire): no-op — bearer already revoked, lifecycle already terminal. Returns 204 without extra side effects.
+- **`lifecycle='active'` or `'unconfigured'`** (unexpected disconnect): existing path — sets `state=offline + last_shutdown_at=now`, revokes bearer, calls `handle_agent_loss`, writes `workspace_agent.disconnected` audit, publishes `agent_changed` SSE.
+
+`handle_agent_loss` expiries held workspaces and synthesizes `completed_failure` events for any in-flight `current_command_id` so WorkflowExecutions resume rather than hanging in `AWAITING_AGENT`.
 
 Returns 204. Idempotent — a revoked bearer 401s before the handler runs. Best-effort on the agent side: errors are logged but never prevent process exit.
 
@@ -43,11 +44,23 @@ Called on each `_reaper_sweep_once` tick from `core/workspace` (the loop host). 
 
 Writes `state` only on transition (idempotent on the same tick). Returns a list of agent UUIDs that newly became `offline` this sweep. Emits one `agent_changed` SSE event per transitioned agent via `publish_general_after_commit` on the org's general channel; payload carries `{agent_id}`.
 
+**Stuck-drain recovery**: when a row transitions to `offline` and its `lifecycle='draining'`, `compute_agent_liveness_transitions` calls `mark_agent_shutdown_complete` inline. The CAS (`draining → shutdown`) is a no-op for non-draining rows — so the call is always safe. This prevents a draining agent that crashed before sending `DELETE /api/v1/agent/identity` from being stuck in `draining` forever.
+
 Cron-beat dedup (via `scheduled_runs ON CONFLICT DO NOTHING`) is the primary cross-pod exclusivity for `requeue_stale_claimed` and `compute_agent_liveness_transitions`; row-level `FOR UPDATE SKIP LOCKED` on the SELECT in each function is the defense-in-depth backstop against overlapping reaper bodies when a slow sweep crosses a cron-beat boundary.
 
 ## `GET /api/orgs/{slug}/agents`
 
 Returns agents for the current org within the 1-hour UI-retention window. Fields: `id`, `instance_id`, `state`, `lifecycle`, `last_heartbeat_at`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count`, `version`. Excludes agents whose last heartbeat is older than 1 hour (rows stay in the DB). Requires `ORG_READ` (visible to all org members). Implemented in `app/domain/orgs/org_settings_web.py`; delegates to `list_agents_for_org`.
+
+## Admin lifecycle endpoints — `POST /api/orgs/{slug}/agents/shutdown` and `POST /api/orgs/{slug}/agents/cancel-shutdown`
+
+Both require `Action.WORKSPACE_AGENT_SHUTDOWN` (admin role). Both accept `{"agent_ids": [uuid, …]}` (1–100 items, no duplicates — validated in the handler; returns 400 for violations). Both return `{"results": [{agent_id, outcome}]}` with per-row outcomes.
+
+**`shutdown`** — transitions agents to `draining`. Per-row outcomes: `draining` (CAS won), `already_draining`, `already_shutdown`, `not_found` (either unknown ID or ID belongs to a different org). Only `active` and `unconfigured` agents can transition; others return no-op outcomes without an audit row.
+
+**`cancel-shutdown`** — cancels an in-progress drain, returning agents to `active`. Per-row outcomes: `active` (CAS won), `not_draining`, `already_shutdown`, `not_found`.
+
+Implemented in `app/domain/orgs/org_settings_web.py`; delegated to `shutdown_agents` / `cancel_shutdown_agents` in `core/agent_gateway.service`.
 
 ## Identity exchange — `POST /api/v1/agent/identity`
 
@@ -108,7 +121,9 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 - **`workspace_agents.lifecycle` — drain lifecycle FSM.** Two orthogonal axes track agent state: `state` (liveness: `reachable/stale/offline`) and `lifecycle` (drain: `unconfigured/active/draining/shutdown`). `lifecycle` transitions:
   - `unconfigured → active` — `mark_agent_configured` CAS (compare-and-swap UPDATE WHERE lifecycle='unconfigured'); called by `record_agent_event` when a `ConfigUpdate` `completed_success` event arrives.
-  - `draining` and `shutdown` are valid column values (CHECK-permitted); no service function writes them — only `unconfigured → active` is wired.
+  - `active/unconfigured → draining` — `shutdown_agents` bulk CAS (`UPDATE … WHERE lifecycle IN ('active','unconfigured')`); called by the admin `POST /{slug}/agents/shutdown` endpoint. Writes `workspace_agent.shutdown_requested` audit per agent that transitions; emits `agent_changed` SSE.
+  - `draining → active` — `cancel_shutdown_agents` bulk CAS (`UPDATE … WHERE lifecycle='draining'`); called by the admin `POST /{slug}/agents/cancel-shutdown` endpoint. Writes `workspace_agent.cancel_shutdown_requested` audit; emits `agent_changed` SSE.
+  - `draining → shutdown` — `mark_agent_shutdown_complete` CAS (`UPDATE … WHERE lifecycle='draining'`); called by the DELETE handler (managed-drain path) or by the liveness sweeper (stuck-drain recovery). Revokes bearer, writes `workspace_agent.shutdown_complete` audit, emits `agent_changed` SSE. Returns `True` on CAS win, `False` on loss (idempotent).
   - `shutdown → unconfigured` (on re-exchange) — `ensure_agent_row` UPSERT CASE expression; a freshly reconnecting agent that previously completed a full drain restarts at `unconfigured`.
   - All other UPSERT calls (bearer refresh) preserve the existing lifecycle value.
   - `mark_agent_offline` writes liveness state only — never touches `lifecycle`.
@@ -215,5 +230,15 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 `test/test_subscriber_sweeper_scheduled_service.py` covers: `subscriber_sweeper` is registered with the taskiq broker; sweeper body removes ZSET members older than the stale threshold and leaves fresh members untouched — for both `workflow_subscribers:*` and `agent_routes:*` key patterns.
 
 `test/test_heartbeat_service.py` covers: `heartbeat()` advances both ZSET scores without adding a new member and without publishing to the agent control channel; heartbeat with no prior `track()` does not raise.
+
+`test/test_shutdown_agents_mixed_outcomes_service.py` covers: all-active → draining outcome + DB state; shutdown audit `workspace_agent.shutdown_requested` written; all-draining → already_draining; all-shutdown → already_shutdown; mixed selection returns per-row outcomes; cross-org agent_id → not_found (no data leak); empty list → 400; >100 agents → 400; duplicate ids → 400; non-admin → 403.
+
+`test/test_cancel_shutdown_agents_mixed_outcomes_service.py` covers: draining → active outcome + DB state + audit `workspace_agent.cancel_shutdown_requested`; active → not_draining; unconfigured → not_draining; shutdown → already_shutdown; mixed selection; cross-org → not_found; empty/oversized/duplicate lists → 400; non-admin → 403.
+
+`test/test_mark_agent_shutdown_complete_idempotency.py` covers: CAS win returns True + lifecycle='shutdown'; bearer revoked; audit `workspace_agent.shutdown_complete` written; already-shutdown returns False (no double audit); active lifecycle returns False (no effect).
+
+`test/test_delete_identity_lifecycle_branches_service.py` covers: draining path — lifecycle flips to shutdown, bearer revoked, `shutdown_complete` audit written; shutdown re-fire — 204 with no side effects; active path — state offline + `workspace_agent.disconnected` audit.
+
+`test/test_liveness_sweeper_stuck_drain_recovery_service.py` covers: draining agent past 5-min threshold → sweeper flips lifecycle to shutdown + audit written; active agent offline → lifecycle unchanged; unconfigured agent offline → lifecycle unchanged; draining reachable → no completion; already-shutdown → no-op.
 
 Registry isolation between tests is provided by the `subscriber_registry_isolation` autouse fixture in `app/testing/isolation`. Seed an agent row via `app.testing.e2e_setup.seed_agent`.

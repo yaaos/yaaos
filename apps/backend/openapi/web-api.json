@@ -1646,6 +1646,37 @@
         "title": "_AddEmailRequest",
         "type": "object"
       },
+      "_AgentShutdownRequest": {
+        "properties": {
+          "agent_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Agent Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "agent_ids"
+        ],
+        "title": "_AgentShutdownRequest",
+        "type": "object"
+      },
+      "_AgentShutdownResponse": {
+        "properties": {
+          "results": {
+            "items": {},
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "_AgentShutdownResponse",
+        "type": "object"
+      },
       "_AssertionBody": {
         "properties": {
           "SAMLResponse": {
@@ -5844,6 +5875,176 @@
         ]
       }
     },
+    "/api/orgs/{slug}/agents/cancel-shutdown": {
+      "post": {
+        "description": "Bulk request to cancel an in-progress drain, returning agents to ``lifecycle='active'``.\n\nReturns per-row outcomes: ``active | not_draining | already_shutdown | not_found``.\nAdmin-only (Action.WORKSPACE_AGENT_SHUTDOWN).",
+        "operationId": "bulk_cancel_shutdown_agents_api_orgs__slug__agents_cancel_shutdown_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AgentShutdownRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_AgentShutdownResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Cancel Shutdown Agents",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/orgs/{slug}/agents/shutdown": {
+      "post": {
+        "description": "Bulk request to transition agents to ``lifecycle='draining'``.\n\nReturns per-row outcomes: ``draining | already_draining | already_shutdown | not_found``.\nAdmin-only (Action.WORKSPACE_AGENT_SHUTDOWN).",
+        "operationId": "bulk_shutdown_agents_api_orgs__slug__agents_shutdown_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AgentShutdownRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_AgentShutdownResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Shutdown Agents",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
     "/api/reviewer/cancel": {
       "post": {
         "description": "Cancel any non-terminal workflow_executions for this ticket.",
@@ -7846,7 +8047,7 @@
     },
     "/api/v1/agent/identity": {
       "delete": {
-        "description": "Graceful-shutdown \"going away\" signal.\n\nThe agent sends this as the last action of its SIGTERM/SIGINT handler,\nafter stopping its heartbeat + claim loops and draining the WS. The\ncontrol plane eagerly:\n\n1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.\n2. Revokes the bearer so subsequent calls 401 immediately.\n3. Expires any workspaces owned by this agent and synthesizes terminal\n   failure events for in-flight commands so their WorkflowExecutions resume.\n4. Publishes `agent_changed` SSE so the dashboard flips the card\n   offline without waiting for the sweeper's next tick.\n\nReturns 204. Idempotent — calling on an already-offline/revoked agent is\nharmless (bearer verify fails → 401 before this handler runs).",
+        "description": "Lifecycle-aware graceful-shutdown \"going away\" signal.\n\nBranches on the agent's current ``lifecycle`` under a ``SELECT … FOR UPDATE``\nso racing DELETE calls and the liveness sweeper resolve deterministically:\n\n- ``draining``: call ``mark_agent_shutdown_complete`` (CAS + bearer revoke +\n  audit + SSE atomically), then ``handle_agent_loss`` for workspace cleanup.\n  Whether or not this caller wins the CAS, return 204.\n- ``shutdown``: idempotent re-fire.  Return 204 with no further side effects\n  (bearer already revoked; audit already written).\n- ``active`` / ``unconfigured``: unexpected disconnect.  Run the existing path:\n  mark offline + revoke bearer + handle_agent_loss + ``workspace_agent.disconnected``\n  audit + SSE.\n\nReturns 204 in all branches. Idempotent.",
         "operationId": "deregister_identity_api_v1_agent_identity_delete",
         "parameters": [
           {
