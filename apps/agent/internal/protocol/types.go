@@ -23,6 +23,8 @@ const (
 	KindInvokeClaudeCode     CommandKind = "InvokeClaudeCode"
 	KindCleanupWorkspace     CommandKind = "CleanupWorkspace"
 	KindConfigUpdate         CommandKind = "ConfigUpdate"
+	KindShutdown             CommandKind = "Shutdown"
+	KindCancelShutdown       CommandKind = "CancelShutdown"
 )
 
 // CommandHeader is embedded in every concrete AgentCommand. Carries the
@@ -180,7 +182,7 @@ type HeartbeatResponse struct {
 
 type ClaimRequest struct {
 	WaitSeconds   int      `json:"wait_seconds"`
-	Lifecycle     string   `json:"lifecycle"`      // "unconfigured" | "configured"
+	Lifecycle     string   `json:"lifecycle"`      // "unconfigured" | "active" | "draining"
 	NewWorkspaces int      `json:"new_workspaces"` // capacity for new ProvisionWorkspace commands
 	WorkspaceIDs  []string `json:"workspace_ids"`  // idle Active workspaces awaiting a command
 }
@@ -209,4 +211,21 @@ type AgentConfigWire struct {
 type ConfigUpdateCommand struct {
 	CommandHeader
 	Config AgentConfigWire `json:"config"`
+}
+
+// ShutdownCommand is an agent-scoped command requesting the agent to drain.
+// Carries no workspace_id. When executed, the agent flips its local lifecycle
+// to "draining", accelerates its heartbeat cadence to 5s, and triggers a clean
+// exit once all active workspaces have completed. See command.ShutdownCommand
+// for the typed form used after Decode.
+type ShutdownCommand struct {
+	CommandHeader
+}
+
+// CancelShutdownCommand is an agent-scoped command cancelling an in-progress
+// drain. Carries no workspace_id. When executed, the agent flips its local
+// lifecycle back to "active" and resumes accepting new workspace commands. See
+// command.CancelShutdownCommand for the typed form used after Decode.
+type CancelShutdownCommand struct {
+	CommandHeader
 }

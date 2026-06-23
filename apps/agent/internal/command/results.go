@@ -132,3 +132,21 @@ func (r ConfigUpdateResult) ToWire() map[string]any {
 		"max_workspaces": r.MaxWorkspaces,
 	}
 }
+
+// ShutdownResult is the typed output of ShutdownCommand.Execute.
+// The backend's terminal event for a ShutdownCommand carries no meaningful
+// domain outputs; an empty map is the correct success response.
+type ShutdownResult struct{}
+
+// ToWire returns the empty outputs map for a ShutdownCommand terminal event.
+func (r ShutdownResult) ToWire() map[string]any {
+	return map[string]any{}
+}
+
+// CancelShutdownResult is the typed output of CancelShutdownCommand.Execute.
+type CancelShutdownResult struct{}
+
+// ToWire returns the empty outputs map for a CancelShutdownCommand terminal event.
+func (r CancelShutdownResult) ToWire() map[string]any {
+	return map[string]any{}
+}

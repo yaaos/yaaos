@@ -5,7 +5,7 @@
 ## Scope
 
 **Owns:**
-- All concrete command wire structs: `ProvisionWorkspaceCommand`, `WriteFilesCommand`, `RefreshWorkspaceAuthCommand`, `InvokeClaudeCodeCommand`, `CleanupWorkspaceCommand`, `ConfigUpdateCommand`.
+- All concrete command wire structs: `ProvisionWorkspaceCommand`, `WriteFilesCommand`, `RefreshWorkspaceAuthCommand`, `InvokeClaudeCodeCommand`, `CleanupWorkspaceCommand`, `ConfigUpdateCommand`, `ShutdownCommand`, `CancelShutdownCommand`.
 - `CommandHeader` — embedded in every concrete command; carries `command_id`, `workspace_id`, `traceparent`, `kind`, `completion_token`.
 - `CommandKind` constants.
 - Event types: `AgentEvent`, `EventKind` constants.
@@ -26,7 +26,7 @@
 - **Leaf package.** `protocol` imports no other internal packages. All consumers import it; it imports nothing from them. `depguard` enforces this — see `apps/agent/.golangci.yml`.
 - **`ClaimCommand` returns raw bytes.** Decoding the union into a typed `Command` requires `command.Decode`, which lives above `protocol`. Returning `[]byte` keeps the dependency arrow pointing down.
 - **Field tags are load-bearing.** `json:` tags on every field must match the keys the backend emits and the openapi spec declares. `openapi_drift_test.go` enforces this mechanically.
-- **Flat wire shape (workspace commands).** The backend sends each workspace command's fields as a flat JSON object with `kind` embedded. Each concrete struct embeds `CommandHeader` so `kind`, `command_id`, `workspace_id`, and `traceparent` are always present. `ConfigUpdateCommand` is the one exception: it embeds `CommandHeader` too but nests its payload under a `config` object (`AgentConfigWire`). `command.Decode` unmarshals into `protocol.ConfigUpdateCommand` directly, so the decoded shape, the OpenAPI spec, and the drift test cannot diverge.
+- **Flat wire shape (workspace commands).** The backend sends each workspace command's fields as a flat JSON object with `kind` embedded. Each concrete struct embeds `CommandHeader` so `kind`, `command_id`, `workspace_id`, and `traceparent` are always present. `ConfigUpdateCommand` is the one exception: it embeds `CommandHeader` but nests its payload under a `config` object (`AgentConfigWire`). `ShutdownCommand` and `CancelShutdownCommand` embed `CommandHeader` with no additional fields — they carry only routing metadata. `command.Decode` unmarshals into the relevant protocol struct directly, so the decoded shape, the OpenAPI spec, and the drift test cannot diverge.
 - **No agent ID in URLs for operational channels.** `Heartbeat` and `ClaimCommand` use bearer-derived identity; no `agentID` parameter is passed to these methods. The caller no longer needs to thread `agentID` into every protocol call after the initial identity exchange.
 - **`ErrStaleClaim` is the typed sentinel for HTTP 410.** `doJSON` returns `fmt.Errorf("%w", ErrStaleClaim)` on a 410 Gone response. `PostCommandEvent` inherits it automatically; callers use `errors.Is(err, protocol.ErrStaleClaim)` to detect a retired command row without string-matching. Other `doJSON` callers (Heartbeat, Deregister, ExchangeIdentity) never receive 410 in practice — the mapping is safe package-wide.
 
@@ -56,7 +56,7 @@
 ## Claim body (capacity-pull)
 
 `ClaimRequest` carries:
-- `lifecycle` — `"unconfigured"` (delivers only `ConfigUpdate`) or `"configured"`.
+- `lifecycle` — `"unconfigured"` (delivers only `ConfigUpdate`) | `"active"` (normal operation) | `"draining"` (Shutdown received; new_workspaces=0; backend delivers only agent-scoped commands).
 - `new_workspaces` — `max_workspaces − active count`; the backend returns up to this many unassigned `ProvisionWorkspace` rows.
 - `workspace_ids` — idle Active workspaces; the backend returns one pending command per named workspace.
 

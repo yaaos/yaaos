@@ -5,7 +5,7 @@ Verifies:
   the same transaction.
 - claim_next with lifecycle="unconfigured" claims the ConfigUpdate row (not a
   ProvisionWorkspace that may also be pending).
-- claim_next with lifecycle="configured" returns ProvisionWorkspace when both
+- claim_next with lifecycle="active" returns ProvisionWorkspace when both
   kinds are pending (ConfigUpdate is invisible in the configured path).
 - Duplicate enqueues (identity-exchange retries) produce two separate rows that
   are both claimed and acked successfully in FIFO order.
@@ -213,7 +213,7 @@ async def test_claim_next_configured_returns_config_update_first_when_both_pendi
 
     claimed = await claim_next(
         agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=4,
         workspace_ids=[],
         wait_seconds=0,

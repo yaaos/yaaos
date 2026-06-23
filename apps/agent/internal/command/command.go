@@ -58,8 +58,9 @@ type WorkspaceCommand interface {
 	MarshalWire() ([]byte, error)
 }
 
-// AgentCommand is a Command that executes in the supervisor itself. Only
-// ConfigUpdateCommand implements this today.
+// AgentCommand is a Command that executes in the supervisor itself.
+// ConfigUpdateCommand, ShutdownCommand, and CancelShutdownCommand implement
+// this interface.
 //
 // Term note: this AgentCommand is unrelated to the now-retired
 // protocol.AgentCommand union wrapper. Same term, different concept.
@@ -147,6 +148,18 @@ func Decode(raw []byte) (Command, error) {
 				ByokSecrets:   byok,
 			},
 		}, nil
+	case protocol.KindShutdown:
+		var v protocol.ShutdownCommand
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, fmt.Errorf("command: decode Shutdown: %w", err)
+		}
+		return &ShutdownCommand{CommandHeader: v.CommandHeader}, nil
+	case protocol.KindCancelShutdown:
+		var v protocol.CancelShutdownCommand
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, fmt.Errorf("command: decode CancelShutdown: %w", err)
+		}
+		return &CancelShutdownCommand{CommandHeader: v.CommandHeader}, nil
 	default:
 		return nil, fmt.Errorf("command: unknown kind %q", probe.Kind)
 	}

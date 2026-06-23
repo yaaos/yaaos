@@ -132,7 +132,7 @@ async def test_configured_claim_returns_provision_workspace(db_session) -> None:
 
     command = await claim_next(
         agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=1,
         workspace_ids=[],
         wait_seconds=0,
@@ -149,7 +149,7 @@ async def test_configured_claim_returns_none_when_empty(db_session) -> None:
     agent_id = await _make_agent()
     command = await claim_next(
         agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=4,
         workspace_ids=[],
         wait_seconds=0,
@@ -172,7 +172,7 @@ async def test_configured_claim_returns_pending_config_update(db_session) -> Non
 
     command = await claim_next(
         agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=4,
         workspace_ids=[],
         wait_seconds=0,
@@ -200,7 +200,7 @@ async def test_configured_claim_prefers_config_update_over_provision_workspace(d
 
     command = await claim_next(
         agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=4,
         workspace_ids=[],
         wait_seconds=0,

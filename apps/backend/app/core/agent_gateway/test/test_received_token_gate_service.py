@@ -60,7 +60,7 @@ async def _seed_and_claim(db_session) -> tuple[UUID, str]:
     # Claim the command to mint the completion_token_hash on the row.
     claimed = await claim_next(
         agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=1,
         workspace_ids=[],
         wait_seconds=0,

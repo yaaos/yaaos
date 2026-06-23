@@ -25,8 +25,15 @@ type WorkspaceOps interface {
 	Cleanup(ctx context.Context, cmd *protocol.CleanupWorkspaceCommand) (CleanupResult, error)
 }
 
-// AgentOps is the capability seam a ConfigUpdateCommand calls. The supervisor
-// implements this interface.
+// AgentOps is the capability seam AgentCommands call to act on the supervisor.
+// The supervisor implements this interface; tests supply a fake.
 type AgentOps interface {
 	ApplyConfig(cfg AgentConfig)
+	// RequestShutdown transitions the agent's local lifecycle to "draining".
+	// The agent stops accepting new workspaces, accelerates its heartbeat to 5s,
+	// and exits once all active workspaces have completed.
+	RequestShutdown()
+	// CancelShutdown reverts a prior RequestShutdown, transitioning the agent's
+	// local lifecycle back to "active". The agent resumes accepting new workspaces.
+	CancelShutdown()
 }

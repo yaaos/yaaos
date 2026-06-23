@@ -45,6 +45,7 @@ from app.core.agent_gateway.types import (
     AgentCommandKind,
     AgentConfig,
     AgentEvent,
+    CancelShutdownCommand,
     CleanupWorkspaceCommand,
     ConfigUpdateCommand,
     HeartbeatRequest,
@@ -52,6 +53,7 @@ from app.core.agent_gateway.types import (
     InvokeClaudeCodeCommand,
     ProvisionWorkspaceCommand,
     RefreshWorkspaceAuthCommand,
+    ShutdownCommand,
     StaleClaimError,
     WorkspaceEvent,
     WriteFilesCommand,
@@ -84,7 +86,9 @@ _COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
         | RefreshWorkspaceAuthCommand
         | InvokeClaudeCodeCommand
         | CleanupWorkspaceCommand
-        | ConfigUpdateCommand,
+        | ConfigUpdateCommand
+        | ShutdownCommand
+        | CancelShutdownCommand,
         Field(discriminator="kind"),
     ]
 )
@@ -534,17 +538,25 @@ async def claim_next(
             if row is None:
                 return None
     else:
-        # ConfigUpdate first: a pinned ConfigUpdate carries credential / endpoint
-        # rotations (BYOK keys, OTLP token) that must land before the next
-        # ProvisionWorkspace injects per-workspace env (e.g. ANTHROPIC_API_KEY at
-        # ExecSpawn time, which lives for the workspace's whole life).
+        # Agent-scoped priority bucket first: ConfigUpdate, Shutdown, and
+        # CancelShutdown are pre-stamped with agent_id and carry no workspace_id.
+        # ConfigUpdate carries credential / endpoint rotations (BYOK keys, OTLP
+        # token) that must land before the next ProvisionWorkspace. Shutdown /
+        # CancelShutdown are agent lifecycle signals that must land regardless of
+        # workspace capacity.
         row = (
             (
                 await session.execute(
                     select(AgentCommandRow)
                     .where(
                         AgentCommandRow.status == "pending",
-                        AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                        AgentCommandRow.command_kind.in_(
+                            [
+                                AgentCommandKind.CONFIG_UPDATE,
+                                AgentCommandKind.SHUTDOWN,
+                                AgentCommandKind.CANCEL_SHUTDOWN,
+                            ]
+                        ),
                         AgentCommandRow.agent_id == agent_id,
                     )
                     .order_by(AgentCommandRow.id)
@@ -617,7 +629,13 @@ async def claim_next(
                             select(AgentCommandRow)
                             .where(
                                 AgentCommandRow.status == "pending",
-                                AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                                AgentCommandRow.command_kind.in_(
+                                    [
+                                        AgentCommandKind.CONFIG_UPDATE,
+                                        AgentCommandKind.SHUTDOWN,
+                                        AgentCommandKind.CANCEL_SHUTDOWN,
+                                    ]
+                                ),
                                 AgentCommandRow.agent_id == agent_id,
                             )
                             .order_by(AgentCommandRow.id)
@@ -1408,6 +1426,23 @@ async def shutdown_agents(
             results.append(ShutdownResult(agent_id=aid, outcome="already_draining"))
             continue
 
+        # Enqueue a ShutdownCommand so the agent sees the drain request on its
+        # next claim. Pre-stamp agent_id so the priority-bucket SELECT finds it
+        # without a workspace_ids sweep (same pattern as ConfigUpdate).
+        from uuid import uuid7  # noqa: PLC0415
+
+        from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+        shutdown_cmd = ShutdownCommand(command_id=uuid7(), traceparent="")
+        await enqueue_command(org_id=org_id, command=shutdown_cmd, session=session)
+        placeholder_hash = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
+        await session.execute(
+            update(AgentCommandRow)
+            .where(AgentCommandRow.id == shutdown_cmd.command_id)
+            .values(agent_id=aid, completion_token_hash=placeholder_hash)
+        )
+        await session.flush()
+
         await audit(
             "workspace_agent",
             aid,
@@ -1484,6 +1519,23 @@ async def cancel_shutdown_agents(
             # Lost the race.
             results.append(CancelShutdownResult(agent_id=aid, outcome="not_draining"))
             continue
+
+        # Enqueue a CancelShutdownCommand so the agent sees the resume signal on
+        # its next claim. Pre-stamp agent_id so the priority-bucket SELECT finds
+        # it (same pattern as ConfigUpdate / ShutdownCommand).
+        from uuid import uuid7  # noqa: PLC0415
+
+        from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+        cancel_cmd = CancelShutdownCommand(command_id=uuid7(), traceparent="")
+        await enqueue_command(org_id=org_id, command=cancel_cmd, session=session)
+        placeholder_hash = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
+        await session.execute(
+            update(AgentCommandRow)
+            .where(AgentCommandRow.id == cancel_cmd.command_id)
+            .values(agent_id=aid, completion_token_hash=placeholder_hash)
+        )
+        await session.flush()
 
         await audit(
             "workspace_agent",

@@ -17,22 +17,34 @@ Agent identity on all operational channels is derived solely from the bearer —
 | `POST /api/v1/workspaces/{id}/events` | Agent → CP | Workspace state transitions |
 | `WSS /api/v1/agent/activity` | Bidirectional | High-frequency activity streaming; demand-pull |
 
-## `unconfigured → configured` state machine
+## Agent lifecycle state machine
 
-A fresh agent (or any restarted agent instance) enters the `unconfigured` lifecycle.
+A fresh agent (or any restarted agent instance) enters `unconfigured`. State transitions:
 
-**Unconfigured:**
+**`unconfigured`:**
 - Claim requests carry `lifecycle="unconfigured"`.
-- The control plane returns a `ConfigUpdateCommand` (kind `"ConfigUpdate"`) on every unconfigured claim, regardless of queue depth.
-- Workspace commands are not dequeued; they accumulate until the agent is configured.
-- The agent rejects any `WorkspaceCommand` that arrives before configuration with `completed_failure "agent unconfigured"`.
+- The control plane returns a `ConfigUpdateCommand` on every unconfigured claim.
+- Workspace commands are not dequeued; they accumulate until the agent becomes active.
+- The agent rejects any `WorkspaceCommand` before configuration with `completed_failure "agent unconfigured"`.
 
-**Transition:** `ConfigUpdateCommand.Execute` stores the config atomically. The agent's lifecycle immediately becomes `configured`.
+**Transition to `active`:** `ConfigUpdateCommand.Execute` stores the config and CAS-flips `localLifecycle` from `unconfigured` to `active`.
 
-**Configured:**
-- Claim requests carry `lifecycle="configured"`, `new_workspaces` (capacity for new workspaces), and `workspace_ids` (idle Active workspaces awaiting a command).
-- The backend draws a batch from `agent_commands`: up to `new_workspaces` unassigned `ProvisionWorkspace` rows + one pending row per named `workspace_id`.
-- A process restart returns to `unconfigured` (the atomic pointer is not persisted).
+**`active`:**
+- Claim requests carry `lifecycle="active"`, `new_workspaces` (capacity for new workspaces), and `workspace_ids` (idle Active workspaces awaiting a command).
+- The backend draws from `agent_commands`: agent-scoped commands first, then up to `new_workspaces` unassigned `ProvisionWorkspace` rows, then one pending row per named `workspace_id`.
+- A process restart returns to `unconfigured`.
+
+**Transition to `draining`:** `ShutdownCommand.Execute` calls `RequestShutdown()`, which Stores `"draining"` on `localLifecycle`.
+
+**`draining`:**
+- Claim requests carry `lifecycle="draining"` and `new_workspaces=0`.
+- The backend returns only agent-scoped commands (`ConfigUpdate`, `CancelShutdown`, etc.) — no workspace-provisioning commands.
+- After each 204 (empty queue) the agent checks if the workspace pool is empty; if so, it self-cancels its `runCtx` and exits cleanly.
+- Heartbeat interval drops to 5 s so the backend sees the last workspaces drain promptly.
+
+**Transition back to `active`:** `CancelShutdownCommand.Execute` calls `CancelShutdown()`, which Stores `"active"` on `localLifecycle`.
+
+**`ApplyConfig` during drain:** a `ConfigUpdateCommand` arriving while draining (e.g. credential rotation) is applied to the in-memory config; the lifecycle stays `draining`.
 
 ## Claim routing — capacity-pull
 

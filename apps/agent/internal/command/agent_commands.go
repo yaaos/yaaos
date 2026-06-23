@@ -62,3 +62,48 @@ func (c *ConfigUpdateCommand) Execute(_ context.Context, ops AgentOps) (Result, 
 	ops.ApplyConfig(c.Config)
 	return ConfigUpdateResult{MaxWorkspaces: c.Config.MaxWorkspaces}, nil
 }
+
+// ShutdownCommand requests the agent to drain: stop accepting new workspaces,
+// accelerate heartbeat cadence, and exit once all active workspaces finish.
+type ShutdownCommand struct {
+	CommandHeader protocol.CommandHeader
+}
+
+// Header implements Command.
+func (c *ShutdownCommand) Header() protocol.CommandHeader { return c.CommandHeader }
+
+// Timeout implements Command. Shutdown is a lightweight state flip; 30 s is a
+// conservative ceiling.
+func (c *ShutdownCommand) Timeout() time.Duration { return 30 * time.Second }
+
+// SetTraceparent implements Command.
+func (c *ShutdownCommand) SetTraceparent(tp string) { c.CommandHeader.Traceparent = tp }
+
+// Execute calls ops.RequestShutdown and returns a ShutdownResult.
+// ShutdownCommand is an AgentCommand — it always runs in the supervisor.
+func (c *ShutdownCommand) Execute(_ context.Context, ops AgentOps) (Result, error) {
+	ops.RequestShutdown()
+	return ShutdownResult{}, nil
+}
+
+// CancelShutdownCommand cancels an in-progress drain: flip local lifecycle back
+// to "active" and resume accepting new workspace commands.
+type CancelShutdownCommand struct {
+	CommandHeader protocol.CommandHeader
+}
+
+// Header implements Command.
+func (c *CancelShutdownCommand) Header() protocol.CommandHeader { return c.CommandHeader }
+
+// Timeout implements Command.
+func (c *CancelShutdownCommand) Timeout() time.Duration { return 30 * time.Second }
+
+// SetTraceparent implements Command.
+func (c *CancelShutdownCommand) SetTraceparent(tp string) { c.CommandHeader.Traceparent = tp }
+
+// Execute calls ops.CancelShutdown and returns a CancelShutdownResult.
+// CancelShutdownCommand is an AgentCommand — it always runs in the supervisor.
+func (c *CancelShutdownCommand) Execute(_ context.Context, ops AgentOps) (Result, error) {
+	ops.CancelShutdown()
+	return CancelShutdownResult{}, nil
+}
