@@ -286,7 +286,7 @@ export async function ticketJobStatus(
 }
 
 /**
- * Log in as a freshly-seeded owner on the given org and land on the dashboard.
+ * Log in as a freshly-seeded owner on the given org and land on the workspaces page.
  * Resets both stacks, seeds the owner profile, seeds a GitHub install, and
  * completes the OAuth test flow.
  *
@@ -318,5 +318,5 @@ export async function loginAsOwner(
   await seedGithubInstall({ targetOrgSlug: orgSlug });
   await page.goto(`${YAAOS_URL}/login`);
   await page.getByTestId("login-test").click();
-  await page.waitForURL(new RegExp(`/org/${orgSlug}/dashboard$`));
+  await page.waitForURL(new RegExp(`/org/${orgSlug}/workspaces$`));
 }

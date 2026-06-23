@@ -27,7 +27,7 @@ Top-to-bottom anatomy:
 
 1. **Brand lockup** — full `yaaos` lockup when pinned; mark only when in rail.
 2. **Org switcher chip** — defines the current org context. Click for a popover of other orgs + a "View all orgs" link. Divider beneath separates it from nav.
-3. **Org-scoped nav** — Dashboard, Tickets, Lessons, Org Settings (group).
+3. **Org-scoped nav** — Workspaces, Tickets, Lessons, Org Settings (group).
    - Top-level items are links. Groups expand inline to show sub-items.
    - **Auto-collapse rule:** a group is expanded only while one of its children is the active route. Navigating away closes it. The user can still manually toggle from anywhere; the next route change re-applies the rule.
    - **Rail-mode flyout:** in unpinned mode, the group icon opens a right-anchored popover with the sub-items — sub-items remain reachable without re-pinning.
@@ -59,7 +59,7 @@ One shape per state — don't invent hybrids. See [components.md](components.md)
 | Error | `ErrorBanner`: in-page, optional Retry. Voice: system failed, not user. Validation errors (4xx field map) inline under the field. |
 | Success | "Saving…" → "Saved." inline. Toasts only for cross-surface successes with no anchor control. |
 | Live-stream | Activity pane (SSE) appends rows chronologically; new rows fade in 200ms. See [core_sse.md](core_sse.md). |
-| Setup-required | `NotConfiguredBanner` at top of `<main>`. Dashboard replaces gated content with it; other pages show both. |
+| Setup-required | `NotConfiguredBanner` at top of `<main>`. Workspaces page shows it when the org is unconfigured and no agents exist; other pages show both. |
 
 ## Information density
 

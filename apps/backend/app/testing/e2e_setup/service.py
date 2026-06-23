@@ -453,15 +453,21 @@ async def set_session_last_seen(
     await set_session_last_seen_for_tests(db, token_hash=token_hash, last_seen_at=last_seen_at)
 
 
-async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:
+async def seed_workspace_agent(*, org_slug: str, lifecycle: str | None = None) -> dict[str, str]:
     """Seed a reachable ``workspace_agents`` row for the given org slug.
 
     Inserts the row with ``state="reachable"`` and a recent ``last_heartbeat_at``
-    so the dashboard's 1-hour retention window includes it immediately. Publishes
-    ``agent_changed`` after commit so the dashboard's pure-SSE path invalidates
-    the agents query without a manual reload. Returns the agent's ``id`` and
-    ``instance_id``.
+    so the Workspaces page's 1-hour retention window includes it immediately.
+    Publishes ``agent_changed`` after commit so the page's pure-SSE path
+    invalidates the agents query without a manual reload. Returns the agent's
+    ``id`` and ``instance_id``.
+
+    The optional ``lifecycle`` kwarg overrides the default ``"unconfigured"``
+    state. Accepted values: ``"unconfigured"``, ``"active"``, ``"draining"``,
+    ``"shutdown"``.
     """
+    from sqlalchemy import text as sa_text  # noqa: PLC0415
+
     from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
 
@@ -469,6 +475,16 @@ async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:
     if org is None:
         raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
     result = await seed_agent(org_id=org.id)
+
+    if lifecycle and lifecycle != "unconfigured":
+        # Override lifecycle via raw SQL — acceptable in test-only seed path.
+        async with db_session() as s:
+            await s.execute(
+                sa_text("UPDATE workspace_agents SET lifecycle = :lc WHERE id = :id"),
+                {"lc": lifecycle, "id": result["id"]},
+            )
+            await s.commit()
+
     async with db_session() as s:
         publish_general_after_commit(
             s,

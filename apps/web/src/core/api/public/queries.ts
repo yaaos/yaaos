@@ -181,33 +181,13 @@ export function useCreateOrg() {
   });
 }
 
-/** Single-round-trip Dashboard projection per E2a.3. */
-export interface DashboardStats {
-  in_flight: number;
-  hitl_pending: number;
-  completed_today: number;
-  failed_today: number;
-}
-
-export interface DashboardResponse {
-  stats: DashboardStats;
-  in_flight: Ticket[];
-  needs_attention: Ticket[];
-}
-
-export function useDashboard() {
-  return useSuspenseQuery<DashboardResponse>({
-    queryKey: ["tickets", "dashboard"],
-    queryFn: () => apiFetch<DashboardResponse>("/api/tickets/dashboard"),
-  });
-}
-
 /** Per-org workspace agents within the 1-hour retention window.
  *  Invalidated live via `agent_changed` SSE; no polling. */
 export interface AgentRow {
   id: string;
   instance_id: string;
   state: "reachable" | "stale" | "offline";
+  lifecycle: "unconfigured" | "active" | "draining" | "shutdown";
   last_heartbeat_at: string | null;
   os: string | null;
   cpu_count: number | null;

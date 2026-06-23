@@ -970,6 +970,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orgs/{slug}/agents/cancel-shutdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk Cancel Shutdown Agents
+         * @description Bulk request to cancel an in-progress drain, returning agents to ``lifecycle='active'``.
+         *
+         *     Returns per-row outcomes: ``active | not_draining | already_shutdown | not_found``.
+         *     Admin-only (Action.WORKSPACE_AGENT_SHUTDOWN).
+         */
+        post: operations["bulk_cancel_shutdown_agents_api_orgs__slug__agents_cancel_shutdown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/agents/shutdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk Shutdown Agents
+         * @description Bulk request to transition agents to ``lifecycle='draining'``.
+         *
+         *     Returns per-row outcomes: ``draining | already_draining | already_shutdown | not_found``.
+         *     Admin-only (Action.WORKSPACE_AGENT_SHUTDOWN).
+         */
+        post: operations["bulk_shutdown_agents_api_orgs__slug__agents_shutdown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reviewer/cancel": {
         parameters: {
             query?: never;
@@ -1564,21 +1610,21 @@ export interface paths {
         post: operations["exchange_identity_api_v1_agent_identity_post"];
         /**
          * Deregister Identity
-         * @description Graceful-shutdown "going away" signal.
+         * @description Lifecycle-aware graceful-shutdown "going away" signal.
          *
-         *     The agent sends this as the last action of its SIGTERM/SIGINT handler,
-         *     after stopping its heartbeat + claim loops and draining the WS. The
-         *     control plane eagerly:
+         *     Branches on the agent's current ``lifecycle`` under a ``SELECT … FOR UPDATE``
+         *     so racing DELETE calls and the liveness sweeper resolve deterministically:
          *
-         *     1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
-         *     2. Revokes the bearer so subsequent calls 401 immediately.
-         *     3. Expires any workspaces owned by this agent and synthesizes terminal
-         *        failure events for in-flight commands so their WorkflowExecutions resume.
-         *     4. Publishes `agent_changed` SSE so the dashboard flips the card
-         *        offline without waiting for the sweeper's next tick.
+         *     - ``draining``: call ``mark_agent_shutdown_complete`` (CAS + bearer revoke +
+         *       audit + SSE atomically), then ``handle_agent_loss`` for workspace cleanup.
+         *       Whether or not this caller wins the CAS, return 204.
+         *     - ``shutdown``: idempotent re-fire.  Return 204 with no further side effects
+         *       (bearer already revoked; audit already written).
+         *     - ``active`` / ``unconfigured``: unexpected disconnect.  Run the existing path:
+         *       mark offline + revoke bearer + handle_agent_loss + ``workspace_agent.disconnected``
+         *       audit + SSE.
          *
-         *     Returns 204. Idempotent — calling on an already-offline/revoked agent is
-         *     harmless (bearer verify fails → 401 before this handler runs).
+         *     Returns 204 in all branches. Idempotent.
          */
         delete: operations["deregister_identity_api_v1_agent_identity_delete"];
         options?: never;
@@ -2364,6 +2410,16 @@ export interface components {
         _AddEmailRequest: {
             /** Email */
             email: string;
+        };
+        /** _AgentShutdownRequest */
+        _AgentShutdownRequest: {
+            /** Agent Ids */
+            agent_ids: string[];
+        };
+        /** _AgentShutdownResponse */
+        _AgentShutdownResponse: {
+            /** Results */
+            results: unknown[];
         };
         /** _AssertionBody */
         _AssertionBody: {
@@ -4414,6 +4470,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bulk_cancel_shutdown_agents_api_orgs__slug__agents_cancel_shutdown_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                slug: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_AgentShutdownRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_AgentShutdownResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bulk_shutdown_agents_api_orgs__slug__agents_shutdown_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                slug: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_AgentShutdownRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_AgentShutdownResponse"];
                 };
             };
             /** @description Validation Error */

@@ -51,10 +51,10 @@ test.describe("integrations + multi-org", () => {
       },
     });
 
-    // Log in. We end up on the org dashboard.
+    // Log in. We end up on the org workspaces page.
     await page.goto(`${BASE}/login`);
     await page.getByTestId("login-test").click();
-    await page.waitForURL(/\/org\/acme\/dashboard$/);
+    await page.waitForURL(/\/org\/acme\/workspaces$/);
 
     // Red banner is visible in the app-shell.
     const banner = page.getByTestId("broken-integrations-banner");

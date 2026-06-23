@@ -1,5 +1,5 @@
 /**
- * Login + membership end-to-end: login via `oauth_test` → land on dashboard → invite
+ * Login + membership end-to-end: login via `oauth_test` → land on workspaces page → invite
  * member → accept invite → change role → logout-all.
  *
  * Drives the real backend, using `/api/testing/*` helpers to reset the DB
@@ -36,25 +36,25 @@ test.describe("auth + members", () => {
 
     await page.goto(`${BASE}/login`);
     await page.getByTestId("login-test").click();
-    await page.waitForURL(/\/org\/acme\/dashboard$/);
+    await page.waitForURL(/\/org\/acme\/workspaces$/);
 
-    // Regression: SPA-internal nav → user details → dashboard click must
-    // land on /org/acme/dashboard, not "Not Found".
+    // Regression: SPA-internal nav → user details → workspaces click must
+    // land on /org/acme/workspaces, not "Not Found".
     await page.getByTestId("user-card-button").click();
     await page.getByTestId("user-nav-details").click();
     await page.waitForURL(/\/org\/acme\/user\/details$/);
-    await page.getByTestId("nav-dashboard").click();
-    await page.waitForURL(/\/org\/acme\/dashboard$/);
+    await page.getByTestId("nav-workspaces").click();
+    await page.waitForURL(/\/org\/acme\/workspaces$/);
 
     // Regression: HARD-NAV directly to /org/acme/user/details (no SPA
-    // history), then click Dashboard — must still land on /org/acme/dashboard.
+    // history), then click Workspaces — must still land on /org/acme/workspaces.
     // Invariant: the sidebar must read the active org slug from the URL on
     // every render. A module-global slug cache that's null on first load
-    // would make the sidebar build bare `/dashboard` hrefs → NotFound.
+    // would make the sidebar build bare `/workspaces` hrefs → NotFound.
     await page.goto(`${BASE}/org/acme/user/details`);
     await page.waitForURL(/\/org\/acme\/user\/details$/);
-    await page.getByTestId("nav-dashboard").click();
-    await page.waitForURL(/\/org\/acme\/dashboard$/);
+    await page.getByTestId("nav-workspaces").click();
+    await page.waitForURL(/\/org\/acme\/workspaces$/);
 
     // Members page: invite a new member.
     await page.goto(`${BASE}/org/acme/settings/members`);

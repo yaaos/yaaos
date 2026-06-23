@@ -6,7 +6,7 @@
  *
  * Test scenario:
  * 1. Bootstrap an org with a running agent container (via the seed surface).
- * 2. Navigate to the dashboard — the agent card shows "online" (reachable).
+ * 2. Navigate to the workspaces page — the agent card shows "online" (reachable).
  * 3. Stop the agent container cleanly (SIGTERM via docker stop).
  * 4. The agent sends DELETE /api/v1/agent/identity before exiting.
  * 5. The SSE `agent_changed` event invalidates the agents query.
@@ -38,7 +38,7 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
 
   await page.goto(`${YAAOS_URL}/login`);
   await page.getByTestId("login-test").click();
-  await page.waitForURL(/\/org\/acme-shutdown\/dashboard$/);
+  await page.waitForURL(/\/org\/acme-shutdown\/workspaces$/);
 }
 
 /** Seed a reachable agent row. */
@@ -61,13 +61,13 @@ test.describe("workspace agent graceful shutdown", () => {
     request,
   }) => {
     await setupAuthedAcmeOwner(page, request);
-    await expect(page.getByTestId("dashboard-populated")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("workspaces-page")).toBeVisible({ timeout: 10_000 });
 
     // Seed a reachable agent.
     const { id, instance_id } = await seedReachableAgent(request, { org_slug: "acme-shutdown" });
 
-    // Card must appear as reachable first.
-    const agentCard = page.getByTestId(`agent-card-instance-${instance_id}`).first();
+    // Card must appear first.
+    const agentCard = page.getByTestId(`workspaces-agent-card-${instance_id}`).first();
     await expect(agentCard).toBeVisible({ timeout: 15_000 });
 
     // Trigger graceful shutdown via the testing surface (sends DELETE /api/v1/agent/identity).
@@ -76,9 +76,10 @@ test.describe("workspace agent graceful shutdown", () => {
     });
     expect(r.ok()).toBeTruthy();
 
-    // SSE agent_changed must flip the card to offline within 10s
+    // SSE agent_changed must move the card to the Inactive section within 10s
     // without a page reload.
-    const offlineIndicator = agentCard.getByTestId("agent-state-offline");
-    await expect(offlineIndicator).toBeVisible({ timeout: 10_000 });
+    const inactiveSection = page.getByTestId("workspaces-section-inactive");
+    await expect(inactiveSection).toBeVisible({ timeout: 10_000 });
+    await expect(inactiveSection.getByTestId(`workspaces-agent-card-${instance_id}`)).toBeVisible();
   });
 });

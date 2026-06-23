@@ -187,6 +187,10 @@ async def saml_sign(req: _SamlSignRequest) -> dict[str, str]:
 
 class _WorkspaceAgentRequest(BaseModel):
     org_slug: str = Field(..., min_length=1)
+    lifecycle: str | None = Field(
+        default=None,
+        pattern="^(unconfigured|active|draining|shutdown)$",
+    )
 
 
 @router.post("/seed/workspace_agent")
@@ -194,10 +198,11 @@ async def seed_workspace_agent(req: _WorkspaceAgentRequest) -> dict[str, str]:
     """Seed a reachable workspace-agent row for the given org slug.
 
     Returns ``{"id": "<uuid>", "instance_id": "<string>"}`` so e2e specs can
-    assert the card appears on the dashboard without knowing the PK in advance.
+    assert the card appears on the Workspaces page without knowing the PK in advance.
+    An optional ``lifecycle`` field overrides the default ``"unconfigured"`` state.
     """
     _guard_dev()
-    return await service.seed_workspace_agent(org_slug=req.org_slug)
+    return await service.seed_workspace_agent(org_slug=req.org_slug, lifecycle=req.lifecycle)
 
 
 class _DeregisterWorkspaceAgentRequest(BaseModel):

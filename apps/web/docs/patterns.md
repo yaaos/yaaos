@@ -53,13 +53,14 @@ Use `vi.useFakeTimers({ toFake: ["Date"] })` (not full fake timers) when tests n
 
 ## testid conventions
 
-- Page container: `<page>-<state>` (e.g. `dashboard-onboarding`, `ticket-detail`).
+- Page container: `<page>-<state>` (e.g. `workspaces-page`, `ticket-detail`).
 - List containers: `<entity>-list` (`tickets-list`, `findings-list`, `lessons-list`, `audit-log`).
 - List rows: `<entity>-row-<id>`.
 - Actions: `<action>-<entity>` (`cancel-jobs-button`, `lesson-save`, `teach-yaaos`).
 - Status badges: `<entity>-status` (`github-status`, `apikey-status`).
 - Form fields: `<form>-<field>` (`gh-app-id`, `anthropic-key`, `teach-title`).
 - Review cards carry `data-state="<status>"` — query via `[data-testid^="agent-card-"][data-state="posted"]`.
+- Workspaces page prefix: `workspaces-*`. Sections: `workspaces-section-active`, `workspaces-section-draining`, `workspaces-section-unconfigured`, `workspaces-section-inactive`. Cards: `workspaces-agent-card-${instance_id}`, `workspaces-agent-card-${instance_id}-status`. Empty state: `workspaces-empty`. See [domain_workspaces.md](domain_workspaces.md).
 
 ## Accessibility (WCAG 2.2 AA)
 

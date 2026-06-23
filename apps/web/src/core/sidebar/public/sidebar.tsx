@@ -29,10 +29,10 @@ const NAV: NavConfig = {
   org: [
     {
       kind: "link",
-      id: "dashboard",
-      label: "Dashboard",
+      id: "workspaces",
+      label: "Workspaces",
       icon: LayoutDashboard,
-      path: "/dashboard",
+      path: "/workspaces",
     },
     { kind: "link", id: "tickets", label: "Tickets", icon: Ticket, path: "/tickets" },
     { kind: "link", id: "lessons", label: "Lessons", icon: Brain, path: "/lessons" },
@@ -87,7 +87,7 @@ const NAV: NavConfig = {
         },
         {
           kind: "link",
-          id: "workspaces",
+          id: "workspace-settings",
           label: "Workspaces",
           icon: Workflow,
           path: "/settings/workspaces",
@@ -144,7 +144,7 @@ export function Sidebar() {
   const isItemVisible = (item: NavItem) => _roleCovers(effectiveRole, item.role);
 
   // Org-scoped path or naked path when no org context — keeps legacy
-  // routes (`/dashboard` etc.) working.
+  // routes (`/workspaces` etc.) working.
   const absolutePath = (relativePath: string) =>
     slug ? `/org/${slug}${relativePath}` : relativePath;
 

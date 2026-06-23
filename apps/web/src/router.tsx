@@ -10,7 +10,6 @@
 import { AppShell } from "@core/layout/public/app-shell";
 import { lessonsSearchSchema, ticketsSearchSchema } from "@core/routing/public/schemas";
 import { LoginPage } from "@domain/auth/public/LoginPage";
-import { DashboardPage } from "@domain/dashboard/public/index";
 import { LessonsPage } from "@domain/lessons/public/index";
 import { NotificationsPage } from "@domain/notifications/public/index";
 import { AuditSettingsPage } from "@domain/org_settings/public/AuditSettingsPage";
@@ -27,6 +26,7 @@ import { TicketDetailPage } from "@domain/tickets/public/TicketDetailPage";
 import { TicketsListPage as TicketsPage } from "@domain/tickets/public/TicketsListPage";
 import { DetailsPage } from "@domain/user/public/DetailsPage";
 import { SecurityPage } from "@domain/user/public/SecurityPage";
+import { WorkspacesPage } from "@domain/workspaces/public/index";
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 
 const rootRoute = createRootRoute({ component: AppShell });
@@ -36,7 +36,7 @@ const indexRoute = createRoute({
   path: "/",
   beforeLoad: async () => {
     // Probe `/api/auth/me`. 401 → login. 200 with exactly one membership →
-    // that org's dashboard (sole option, no picker needed). 200 with zero
+    // that org's workspaces page (sole option, no picker needed). 200 with zero
     // or multiple → the picker. The server has no "current org" concept;
     // picking is explicit, by the user.
     const r = await fetch("/api/auth/me", { credentials: "include" });
@@ -46,7 +46,7 @@ const indexRoute = createRoute({
       const only = body.memberships.length === 1 ? body.memberships[0] : null;
       if (only) {
         throw redirect({
-          to: "/org/$slug/dashboard",
+          to: "/org/$slug/workspaces",
           params: { slug: only.slug },
         });
       }
@@ -85,14 +85,14 @@ const orgIndexRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
   path: "/",
   beforeLoad: ({ params }) => {
-    throw redirect({ to: "/org/$slug/dashboard", params: { slug: params.slug } });
+    throw redirect({ to: "/org/$slug/workspaces", params: { slug: params.slug } });
   },
 });
 
-const orgDashboardRoute = createRoute({
+const orgWorkspacesRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
-  path: "/dashboard",
-  component: DashboardPage,
+  path: "/workspaces",
+  component: WorkspacesPage,
 });
 
 const orgTicketsRoute = createRoute({
@@ -226,7 +226,7 @@ const routeTree = rootRoute.addChildren([
   orgsPickerRoute,
   orgScopeRoute.addChildren([
     orgIndexRoute,
-    orgDashboardRoute,
+    orgWorkspacesRoute,
     orgTicketsRoute,
     orgTicketDetailRoute,
     orgLessonsRoute,

@@ -48,7 +48,7 @@ test.describe("github install handshake", () => {
     // Log in as Owner.
     await page.goto(`${YAAOS_URL}/login`);
     await page.getByTestId("login-test").click();
-    await page.waitForURL(/\/org\/acme\/dashboard$/);
+    await page.waitForURL(/\/org\/acme\/workspaces$/);
 
     // Navigate to VCS settings; empty state surfaces the picker.
     await page.goto(`${YAAOS_URL}/org/acme/settings/vcs`);
@@ -58,9 +58,9 @@ test.describe("github install handshake", () => {
     // request and then navigates the browser to the signed redirect URL.
     // fake-github's `/apps/<slug>/installations/new` stub 302's back to
     // yaaos's `/api/github/install_callback`, which writes the install row
-    // and 302's to "/". The SPA bounces to the org dashboard.
+    // and 302's to "/". The SPA bounces to the org workspaces page.
     await Promise.all([
-      page.waitForURL(/\/org\/acme\/dashboard$/, { timeout: 15_000 }),
+      page.waitForURL(/\/org\/acme\/workspaces$/, { timeout: 15_000 }),
       page.getByTestId("vcs-picker-add-github").click(),
     ]);
 
