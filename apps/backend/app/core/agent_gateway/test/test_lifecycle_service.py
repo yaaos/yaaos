@@ -256,23 +256,21 @@ async def test_record_agent_event_configupdate_marks_configured(db_session) -> N
     assert agent_row.lifecycle == "active", f"expected active, got {agent_row.lifecycle}"
 
 
-# ── Tests: handle_heartbeat publishes agent_changed ───────────────────────
+# ── Tests: handle_heartbeat publishes agent_changed (gated on real change) ─
 
 
-@pytest.mark.asyncio
-@pytest.mark.service
-async def test_record_heartbeat_publishes_agent_changed(db_session, redis_or_skip) -> None:
-    """record_heartbeat publishes agent_changed SSE after commit."""
-    from app.core.agent_gateway.service import record_heartbeat  # noqa: PLC0415
-    from app.core.agent_gateway.types import HeartbeatRequest  # noqa: PLC0415
-    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
-    from app.core.sse import GeneralEventKind, subscribe_general  # noqa: PLC0415
+async def _collect_agent_changed_for(
+    org_id: UUID,
+    *,
+    settle_seconds: float = 0.05,
+) -> tuple[asyncio.Task, list[dict]]:
+    """Start a background subscriber and return (task, received_buffer).
 
-    await redis_shutdown()
-
-    org_id = uuid4()
-    row = await _create_agent_row(db_session, org_id=org_id, lifecycle="active")
-    await db_session.commit()
+    Caller awaits ``asyncio.sleep(0)`` after this returns to yield to the
+    subscriber, performs the heartbeat, then awaits ``settle_seconds`` and
+    cancels the task to flush received events into ``received_buffer``.
+    """
+    from app.core.sse import subscribe_general  # noqa: PLC0415
 
     sub = subscribe_general(org_id)
     received: list[dict] = []
@@ -280,21 +278,120 @@ async def test_record_heartbeat_publishes_agent_changed(db_session, redis_or_ski
     async def _drain() -> None:
         async for evt in sub:
             received.append(evt)
-            if len(received) >= 1:
-                return
 
     drainer = asyncio.create_task(_drain())
     await asyncio.sleep(0)
+    return drainer, received
 
-    hb_request = HeartbeatRequest(reported_at=datetime.now(UTC), workspaces=())
-    await record_heartbeat(row.id, hb_request, session=db_session)
-    await db_session.commit()
 
-    await asyncio.sleep(0.05)
+async def _finish_drain(drainer: asyncio.Task) -> None:
     drainer.cancel()
     try:
         await asyncio.wait_for(asyncio.shield(drainer), timeout=0.1)
     except asyncio.CancelledError, TimeoutError:
         pass
 
-    assert any(e.get("kind") == GeneralEventKind.AGENT_CHANGED for e in received)
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_record_heartbeat_no_publish_when_state_and_count_unchanged(db_session, redis_or_skip) -> None:
+    """Steady-state heartbeat from a healthy idle agent → no SSE publish.
+
+    Pre-row state=reachable, claimed_workspace_count=0; heartbeat reports
+    zero workspaces. Nothing the SPA renders changed (last_heartbeat_at is
+    rendered via a client-side relative-time hook), so no agent_changed
+    fires — this is the flood-prevention the gate exists for.
+    """
+    from app.core.agent_gateway.service import record_heartbeat  # noqa: PLC0415
+    from app.core.agent_gateway.types import HeartbeatRequest  # noqa: PLC0415
+    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind  # noqa: PLC0415
+
+    await redis_shutdown()
+    org_id = uuid4()
+    row = await _create_agent_row(db_session, org_id=org_id, lifecycle="active")
+    await db_session.commit()
+
+    drainer, received = await _collect_agent_changed_for(org_id)
+
+    hb = HeartbeatRequest(reported_at=datetime.now(UTC), workspaces=())
+    await record_heartbeat(row.id, hb, session=db_session)
+    await db_session.commit()
+
+    await asyncio.sleep(0.05)
+    await _finish_drain(drainer)
+
+    assert not any(e.get("kind") == GeneralEventKind.AGENT_CHANGED for e in received), (
+        f"expected no agent_changed when state+count unchanged, got: {received}"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_record_heartbeat_publishes_on_claimed_workspace_count_change(
+    db_session, redis_or_skip
+) -> None:
+    """Heartbeat where claimed_workspace_count moves 0 → 1 → SSE published.
+
+    The SPA renders the count text on every agent card; a delta is exactly
+    what operators need to see live, so the gate must fire.
+    """
+    from app.core.agent_gateway.service import record_heartbeat  # noqa: PLC0415
+    from app.core.agent_gateway.types import HeartbeatRequest, HeartbeatWorkspaceEntry  # noqa: PLC0415
+    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind  # noqa: PLC0415
+
+    await redis_shutdown()
+    org_id = uuid4()
+    row = await _create_agent_row(db_session, org_id=org_id, lifecycle="active")
+    await db_session.commit()
+
+    drainer, received = await _collect_agent_changed_for(org_id)
+
+    hb = HeartbeatRequest(
+        reported_at=datetime.now(UTC),
+        workspaces=(HeartbeatWorkspaceEntry(workspace_id=uuid7(), status="running"),),
+    )
+    await record_heartbeat(row.id, hb, session=db_session)
+    await db_session.commit()
+
+    await asyncio.sleep(0.05)
+    await _finish_drain(drainer)
+
+    assert any(e.get("kind") == GeneralEventKind.AGENT_CHANGED for e in received), (
+        f"expected agent_changed when count changed 0→1, got: {received}"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_record_heartbeat_publishes_on_state_recovery(db_session, redis_or_skip) -> None:
+    """Heartbeat from a stale/offline row → state flips back to reachable → SSE.
+
+    Recovery from a liveness-sweeper transition is something operators
+    care about; without the publish the card would stay grey in the SPA
+    until the next periodic refetch.
+    """
+    from app.core.agent_gateway.service import record_heartbeat  # noqa: PLC0415
+    from app.core.agent_gateway.types import HeartbeatRequest  # noqa: PLC0415
+    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind  # noqa: PLC0415
+
+    await redis_shutdown()
+    org_id = uuid4()
+    row = await _create_agent_row(db_session, org_id=org_id, lifecycle="active")
+    row.state = "stale"
+    await db_session.commit()
+
+    drainer, received = await _collect_agent_changed_for(org_id)
+
+    hb = HeartbeatRequest(reported_at=datetime.now(UTC), workspaces=())
+    await record_heartbeat(row.id, hb, session=db_session)
+    await db_session.commit()
+
+    await asyncio.sleep(0.05)
+    await _finish_drain(drainer)
+
+    assert any(e.get("kind") == GeneralEventKind.AGENT_CHANGED for e in received), (
+        f"expected agent_changed on stale→reachable recovery, got: {received}"
+    )

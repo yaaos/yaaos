@@ -829,23 +829,34 @@ async def record_heartbeat(
         await session.execute(select(WorkspaceAgentRow).where(WorkspaceAgentRow.id == agent_id))
     ).scalar_one_or_none()
     if row is not None:
+        # Capture the pre-mutation tuple so the SSE publish below only fires on
+        # a field the SPA actually re-renders. last_heartbeat_at changes every
+        # tick but the SPA renders it via a 5s client-side relative-time hook —
+        # the value itself never reaches the wire, so heartbeat ticks alone
+        # shouldn't drive Redis pub/sub.
+        prev_state = row.state
+        prev_count = row.claimed_workspace_count
+
         row.last_heartbeat_at = now
         row.state = "reachable"
         # Persist the count from the heartbeat payload as the single source of truth.
         # The column is populated here (not at identity exchange) because the agent
         # only knows its active workspace set at heartbeat time.
         row.claimed_workspace_count = len(request.workspaces)
-        # Publish agent_changed after commit so the SPA's agents card updates
-        # claimed_workspace_count in near-real-time (30s normal cadence; 5s
-        # during drain). One Redis pub/sub per heartbeat — negligible load.
-        from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
 
-        publish_general_after_commit(
-            session,
-            org_id=row.org_id,
-            kind=GeneralEventKind.AGENT_CHANGED,
-            payload={"agent_id": str(row.id)},
-        )
+        # Publish agent_changed only when something the SPA renders actually
+        # changed: a state recovery (stale|offline → reachable) or a
+        # claimed_workspace_count delta (work started/finished). A healthy
+        # idle agent with no in-flight work emits zero SSE traffic per tick.
+        if prev_state != "reachable" or prev_count != row.claimed_workspace_count:
+            from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+            publish_general_after_commit(
+                session,
+                org_id=row.org_id,
+                kind=GeneralEventKind.AGENT_CHANGED,
+                payload={"agent_id": str(row.id)},
+            )
     else:
         # Heartbeat arrived for an agent the control plane doesn't know about —
         # this happens transiently after a restart before identity exchange
