@@ -209,13 +209,12 @@ export function useAgents(orgSlug: string) {
 }
 
 // ── Agent bulk-action mutations ───────────────────────────────────────────────
-// All four type aliases below are derived from the backend OpenAPI schema —
-// edit the backend response models (apps/backend/app/domain/orgs/org_settings_web.py
+// Both aliases below are derived from the backend OpenAPI schema — edit the
+// backend response models (apps/backend/app/domain/orgs/org_settings_web.py
 // + apps/backend/app/core/agent_gateway/service.py) and regenerate via
-// `apps/backend/bin/dump_web_openapi` + `apps/web/bin/gen-api-types`.
-
-export type ShutdownOutcome = components["schemas"]["ShutdownResult"]["outcome"];
-export type CancelShutdownOutcome = components["schemas"]["CancelShutdownResult"]["outcome"];
+// `apps/backend/bin/dump_web_openapi` + `apps/web/bin/gen-api-types`. The
+// per-row outcome string literals are reachable via
+// `ShutdownResult["results"][number]["outcome"]`.
 
 export type ShutdownResult = components["schemas"]["_BulkShutdownResponse"];
 export type CancelShutdownResult = components["schemas"]["_BulkCancelShutdownResponse"];
