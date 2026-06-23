@@ -1219,9 +1219,11 @@ async def mark_agent_offline(
 ) -> None:
     """Set `state=offline` + `last_shutdown_at=now` on the agent row.
 
-    Writes liveness state only — never touches `lifecycle`.  Called by the
-    graceful-shutdown DELETE handler immediately before revoking bearers +
-    triggering workspace cleanup. Caller commits.
+    Writes liveness state only — never touches `lifecycle`.  Called on the
+    unexpected-disconnect / liveness-offline path (not the managed drain): it
+    marks the row's liveness `state` offline without claiming the row has
+    completed a graceful drain. The managed-drain path flips `lifecycle`
+    instead, via `mark_agent_shutdown_complete`. Caller commits.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
@@ -1589,8 +1591,13 @@ async def has_any_reachable_agent(
     session: AsyncSession,
 ) -> bool:
     """Return `True` when at least one workspace agent instance heartbeated
-    within the last 90 s — used by health-check callers to avoid cross-module
-    Row access.
+    within the last 90 s and is not draining/shut-down — used by health-check
+    callers to avoid cross-module Row access.
+
+    Excludes `lifecycle='shutdown'` rows: a gracefully-drained agent keeps
+    `state='reachable'` with a fresh `last_heartbeat_at` until the liveness
+    sweeper (which owns `state`) retires it, so the lifecycle predicate is the
+    only thing that prevents a false reachable-positive during that window.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
@@ -1601,6 +1608,7 @@ async def has_any_reachable_agent(
                 select(WorkspaceAgentRow.id)
                 .where(
                     WorkspaceAgentRow.state == "reachable",
+                    WorkspaceAgentRow.lifecycle != "shutdown",
                     WorkspaceAgentRow.last_heartbeat_at.is_not(None),
                     WorkspaceAgentRow.last_heartbeat_at >= cutoff,
                 )

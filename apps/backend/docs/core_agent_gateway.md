@@ -181,7 +181,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_agent_command_dispatch_traceparent.py` covers: the `traceparent` stored in `agent_commands.payload` carries the dispatch span's own span-id, not the outer caller's — verifying the agent's `supervisor.dispatch.<kind>` will parent to `agent_command.dispatch.<kind>` at runtime.
 
-`test/test_service.py` covers: heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `has_any_reachable_agent` respects the 90s cutoff.
+`test/test_service.py` covers: heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `has_any_reachable_agent` respects the 90s cutoff and excludes `lifecycle='shutdown'` agents (a gracefully-drained agent stays `state='reachable'` until the liveness sweeper retires it).
 
 `test/test_run_sink_return_merges_service.py` covers: a stub `AgentRunSink` returning `{"foo": "bar"}` causes the `HANDLE_AGENT_EVENT` task args to carry `outputs["foo"] == "bar"`; a sink key overrides a same-key native value in `event.outputs`; a sink returning `None` leaves `outputs` equal to `event.outputs`.
 
