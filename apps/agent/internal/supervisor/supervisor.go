@@ -1278,7 +1278,7 @@ func (s *Supervisor) ApplyConfig(cfg command.AgentConfig) {
 		if s.localLifecycle.CompareAndSwap(cur, ptrStr("active")) {
 			break
 		}
-		// CAS lost the race (another goroutine just stored something); retry once.
+		// CAS lost — another goroutine stored first; retry (converges in one iteration).
 	}
 	s.log.Info("supervisor.agent_configured",
 		"max_workspaces", cfg.MaxWorkspaces,
