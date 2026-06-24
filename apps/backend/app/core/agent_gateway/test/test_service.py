@@ -540,8 +540,10 @@ async def test_has_any_reachable_agent_false_when_stale(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_has_any_reachable_agent_false_when_lifecycle_shutdown(db_session) -> None:
-    # A gracefully-drained agent keeps state='reachable' with a fresh heartbeat
-    # until the liveness sweeper retires it; the lifecycle filter must exclude it.
+    # `mark_agent_shutdown_complete` pins state='offline' on graceful drain, so
+    # production rows never reach this combo.  We seed it directly to verify
+    # the belt-and-suspenders lifecycle filter excludes the row even if state
+    # disagreed mid-write.
     org_id = uuid4()
     shutdown_row = _make_agent_row(org_id, state="reachable", seconds_ago=5, lifecycle="shutdown")
     db_session.add(shutdown_row)

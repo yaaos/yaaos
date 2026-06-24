@@ -26,7 +26,7 @@ The `SubscriberRegistry` keys the WS sender on the bearer-derived `agent_id`.
 
 The agent sends this as its last act on clean shutdown (SIGTERM/SIGINT), after stopping heartbeat + claim loops and draining the WS. The handler branches on `lifecycle`:
 
-- **`lifecycle='draining'`** (the managed-drain path): calls `mark_agent_shutdown_complete` atomically — CAS `draining → shutdown`, revokes bearer, writes `workspace_agent.shutdown_complete` audit. Then calls `handle_agent_loss`.
+- **`lifecycle='draining'`** (the managed-drain path): calls `mark_agent_shutdown_complete` atomically — CAS `draining → shutdown` *and pins `state='offline'` + stamps `last_shutdown_at=now`* so the dashboard immediately reflects the agent's exit instead of briefly rendering "Online / Shutdown" until the heartbeat-miss sweep catches up. Revokes bearer, writes `workspace_agent.shutdown_complete` audit. Then calls `handle_agent_loss`.
 - **`lifecycle='shutdown'`** (idempotent re-fire): no-op — bearer already revoked, lifecycle already terminal. Returns 204 without extra side effects.
 - **`lifecycle='active'` or `'unconfigured'`** (unexpected disconnect): calls `mark_agent_disconnected` atomically — sets `state=offline + last_shutdown_at=now`, revokes bearer, calls `handle_agent_loss`, writes `workspace_agent.disconnected` audit, publishes `agent_changed` SSE.
 
@@ -43,6 +43,8 @@ Called on each `_reaper_sweep_once` tick from `core/workspace` (the loop host). 
 - `> 5 min` → `offline`
 
 Writes `state` only on transition (idempotent on the same tick). Returns a list of agent UUIDs that newly became `offline` this sweep. Emits one `agent_changed` SSE event per transitioned agent via `publish_general_after_commit` on the org's general channel; payload carries `{agent_id}`.
+
+The sweep excludes `lifecycle='shutdown'` rows. `mark_agent_shutdown_complete` already pins `state='offline'`; a fresher `last_heartbeat_at` from before the drain must not churn state back to `reachable`/`stale`. Shutdown is terminal until re-exchange (which `ensure_agent_row` handles by resetting `lifecycle` to `unconfigured`).
 
 **Stuck-drain recovery**: when a row transitions to `offline` and its `lifecycle='draining'`, `compute_agent_liveness_transitions` calls `mark_agent_shutdown_complete` inline. The CAS (`draining → shutdown`) is a no-op for non-draining rows — so the call is always safe. This prevents a draining agent that crashed before sending `DELETE /api/v1/agent/identity` from being stuck in `draining` forever.
 
@@ -123,7 +125,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
   - `unconfigured → active` — `mark_agent_configured` CAS (compare-and-swap UPDATE WHERE lifecycle='unconfigured'); called by `record_agent_event` when a `ConfigUpdate` `completed_success` event arrives.
   - `active/unconfigured → draining` — `shutdown_agents` bulk CAS (`UPDATE … WHERE lifecycle IN ('active','unconfigured')`); called by the admin `POST /{slug}/agents/shutdown` endpoint. Writes `workspace_agent.shutdown_requested` audit per agent that transitions; emits `agent_changed` SSE.
   - `draining → active` — `cancel_shutdown_agents` bulk CAS (`UPDATE … WHERE lifecycle='draining'`); called by the admin `POST /{slug}/agents/cancel-shutdown` endpoint. Writes `workspace_agent.cancel_shutdown_requested` audit; emits `agent_changed` SSE.
-  - `draining → shutdown` — `mark_agent_shutdown_complete` CAS (`UPDATE … WHERE lifecycle='draining'`); called by the DELETE handler (managed-drain path) or by the liveness sweeper (stuck-drain recovery). Revokes bearer, writes `workspace_agent.shutdown_complete` audit, emits `agent_changed` SSE. Returns `True` on CAS win, `False` on loss (idempotent).
+  - `draining → shutdown` — `mark_agent_shutdown_complete` CAS (`UPDATE … WHERE lifecycle='draining'`); called by the DELETE handler (managed-drain path) or by the liveness sweeper (stuck-drain recovery). The CAS also pins `state='offline'` + stamps `last_shutdown_at=now` so the dashboard doesn't briefly render "Online / Shutdown". Revokes bearer, writes `workspace_agent.shutdown_complete` audit, emits `agent_changed` SSE. Returns `True` on CAS win, `False` on loss (idempotent).
   - `shutdown → unconfigured` (on re-exchange) — `ensure_agent_row` UPSERT CASE expression; a freshly reconnecting agent that previously completed a full drain restarts at `unconfigured`.
   - All other UPSERT calls (bearer refresh) preserve the existing lifecycle value.
   - `mark_agent_offline` writes liveness state only — never touches `lifecycle`.
@@ -181,7 +183,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_agent_command_dispatch_traceparent.py` covers: the `traceparent` stored in `agent_commands.payload` carries the dispatch span's own span-id, not the outer caller's — verifying the agent's `supervisor.dispatch.<kind>` will parent to `agent_command.dispatch.<kind>` at runtime.
 
-`test/test_service.py` covers: heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `has_any_reachable_agent` respects the 90s cutoff and excludes `lifecycle='shutdown'` agents (a gracefully-drained agent stays `state='reachable'` until the liveness sweeper retires it).
+`test/test_service.py` covers: heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `has_any_reachable_agent` respects the 90s cutoff and excludes `lifecycle='shutdown'` agents (defense in depth — `mark_agent_shutdown_complete` already pins `state='offline'`).
 
 `test/test_run_sink_return_merges_service.py` covers: a stub `AgentRunSink` returning `{"foo": "bar"}` causes the `HANDLE_AGENT_EVENT` task args to carry `outputs["foo"] == "bar"`; a sink key overrides a same-key native value in `event.outputs`; a sink returning `None` leaves `outputs` equal to `event.outputs`.
 

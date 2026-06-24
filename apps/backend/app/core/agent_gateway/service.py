@@ -1337,7 +1337,10 @@ async def mark_agent_shutdown_complete(
     """Atomic CAS ``lifecycle='shutdown' WHERE id=? AND lifecycle='draining'``.
 
     Executes all four side effects inside the caller's transaction:
-    (1) CAS UPDATE; (2) revoke all active bearers; (3) write
+    (1) CAS UPDATE — also flips ``state='offline'`` and stamps
+    ``last_shutdown_at`` so the dashboard doesn't briefly render
+    "Online / Shutdown" while the heartbeat-miss sweep catches up;
+    (2) revoke all active bearers; (3) write
     ``workspace_agent.shutdown_complete`` audit; (4) publish ``agent_changed``
     SSE-after-commit.
 
@@ -1353,14 +1356,19 @@ async def mark_agent_shutdown_complete(
     from app.core.audit_log import Actor, ActorKind, audit  # noqa: PLC0415
     from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
 
-    # 1. CAS UPDATE.
+    # 1. CAS UPDATE.  Also flip liveness state to offline + stamp
+    # last_shutdown_at — the agent process is gone, so leaving state='reachable'
+    # for the next 5 min until the heartbeat-miss sweep is misleading.
+    # The sweeper's WHERE excludes lifecycle='shutdown' rows so this write is
+    # not churned back by a fresher last_heartbeat_at.
+    now = datetime.now(UTC)
     result = await session.execute(
         update(WorkspaceAgentRow)
         .where(
             WorkspaceAgentRow.id == agent_id,
             WorkspaceAgentRow.lifecycle == "draining",
         )
-        .values(lifecycle="shutdown")
+        .values(lifecycle="shutdown", state="offline", last_shutdown_at=now)
         .returning(WorkspaceAgentRow.org_id)
     )
     org_id_val = result.scalar_one_or_none()
@@ -1681,10 +1689,10 @@ async def has_any_reachable_agent(
     within the last 90 s and is not draining/shut-down — used by health-check
     callers to avoid cross-module Row access.
 
-    Excludes `lifecycle='shutdown'` rows: a gracefully-drained agent keeps
-    `state='reachable'` with a fresh `last_heartbeat_at` until the liveness
-    sweeper (which owns `state`) retires it, so the lifecycle predicate is the
-    only thing that prevents a false reachable-positive during that window.
+    Excludes `lifecycle='shutdown'` rows.  `mark_agent_shutdown_complete`
+    already pins `state='offline'`, so the `state='reachable'` predicate would
+    exclude them on its own — the lifecycle clause is belt-and-suspenders for
+    any race where the two columns disagree mid-write.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
@@ -1806,13 +1814,17 @@ async def compute_agent_liveness_transitions(
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
     from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
 
-    # Exclude agents already offline (shutdowns are permanent until re-exchange).
+    # Exclude shutdown rows: lifecycle='shutdown' is terminal (the agent
+    # process is gone and `mark_agent_shutdown_complete` already pinned state to
+    # offline).  A fresher last_heartbeat_at from before the drain must not
+    # churn state back to reachable/stale.
     rows = (
         (
             await session.execute(
                 select(WorkspaceAgentRow)
                 .where(
                     WorkspaceAgentRow.last_heartbeat_at.is_not(None),
+                    WorkspaceAgentRow.lifecycle != "shutdown",
                 )
                 .with_for_update(skip_locked=True)
             )
