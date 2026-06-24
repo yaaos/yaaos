@@ -64,11 +64,6 @@ from app.core.tasks import enqueue
 log = structlog.get_logger("core.agent_gateway")
 _tracer = trace.get_tracer(__name__)
 
-# Default cap on concurrent Active workspaces per agent when no per-org
-# override exists. The control plane will add per-org configuration later;
-# until then all agents share this global default.
-DEFAULT_MAX_WORKSPACES: int = 4
-
 # Lease window in seconds: if a claimed command has no `received` event within
 # this window it is requeued to `pending`.
 LEASE_SECONDS: int = 30
@@ -350,8 +345,12 @@ async def _build_config_update_dto(
 
     from app.core.agent_gateway.byok_provider import get_byok_secrets_provider  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.tenancy import get_org_full  # noqa: PLC0415
 
     settings = get_settings()
+    org_full = await get_org_full(session, org_id)
+    if org_full is None:
+        raise LookupError(f"org {org_id} not found")
     byok_secrets: dict = {}
     provider = get_byok_secrets_provider()
     if provider is not None:
@@ -360,7 +359,7 @@ async def _build_config_update_dto(
         command_id=uuid7(),
         traceparent="",
         config=AgentConfig(
-            max_workspaces=DEFAULT_MAX_WORKSPACES,
+            max_workspaces=org_full.workspace_max_count,
             otlp_endpoint=settings.yaaos_dash0_endpoint,
             otlp_token=settings.yaaos_agent_dash0_bearer_token,
             otlp_dataset=settings.yaaos_dash0_dataset,

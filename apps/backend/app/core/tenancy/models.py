@@ -54,6 +54,13 @@ class OrgRow(Base):
     # (NULL ARN) don't collide and aren't capped at one row.
     registered_iam_arn: Mapped[str | None] = mapped_column(String, nullable=True)
     aws_region: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Per-org cap on concurrent Active workspaces per WorkspaceAgent.  Rides
+    # the ConfigUpdate AgentCommand wire to the Go agent
+    # (`AgentConfig.max_workspaces`).  NOT NULL — every org has a real value,
+    # backfilled to 4 by migration d5e6f7a8b9c0.  CHECK 1..50 mirrors the
+    # PATCH /api/orgs validation; see `core/agent_gateway` and the
+    # `WorkspacesSettingsPage` UI.
+    workspace_max_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("4"))
     # SSO authz flags denormalized from sso_configs for fast middleware access.
     # `sso_enabled` mirrors `sso_configs.enabled`; `sso_exempt_owner_user_id`
     # mirrors `sso_configs.exempt_owner_user_id`. Backfilled by migration 034.
@@ -75,6 +82,10 @@ class OrgRow(Base):
         CheckConstraint(
             "(registered_iam_arn IS NULL) = (aws_region IS NULL)",
             name="ck_orgs_arn_region_paired",
+        ),
+        CheckConstraint(
+            "workspace_max_count BETWEEN 1 AND 50",
+            name="ck_orgs_workspace_max_count_range",
         ),
     )
 

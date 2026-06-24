@@ -17,10 +17,9 @@ from pydantic import SecretStr
 async def test_build_config_update_populates_otlp_fields(monkeypatch: pytest.MonkeyPatch, db_session) -> None:
     """`_build_config_update_dto` carries endpoint + dataset as-is and exposes
     the bearer token ONLY when serialized to JSON (the wire-encode boundary)."""
-    from uuid import uuid4  # noqa: PLC0415
-
     import app.core.agent_gateway.service as svc  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_org  # noqa: PLC0415
 
     monkeypatch.setenv("YAAOS_DASH0_ENDPOINT", "https://ingress.us-west-2.aws.dash0.com")
     monkeypatch.setenv("YAAOS_DASH0_DATASET", "default")
@@ -29,7 +28,8 @@ async def test_build_config_update_populates_otlp_fields(monkeypatch: pytest.Mon
     # Clear the @cache on get_settings() so it picks up the patched env vars.
     get_settings.cache_clear()
     try:
-        cmd = await svc._build_config_update_dto(uuid4(), session=db_session)
+        org_id = await seed_org()
+        cmd = await svc._build_config_update_dto(org_id, session=db_session)
         config = cmd.config
 
         # Python mode: token must be redacted.
@@ -53,16 +53,16 @@ async def test_build_config_update_populates_otlp_fields(monkeypatch: pytest.Mon
 async def test_build_config_update_populates_environment(monkeypatch: pytest.MonkeyPatch, db_session) -> None:
     """`_build_config_update_dto` carries Settings.environment as
     AgentConfig.environment, and it appears in the JSON-mode model_dump."""
-    from uuid import uuid4  # noqa: PLC0415
-
     import app.core.agent_gateway.service as svc  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_org  # noqa: PLC0415
 
     monkeypatch.setenv("ENVIRONMENT", "staging")
 
     get_settings.cache_clear()
     try:
-        cmd = await svc._build_config_update_dto(uuid4(), session=db_session)
+        org_id = await seed_org()
+        cmd = await svc._build_config_update_dto(org_id, session=db_session)
         json_dump = cmd.config.model_dump(mode="json")
         assert json_dump["environment"] == "staging"
         assert cmd.config.environment == "staging"

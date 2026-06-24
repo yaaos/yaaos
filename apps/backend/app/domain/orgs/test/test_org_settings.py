@@ -392,3 +392,112 @@ async def test_idle_default_used_when_override_null(seeded, db_session) -> None:
             headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
         )
     assert r.status_code == 200, r.text
+
+
+# ── PATCH /api/orgs workspace_max_count ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_org_settings_returns_workspace_max_count_default(seeded) -> None:
+    """A freshly seeded org reports workspace_max_count=4 (column default)."""
+    sess = seeded["admin_sess"]
+    async with _patch_client() as c:
+        r = await c.get(
+            "/api/orgs",
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["workspace_max_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_patch_org_workspace_max_count_persists_and_fans_out(seeded, db_session) -> None:
+    """PATCH writes the column and fan-outs a ConfigUpdate carrying the new cap.
+
+    Asserts fan-out via the public claim API: an unconfigured claim from the
+    seeded agent yields a ConfigUpdate whose `max_workspaces` matches the
+    PATCHed value.  No private reach into agent_gateway internals.
+    """
+    from app.core.agent_gateway import (  # noqa: PLC0415
+        ConfigUpdateCommand,
+        claim_next,
+    )
+    from app.testing.e2e_setup import seed_agent  # noqa: PLC0415
+
+    org_id = seeded["org"].org_id
+    agent = await seed_agent(org_id=org_id)
+    agent_id = agent["id"]
+
+    sess = seeded["admin_sess"]
+    async with _patch_client() as c:
+        r = await c.patch(
+            "/api/orgs",
+            json={"workspace_max_count": 16},
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["workspace_max_count"] == 16
+
+    full = await get_org_full(db_session, org_id)
+    assert full is not None
+    assert full.workspace_max_count == 16
+
+    claimed = await claim_next(
+        agent_id,
+        lifecycle="unconfigured",
+        new_workspaces=0,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert isinstance(claimed, ConfigUpdateCommand)
+    assert claimed.config.max_workspaces == 16
+
+
+@pytest.mark.asyncio
+async def test_patch_org_workspace_max_count_no_op_when_unchanged(seeded, db_session) -> None:
+    """A PATCH that re-sends the existing value enqueues no ConfigUpdate."""
+    from app.core.agent_gateway import claim_next  # noqa: PLC0415
+    from app.testing.e2e_setup import seed_agent  # noqa: PLC0415
+
+    org_id = seeded["org"].org_id
+    agent = await seed_agent(org_id=org_id)
+    agent_id = agent["id"]
+
+    sess = seeded["admin_sess"]
+    async with _patch_client() as c:
+        r = await c.patch(
+            "/api/orgs",
+            json={"workspace_max_count": 4},  # already the column default
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+        )
+    assert r.status_code == 200, r.text
+
+    claimed = await claim_next(
+        agent_id,
+        lifecycle="unconfigured",
+        new_workspaces=0,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert claimed is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_value", [0, -1, 51, 100, "4", 1.5, True, False, None])
+async def test_patch_org_workspace_max_count_rejects_invalid(seeded, bad_value) -> None:
+    """Out-of-range, non-int, and bool values get 422."""
+    sess = seeded["admin_sess"]
+    async with _patch_client() as c:
+        r = await c.patch(
+            "/api/orgs",
+            json={"workspace_max_count": bad_value},
+            cookies={"yaaos_session": sess.raw_token, "yaaos_csrf": sess.csrf_token},
+            headers={"X-Yaaos-Org-Slug": seeded["org"].slug, "X-CSRF-Token": sess.csrf_token},
+        )
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "invalid_workspace_max_count"

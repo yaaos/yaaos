@@ -899,10 +899,11 @@ export interface paths {
          * Patch Org Settings
          * @description Update top-level org settings. Body is a JSON object; only the keys
          *     actually present are touched. Supports `session_timeout_override`
-         *     (null clears it, positive int sets minutes), `registered_iam_arn`, and
-         *     `aws_region`. A duplicate ARN already registered to another org returns
-         *     422 `arn_already_registered` — the app-layer check fires before the DB
-         *     write.
+         *     (null clears it, positive int sets minutes), `registered_iam_arn`,
+         *     `aws_region`, and `workspace_max_count` (int 1..50, applied to every
+         *     org agent on the next claim). A duplicate ARN already registered to
+         *     another org returns 422 `arn_already_registered` — the app-layer check
+         *     fires before the DB write.
          */
         patch: operations["patch_org_settings_api_orgs_patch"];
         trace?: never;
@@ -2489,6 +2490,8 @@ export interface components {
             session_timeout_override: number | null;
             /** Slug */
             slug: string;
+            /** Workspace Max Count */
+            workspace_max_count: number;
         };
         /** _PatchOwnHandleRequest */
         _PatchOwnHandleRequest: {

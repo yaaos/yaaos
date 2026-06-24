@@ -17,7 +17,6 @@ from sqlalchemy import select
 
 from app.core.agent_gateway.models import AgentCommandRow
 from app.core.agent_gateway.service import (
-    DEFAULT_MAX_WORKSPACES,
     claim_next,
     enqueue_command,
     enqueue_config_update_for_agent,
@@ -31,7 +30,7 @@ from app.core.agent_gateway.types import (
     WriteFilesCommand,
     WriteFilesEntry,
 )
-from app.testing.e2e_setup import seed_agent
+from app.testing.e2e_setup import seed_agent, seed_org
 
 
 async def _make_agent(*, org_id: UUID | None = None) -> UUID:
@@ -73,7 +72,7 @@ def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceC
 @pytest.mark.service
 async def test_unconfigured_claim_returns_config_update(db_session) -> None:
     """Unconfigured claim with a pending ConfigUpdate row returns that command."""
-    org_id = uuid4()
+    org_id = await seed_org()
     agent_id = await _make_agent(org_id=org_id)
     ws_cmd = _make_write_cmd(uuid4())
     await enqueue_command(org_id=org_id, command=ws_cmd, session=db_session)
@@ -91,7 +90,7 @@ async def test_unconfigured_claim_returns_config_update(db_session) -> None:
     assert command is not None
     assert isinstance(command, ConfigUpdateCommand)
     assert command.kind == AgentCommandKind.CONFIG_UPDATE
-    assert command.config.max_workspaces == DEFAULT_MAX_WORKSPACES
+    assert command.config.max_workspaces == 4  # orgs.workspace_max_count server default
 
     # The workspace command must remain pending — only ConfigUpdate is claimable.
     row = (
@@ -165,7 +164,7 @@ async def test_configured_claim_returns_pending_config_update(db_session) -> Non
     BYOK key rotation triggering enqueue_config_update_for_all_org_agents) must
     be claimable in the configured lifecycle. Without this branch the row sits
     pending forever and the agent never picks up the new credentials."""
-    org_id = uuid4()
+    org_id = await seed_org()
     agent_id = await _make_agent(org_id=org_id)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await db_session.flush()
@@ -191,7 +190,7 @@ async def test_configured_claim_prefers_config_update_over_provision_workspace(d
     OTLP-token rotation must land before the next workspace spawn injects
     per-process env (e.g. ANTHROPIC_API_KEY at ExecSpawn time, which lives for
     the workspace's whole life)."""
-    org_id = uuid4()
+    org_id = await seed_org()
     agent_id = await _make_agent(org_id=org_id)
     provision_cmd = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=provision_cmd, session=db_session)

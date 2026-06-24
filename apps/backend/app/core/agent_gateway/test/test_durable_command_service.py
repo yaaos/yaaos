@@ -21,7 +21,6 @@ from sqlalchemy import select, update
 
 from app.core.agent_gateway.models import AgentCommandRow
 from app.core.agent_gateway.service import (
-    DEFAULT_MAX_WORKSPACES,
     claim_next,
     enqueue_command,
     enqueue_config_update_for_agent,
@@ -36,7 +35,7 @@ from app.core.agent_gateway.types import (
     WriteFilesCommand,
     WriteFilesEntry,
 )
-from app.testing.e2e_setup import seed_agent
+from app.testing.e2e_setup import seed_agent, seed_org
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -77,10 +76,9 @@ def _make_cleanup_cmd(workspace_id: UUID) -> CleanupWorkspaceCommand:
 
 
 async def _make_agent(*, org_id: UUID | None = None) -> UUID:
-    """Seed a workspace agent row; return its id."""
-    result = await seed_agent(
-        org_id=org_id or uuid4(),
-    )
+    """Seed an org + workspace agent row; return its id."""
+    _org_id = org_id if org_id is not None else await seed_org()
+    result = await seed_agent(org_id=_org_id)
     return UUID(str(result["id"]))
 
 
@@ -132,7 +130,7 @@ async def test_unconfigured_claim_carries_completion_token(db_session) -> None:
     """The `unconfigured` lifecycle claims a row-backed ConfigUpdate. The row
     goes through the normal token-mint path so the returned DTO carries a
     non-null `completion_token` that the agent can echo on the terminal event."""
-    org_id = uuid4()
+    org_id = await seed_org()
     agent_id = await _make_agent(org_id=org_id)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     await db_session.flush()
@@ -203,7 +201,7 @@ async def test_enqueue_then_simulated_restart_command_still_claimable(db_session
 async def test_unconfigured_claim_returns_only_config_update(db_session) -> None:
     """An unconfigured agent claims only a ConfigUpdate row; non-ConfigUpdate
     commands in the queue remain pending."""
-    org_id = uuid4()
+    org_id = await seed_org()
     agent_id = await _make_agent(org_id=org_id)
     ws_id = uuid7()
     cmd = _make_provision_cmd(ws_id)
@@ -223,7 +221,7 @@ async def test_unconfigured_claim_returns_only_config_update(db_session) -> None
     from app.core.agent_gateway.types import ConfigUpdateCommand  # noqa: PLC0415
 
     assert isinstance(command, ConfigUpdateCommand)
-    assert command.config.max_workspaces == DEFAULT_MAX_WORKSPACES
+    assert command.config.max_workspaces == 4  # orgs.workspace_max_count server default
 
     # The pending workspace command must still be pending (not claimed).
     row = (

@@ -35,7 +35,12 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.core.agent_gateway import CancelShutdownResult, ShutdownResult, revoke_all_for_arn
+from app.core.agent_gateway import (
+    CancelShutdownResult,
+    ShutdownResult,
+    enqueue_config_update_for_all_org_agents,
+    revoke_all_for_arn,
+)
 from app.core.auth import Action, Role, org_id_var, public_route
 from app.core.database import session as db_session
 from app.core.identity import find_session_by_hash, get_user, hash_token, list_emails_for_user
@@ -88,6 +93,8 @@ class _OrgSettingsResponse(BaseModel):
     session_timeout_override: int | None
     registered_iam_arn: str | None = None
     aws_region: str | None = None
+    # NOT NULL column; no Pydantic-side default — every response carries a real value.
+    workspace_max_count: int
 
 
 def _err(status: int, code: str) -> HTTPException:
@@ -166,6 +173,7 @@ async def get_org_settings() -> _OrgSettingsResponse:
         session_timeout_override=full.session_timeout_override,
         registered_iam_arn=full.registered_iam_arn,
         aws_region=full.aws_region,
+        workspace_max_count=full.workspace_max_count,
     )
 
 
@@ -173,10 +181,11 @@ async def get_org_settings() -> _OrgSettingsResponse:
 async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
     """Update top-level org settings. Body is a JSON object; only the keys
     actually present are touched. Supports `session_timeout_override`
-    (null clears it, positive int sets minutes), `registered_iam_arn`, and
-    `aws_region`. A duplicate ARN already registered to another org returns
-    422 `arn_already_registered` — the app-layer check fires before the DB
-    write."""
+    (null clears it, positive int sets minutes), `registered_iam_arn`,
+    `aws_region`, and `workspace_max_count` (int 1..50, applied to every
+    org agent on the next claim). A duplicate ARN already registered to
+    another org returns 422 `arn_already_registered` — the app-layer check
+    fires before the DB write."""
     org_id = org_id_var.get()
     if org_id is None:
         raise _err(400, "no_org_context")
@@ -219,6 +228,23 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
                 raise _err(422, "invalid_aws_region")
             eff_region = value
 
+        # `workspace_max_count` rides the ConfigUpdate AgentCommand to every
+        # WorkspaceAgent in the org.  The column is NOT NULL (default 4); only
+        # pass it to `update_org_fields` when the body actually carries a value
+        # so an unrelated PATCH (e.g. just session_timeout_override) doesn't
+        # rewrite the column.  Validate `1..50` to match the DB CHECK
+        # constraint.
+        workspace_max_changed = False
+        new_workspace_max_count: int | None = None
+        if "workspace_max_count" in body:
+            value = body["workspace_max_count"]
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise _err(422, "invalid_workspace_max_count")
+            if not (1 <= value <= 50):
+                raise _err(422, "invalid_workspace_max_count")
+            workspace_max_changed = value != full.workspace_max_count
+            new_workspace_max_count = value
+
         # Cross-field: `registered_iam_arn` and `aws_region` are both-or-neither
         # (matches the DB check constraint `ck_orgs_arn_region_paired`). Fail at
         # the application layer so the API returns a 422, not a 500 from the DB.
@@ -239,19 +265,28 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
         if arn_changed:
             await revoke_all_for_arn(full.registered_iam_arn, "arn_change", session=s)
 
-        updated = await _update_org_fields(
-            s,
-            org_id,
-            session_timeout_override=eff_timeout,
-            registered_iam_arn=eff_arn,
-            aws_region=eff_region,
-        )
+        update_kwargs: dict = {
+            "session_timeout_override": eff_timeout,
+            "registered_iam_arn": eff_arn,
+            "aws_region": eff_region,
+        }
+        if new_workspace_max_count is not None:
+            update_kwargs["workspace_max_count"] = new_workspace_max_count
+        updated = await _update_org_fields(s, org_id, **update_kwargs)
+        # Fan-out a ConfigUpdate to every agent in the org so the new cap
+        # takes effect on the next claim instead of waiting up to ~1 hr for
+        # the next bearer re-exchange.  Reuses the same enqueue path BYOK
+        # rotations use; mass duplicates are harmless (ApplyConfig is
+        # last-write-wins on the agent side).
+        if workspace_max_changed:
+            await enqueue_config_update_for_all_org_agents(org_id, session=s)
         await s.commit()
     return _OrgSettingsResponse(
         slug=updated.slug,
         session_timeout_override=updated.session_timeout_override,
         registered_iam_arn=updated.registered_iam_arn,
         aws_region=updated.aws_region,
+        workspace_max_count=updated.workspace_max_count,
     )
 
 
