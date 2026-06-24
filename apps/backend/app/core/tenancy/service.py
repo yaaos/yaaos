@@ -113,6 +113,9 @@ class OrgFullView(BaseModel):
     session_timeout_override: int | None = None
     registered_iam_arn: str | None = None
     aws_region: str | None = None
+    # `workspace_max_count` is NOT NULL on the column (server default 4);
+    # no Pydantic-side default — a missing value here is a real bug to surface.
+    workspace_max_count: int
     vcs_plugin_id: str | None = None
     vcs_settings: dict | None = None
 
@@ -125,6 +128,7 @@ class OrgFullView(BaseModel):
             session_timeout_override=row.session_timeout_override,
             registered_iam_arn=row.registered_iam_arn,
             aws_region=row.aws_region,
+            workspace_max_count=row.workspace_max_count,
             vcs_plugin_id=row.vcs_plugin_id,
             vcs_settings=dict(row.vcs_settings) if row.vcs_settings else None,
         )
@@ -353,6 +357,7 @@ async def update_org_fields(
     session_timeout_override: int | None | _Unset = _UNSET,
     registered_iam_arn: str | None | _Unset = _UNSET,
     aws_region: str | None | _Unset = _UNSET,
+    workspace_max_count: int | _Unset = _UNSET,
     archived_at: datetime | None | _Unset = _UNSET,
 ) -> OrgFullView:
     """Update the mutable columns on an org row, by explicit keyword.
@@ -370,6 +375,8 @@ async def update_org_fields(
         row.registered_iam_arn = registered_iam_arn
     if not isinstance(aws_region, _Unset):
         row.aws_region = aws_region
+    if not isinstance(workspace_max_count, _Unset):
+        row.workspace_max_count = workspace_max_count
     if not isinstance(archived_at, _Unset):
         row.archived_at = archived_at
     await session.flush()

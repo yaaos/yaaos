@@ -53,6 +53,10 @@ HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYO
 
 `orgs.session_timeout_override` (nullable integer, minutes) tightens the idle-session window per org. Checked in [`core/sessions`](core_sessions.md) `require()` dep on every org-scoped request. Null = global default. Non-positive values rejected with 422.
 
+## Workspace cap — `workspace_max_count`
+
+`orgs.workspace_max_count` (NOT NULL int, default 4, CHECK 1..50) caps concurrent active workspaces per WorkspaceAgent. Rides the [`core/agent_gateway`](core_agent_gateway.md) `ConfigUpdate` AgentCommand to the Go agent as `AgentConfig.max_workspaces`. `PATCH /api/orgs` accepts `workspace_max_count`; on any change it calls `enqueue_config_update_for_all_org_agents(org_id)` in the same transaction so the new cap takes effect on the agent's next claim instead of waiting up to ~1 hr for the next bearer re-exchange (same fan-out pattern BYOK key rotations use). A re-send of the existing value is a no-op for fan-out.
+
 ## Data owned
 
 Tables: `invitations`, `sso_configs`, `org_coding_agents`. `orgs` and `memberships` are owned by [`core/tenancy`](core_tenancy.md) — `domain/orgs` delegates all reads and writes on those tables through `core/tenancy` service functions (`create_org`, `create_membership`, `update_org_fields`, etc.). `domain/orgs/repository.py` holds thin shims over tenancy that expose a few targeted reads; these are flat re-exported from `domain/orgs/__init__` as `get_org_full`, `get_org_full_by_slug`, `get_membership`, `list_memberships_for_org`, `insert_org`, `insert_membership`, `insert_invitation`, `get_invitation_by_token_hash`, `hash_token`, `update_role`. Callers import them from `app.domain.orgs` directly — there is no `repository` namespace handle. See `models.py` + [core_database.md](core_database.md) for columns.

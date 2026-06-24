@@ -68,6 +68,16 @@ const workspacesSchema = z.object({
 
 type WorkspacesValues = z.infer<typeof workspacesSchema>;
 
+const limitsSchema = z.object({
+  workspace_max_count: z
+    .number({ invalid_type_error: "Must be a number." })
+    .int("Whole number only.")
+    .min(1, "Must be at least 1.")
+    .max(50, "Max 50."),
+});
+
+type LimitsValues = z.infer<typeof limitsSchema>;
+
 export function WorkspacesSettingsPage() {
   return (
     <OrgSettingsLayout active="workspaces">
@@ -205,6 +215,8 @@ function WorkspacesContent() {
         </div>
       </section>
 
+      <LimitsCard />
+
       <SetupChecklistCard region={form.watch("region")} />
 
       <ConfirmModal
@@ -218,6 +230,80 @@ function WorkspacesContent() {
         pending={update.isPending}
       />
     </div>
+  );
+}
+
+function LimitsCard() {
+  const { data } = useOrgSettings();
+  const update = useUpdateOrgSettings();
+
+  const form = useForm<LimitsValues>({
+    resolver: zodResolver(limitsSchema),
+    defaultValues: { workspace_max_count: data?.workspace_max_count ?? 4 },
+  });
+
+  useEffect(() => {
+    if (!data) return;
+    form.reset({ workspace_max_count: data.workspace_max_count });
+  }, [data, form]);
+
+  const onSubmit = (values: LimitsValues) => {
+    update.mutate({ workspace_max_count: values.workspace_max_count });
+  };
+
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <header className="border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold">Limits</h2>
+        <p className="text-muted-foreground text-xs mt-1">
+          Cap on concurrent workspaces per WorkspaceAgent. Applies to every agent in the org on
+          their next claim — no agent restart needed.
+        </p>
+      </header>
+      <div className="px-4 py-4 flex flex-col gap-3">
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-3">
+            <FormField
+              control={form.control}
+              name="workspace_max_count"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Max workspaces per agent</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={50}
+                      step={1}
+                      data-testid="workspace-max-count"
+                      value={field.value}
+                      onChange={(e) => field.onChange(e.target.valueAsNumber)}
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                      className="max-w-[120px]"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="submit"
+                data-testid="workspace-max-count-save"
+                disabled={update.isPending}
+              >
+                {update.isPending ? "Saving…" : "Save"}
+              </Button>
+              {update.isError && (
+                <span className="text-destructive text-xs">{String(update.error)}</span>
+              )}
+            </div>
+          </form>
+        </Form>
+      </div>
+    </section>
   );
 }
 

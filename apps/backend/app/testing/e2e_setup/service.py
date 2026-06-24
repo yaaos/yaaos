@@ -14,7 +14,7 @@ HTTP routes have been mounted in the calling process.
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 # Trigger-imports: importing each module's __init__ ensures `Base.metadata` is
 # fully populated so `truncate_all_tables` sees the complete schema regardless
@@ -332,6 +332,26 @@ def stage_oauth_test_profile(
 # ── agent / workspace seed helpers ──────────────────────────────────
 
 
+async def seed_org(*, slug: str | None = None, display_name: str = "") -> UUID:
+    """Insert a minimal org row via ``domain/orgs.insert_org`` and return its id.
+
+    Sugar over the production ``insert_org`` for tests that previously
+    synthesized ``org_id = uuid4()`` without persisting a matching ``orgs``
+    row.  Use this to replace those ``uuid4()`` placeholders so production
+    paths (`_build_config_update_dto`, audit, SSE) that read from ``orgs``
+    don't fail with ``LookupError``.
+
+    Opens its own session and commits.  Returns the new ``org_id``.
+    """
+    from app.domain.orgs import insert_org  # noqa: PLC0415
+
+    _slug = slug or f"test-org-{uuid7().hex[:12]}"
+    async with db_session() as s:
+        org = await insert_org(s, slug=_slug, display_name=display_name or _slug)
+        await s.commit()
+    return org.org_id
+
+
 async def seed_agent(
     *,
     org_id: UUID,
@@ -344,6 +364,10 @@ async def seed_agent(
     Opens its own session and commits. Returns ``{"id": ..., "instance_id":
     ..., "org_id": ...}``. Callers that need a backdated ``last_heartbeat_at``
     update the row manually after this call using their own session.
+
+    The caller is responsible for ensuring an ``orgs`` row exists for
+    ``org_id``.  Production code (`_build_config_update_dto`, audit row writes,
+    SSE) reads from ``orgs``, so a missing org row surfaces as a `LookupError`.
     """
     from app.core.agent_gateway import ensure_agent_row  # noqa: PLC0415
 

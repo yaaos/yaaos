@@ -17,7 +17,7 @@ import pytest
 from app.core.agent_gateway.models import WorkspaceAgentRow
 from app.core.agent_gateway.service import claim_next, enqueue_config_update_for_agent
 from app.core.agent_gateway.types import AgentCommandKind, ConfigUpdateCommand
-from app.testing.e2e_setup import seed_agent
+from app.testing.e2e_setup import seed_agent, seed_org
 
 
 async def _make_agent(db_session, *, org_id: UUID, lifecycle: str = "active") -> UUID:
@@ -36,7 +36,7 @@ async def _make_agent(db_session, *, org_id: UUID, lifecycle: str = "active") ->
 @pytest.mark.service
 async def test_draining_agent_claims_config_update(db_session) -> None:
     """A draining agent can still claim a ConfigUpdate (credential rotation must land)."""
-    org_id = uuid4()
+    org_id = await seed_org()
     agent_id = await _make_agent(db_session, org_id=org_id, lifecycle="draining")
 
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
@@ -103,7 +103,7 @@ async def test_draining_agent_no_provision_workspace(db_session) -> None:
 @pytest.mark.service
 async def test_active_lifecycle_claim_returns_active_commands(db_session) -> None:
     """An active agent (lifecycle='active') finds ConfigUpdate before workspace commands."""
-    org_id = uuid4()
+    org_id = await seed_org()
     agent_id = await _make_agent(db_session, org_id=org_id, lifecycle="active")
 
     # Enqueue ConfigUpdate pinned to agent.

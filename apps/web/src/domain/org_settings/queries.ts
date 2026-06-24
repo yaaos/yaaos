@@ -6,6 +6,7 @@ export interface OrgSettings {
   session_timeout_override: number | null;
   registered_iam_arn: string | null;
   aws_region: string | null;
+  workspace_max_count: number;
 }
 
 export function useOrgSettings() {
@@ -24,6 +25,7 @@ export function useUpdateOrgSettings() {
         session_timeout_override: number | null;
         registered_iam_arn: string | null;
         aws_region: string | null;
+        workspace_max_count: number;
       }>,
     ) =>
       apiFetch<OrgSettings>("/api/orgs", {

@@ -24,7 +24,7 @@ from app.core.agent_gateway.service import enqueue_config_update_for_agent
 from app.core.agent_gateway.types import AgentCommandKind, AgentConfig
 from app.core.audit_log import Actor
 from app.domain.orgs import insert_org
-from app.testing.e2e_setup import seed_agent
+from app.testing.e2e_setup import seed_agent, seed_org
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -88,7 +88,7 @@ async def test_build_config_update_includes_byok_secrets(db_session) -> None:
         register_byok_secrets_provider,
     )
 
-    org_id = uuid4()
+    org_id = await seed_org()
 
     async def fake_provider(oid, *, session):
         if oid == org_id:
@@ -118,7 +118,7 @@ async def test_enqueue_config_update_for_all_org_agents_inserts_rows(db_session)
     every configured agent in the org."""
     from app.core.agent_gateway import enqueue_config_update_for_all_org_agents  # noqa: PLC0415
 
-    org_id = uuid4()  # No FK constraint on workspace_agents.org_id — a bare UUID is fine here.
+    org_id = await seed_org()
     # Register two agents for the same org.
     agent_id_1 = await _make_agent(org_id=org_id)
     agent_id_2 = await _make_agent(org_id=org_id)

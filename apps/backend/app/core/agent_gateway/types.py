@@ -136,7 +136,10 @@ class InvokeClaudeCodeFields(BaseModel):
 class AgentConfig(BaseModel):
     """Runtime configuration delivered to the agent via ConfigUpdateCommand.
 
-    max_workspaces is the org/global default cap on concurrent Active workspaces.
+    max_workspaces is the per-org cap on concurrent Active workspaces, sourced
+    from `orgs.workspace_max_count` (NOT NULL, default 4).  PATCH /api/orgs
+    writes the column and fan-outs a fresh ConfigUpdate to every agent in the
+    org so the new cap takes effect on the next claim.
     The OTLP fields carry the agent's telemetry export destination;
     otlp_token is treated as a secret and must not be logged.
     environment is the OTel deployment.environment.name resource attribute,

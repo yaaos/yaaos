@@ -1863,11 +1863,16 @@
           "slug": {
             "title": "Slug",
             "type": "string"
+          },
+          "workspace_max_count": {
+            "title": "Workspace Max Count",
+            "type": "integer"
           }
         },
         "required": [
           "slug",
-          "session_timeout_override"
+          "session_timeout_override",
+          "workspace_max_count"
         ],
         "title": "_OrgSettingsResponse",
         "type": "object"
@@ -5620,7 +5625,7 @@
         ]
       },
       "patch": {
-        "description": "Update top-level org settings. Body is a JSON object; only the keys\nactually present are touched. Supports `session_timeout_override`\n(null clears it, positive int sets minutes), `registered_iam_arn`, and\n`aws_region`. A duplicate ARN already registered to another org returns\n422 `arn_already_registered` — the app-layer check fires before the DB\nwrite.",
+        "description": "Update top-level org settings. Body is a JSON object; only the keys\nactually present are touched. Supports `session_timeout_override`\n(null clears it, positive int sets minutes), `registered_iam_arn`,\n`aws_region`, and `workspace_max_count` (int 1..50, applied to every\norg agent on the next claim). A duplicate ARN already registered to\nanother org returns 422 `arn_already_registered` — the app-layer check\nfires before the DB write.",
         "operationId": "patch_org_settings_api_orgs_patch",
         "parameters": [
           {
