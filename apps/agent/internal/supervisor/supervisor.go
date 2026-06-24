@@ -175,6 +175,11 @@ func (nullLogger) Info(string, ...any)  {}
 func (nullLogger) Warn(string, ...any)  {}
 func (nullLogger) Error(string, ...any) {}
 
+// drainHeartbeatInterval is the accelerated heartbeat cadence while draining.
+// A shorter interval lets the backend observe the transition from
+// draining → shutdown more quickly once the agent's active workspaces finish.
+const drainHeartbeatInterval = 5 * time.Second
+
 // Supervisor wires the protocol client into the claim/heartbeat loops.
 // Construct with New, then Run blocks until ctx is cancelled.
 type Supervisor struct {
@@ -188,8 +193,25 @@ type Supervisor struct {
 
 	// config holds the runtime AgentConfig delivered by ConfigUpdateCommand.
 	// Nil until the first ConfigUpdate arrives — nil means unconfigured.
-	// Lifecycle is derived: config.Load() == nil → unconfigured.
 	config atomic.Pointer[command.AgentConfig]
+
+	// localLifecycle is the agent's local lifecycle state. Possible values:
+	//   "unconfigured" — no ConfigUpdate received yet.
+	//   "active"       — configured and accepting workspace commands.
+	//   "draining"     — shutdown requested; no new workspaces accepted.
+	// Nil is treated identically to "unconfigured" for safe zero-value behavior.
+	// Transition graph: nil/"unconfigured" → active (via ApplyConfig CAS)
+	//                   active → draining (via RequestShutdown)
+	//                   draining → active (via CancelShutdown)
+	localLifecycle atomic.Pointer[string]
+
+	// cancelRun cancels the child context created in Run. Used by
+	// maybeTriggerShutdownExit to self-cancel once draining is complete.
+	cancelRun context.CancelFunc
+
+	// drainExitOnce ensures only the first concurrent claimLoop worker that
+	// observes the drain-complete condition calls cancelRun.
+	drainExitOnce sync.Once
 
 	// conductor + wsConn are non-nil iff cfg.ActivityWSURL is set AND
 	// the WS dial succeeded. Progress events route through the
@@ -272,6 +294,7 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 		eventPostSteps:   defaultEventPostSteps,
 		dedup:            newDedupCache(dedupCacheSize),
 	}
+	s.localLifecycle.Store(ptrStr("unconfigured"))
 	if needsDefaultSpawn {
 		// ExecSpawn's byok getter is a closure over s.config — it reads the
 		// most recent AgentConfig atomically so keys reflect the latest
@@ -292,11 +315,19 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 // Run exchanges identity and starts the claim + heartbeat goroutines.
 // Blocks until ctx is cancelled or identity exchange fails fatally.
 func (s *Supervisor) Run(ctx context.Context) error {
+	// Create a child context so drain completion can self-cancel via
+	// maybeTriggerShutdownExit without cancelling the parent context.
+	// cancel is stored on s.cancelRun and called explicitly on all exit
+	// paths (including the os.Exit path) to avoid gocritic exitAfterDefer.
+	runCtx, cancel := context.WithCancel(ctx)
+	s.cancelRun = cancel
+
 	// STS bootstrap: retry on the 1m/3m/5m/15m/60m schedule up to a 1h
 	// deadline. An unbootstrapped pod that cannot reach the control plane
 	// for 1h exits non-zero so the container orchestrator can restart it.
 	// The deadline only applies before the first successful exchange — once
 	// bootstrapped, renewal failures use the indefinite bearerRefreshLoop.
+	ctx = runCtx
 	var resp *protocol.IdentityExchangeResponse
 	for {
 		var err error
@@ -306,6 +337,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			break
 		}
 		if ctx.Err() != nil {
+			cancel()
 			return ctx.Err()
 		}
 		recordBackoff(ctx, s.stsBackoff, surfaceSTS, err)
@@ -319,9 +351,11 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			s.log.Error("supervisor.bootstrap_deadline_exceeded",
 				"detail", "identity exchange failed for 1h; exiting so the orchestrator can restart",
 			)
+			cancel() // release child context before hard exit
 			os.Exit(1)
 		}
 		if sleepErr != nil {
+			cancel()
 			return sleepErr
 		}
 	}
@@ -386,6 +420,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		s.diskSweepLoop(ctx)
 	}()
 	wg.Wait()
+	cancel() // goroutines have exited; release child context
 	// Tear down the activity WS first so the read-loop exits before the
 	// pool shuts down; otherwise a slow flush could race with ctx cancel.
 	if s.conductor != nil {
@@ -690,6 +725,10 @@ func (s *Supervisor) claimLoop(ctx context.Context, workerNum int) {
 			)
 			endClaim(nil)
 			s.claimBackoff.Reset()
+			// Drain-exit check: while draining, a 204 (no-command) means the
+			// priority bucket is empty. If the pool also has no active workspaces
+			// the drain is complete — cancel the run context to exit cleanly.
+			s.maybeTriggerShutdownExit()
 			continue
 		}
 		// Context canceled by graceful shutdown — the transport-level error
@@ -854,17 +893,20 @@ func (s *Supervisor) postReceivedEvent(ctx context.Context, header protocol.Comm
 	)
 }
 
-// heartbeatLoop reports liveness + workspace registry snapshot on the
-// configured interval. The reconciliation response (`forgotten_workspaces`)
-// drives the disk janitor in sendHeartbeat.
+// heartbeatLoop reports liveness + workspace registry snapshot on a per-iteration
+// sleep so the cadence can respond to lifecycle changes within one heartbeat.
+// When draining the interval is drainHeartbeatInterval (5s); otherwise it is
+// cfg.HeartbeatInterval (default 30s).
 func (s *Supervisor) heartbeatLoop(ctx context.Context) {
-	ticker := time.NewTicker(s.cfg.HeartbeatInterval)
-	defer ticker.Stop()
 	for {
+		interval := s.cfg.HeartbeatInterval
+		if s.localLifecycleStr() == "draining" {
+			interval = drainHeartbeatInterval
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(interval):
 			s.sendHeartbeat(ctx)
 		}
 	}
@@ -1152,8 +1194,8 @@ func (s *Supervisor) routeWorkspaceCmd(ctx context.Context, c command.WorkspaceC
 // The full wait is used when there is real demand capacity (idle workspaces or
 // room for new workspaces) and no goroutines are racing to register.
 func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
-	cfg := s.config.Load()
-	if cfg == nil {
+	lc := s.localLifecycleStr()
+	if lc == "unconfigured" {
 		return protocol.ClaimRequest{
 			WaitSeconds:   s.cfg.ClaimWaitSeconds,
 			Lifecycle:     "unconfigured",
@@ -1161,12 +1203,29 @@ func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
 			WorkspaceIDs:  []string{}, // empty slice serializes as [] not null
 		}
 	}
+	cfg := s.config.Load()
+	if cfg == nil {
+		// localLifecycle is non-unconfigured but config is nil — defensive fallback.
+		return protocol.ClaimRequest{
+			WaitSeconds:   s.cfg.ClaimWaitSeconds,
+			Lifecycle:     lc,
+			NewWorkspaces: 0,
+			WorkspaceIDs:  []string{},
+		}
+	}
 	activeIDs := s.pool.ActiveIDs()
 	activeCount := len(activeIDs)
-	newWorkspaces := cfg.MaxWorkspaces - activeCount
-	if newWorkspaces < 0 {
-		newWorkspaces = 0
+
+	// While draining, report new_workspaces=0 — no new workspace assignments.
+	// Still report idle workspace_ids so in-flight workspace commands can land.
+	newWorkspaces := 0
+	if lc == "active" {
+		newWorkspaces = cfg.MaxWorkspaces - activeCount
+		if newWorkspaces < 0 {
+			newWorkspaces = 0
+		}
 	}
+
 	// workspace_ids = Active workspaces that have no in-flight command
 	// (i.e. idle and ready for the next command).
 	idleIDs := s.pool.IdleIDs()
@@ -1194,18 +1253,33 @@ func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
 
 	return protocol.ClaimRequest{
 		WaitSeconds:   waitSeconds,
-		Lifecycle:     "configured",
+		Lifecycle:     lc,
 		NewWorkspaces: newWorkspaces,
 		WorkspaceIDs:  idleIDs,
 	}
 }
 
 // ApplyConfig implements command.AgentOps. Stores the config atomically so
-// all goroutines see the update on the next read. After the store the agent
-// is considered configured (lifecycle = "configured"). Late-binds the OTLP
-// exporter when an endpoint is present in the config.
+// all goroutines see the update on the next read. CAS-flips localLifecycle
+// from "unconfigured" (or nil) to "active" on first apply — subsequent
+// ConfigUpdates (credential rotation) leave lifecycle unchanged. Late-binds
+// the OTLP exporter when an endpoint is present in the config.
 func (s *Supervisor) ApplyConfig(cfg command.AgentConfig) {
 	s.config.Store(&cfg)
+	// CAS unconfigured → active. Works when localLifecycle is nil (test code
+	// that bypasses New): CompareAndSwap(nil, &active) succeeds because Load()
+	// returns the zero-value nil, matching the expected old pointer value.
+	// Never overrides "draining" or an already-"active" value.
+	for {
+		cur := s.localLifecycle.Load()
+		if cur != nil && *cur != "unconfigured" {
+			break // already active or draining; don't override
+		}
+		if s.localLifecycle.CompareAndSwap(cur, ptrStr("active")) {
+			break
+		}
+		// CAS lost — another goroutine stored first; retry (converges in one iteration).
+	}
 	s.log.Info("supervisor.agent_configured",
 		"max_workspaces", cfg.MaxWorkspaces,
 		"otlp_endpoint", cfg.OTLPEndpoint,
@@ -1222,3 +1296,52 @@ func (s *Supervisor) ApplyConfig(cfg command.AgentConfig) {
 		cfg.Environment,
 	)
 }
+
+// RequestShutdown implements command.AgentOps. Transitions localLifecycle to
+// "draining" — the agent stops accepting new workspaces, accelerates heartbeat
+// cadence, and self-cancels via maybeTriggerShutdownExit once the pool empties.
+func (s *Supervisor) RequestShutdown() {
+	s.localLifecycle.Store(ptrStr("draining"))
+	s.log.Info("supervisor.drain_requested")
+}
+
+// CancelShutdown implements command.AgentOps. Reverts a prior RequestShutdown by
+// transitioning localLifecycle back to "active". The agent resumes accepting
+// new workspace commands and the heartbeat cadence returns to normal.
+func (s *Supervisor) CancelShutdown() {
+	s.localLifecycle.Store(ptrStr("active"))
+	s.log.Info("supervisor.drain_cancelled")
+}
+
+// localLifecycleStr returns the current localLifecycle string value.
+// A nil pointer (zero-value Supervisor in tests) is treated as "unconfigured".
+func (s *Supervisor) localLifecycleStr() string {
+	p := s.localLifecycle.Load()
+	if p == nil {
+		return "unconfigured"
+	}
+	return *p
+}
+
+// maybeTriggerShutdownExit is called after a 204 (no-command) in the claim loop.
+// When the agent is draining and the pool has no active workspaces, the drain
+// is complete; cancel the run context so all goroutines exit cleanly.
+// sync.Once ensures only the first concurrent caller triggers the cancellation.
+func (s *Supervisor) maybeTriggerShutdownExit() {
+	if s.localLifecycleStr() != "draining" {
+		return
+	}
+	if len(s.pool.ActiveIDs()) > 0 {
+		return
+	}
+	s.drainExitOnce.Do(func() {
+		s.log.Info("supervisor.drain_complete", "reason", "pool empty while draining")
+		if s.cancelRun != nil {
+			s.cancelRun()
+		}
+	})
+}
+
+// ptrStr returns a pointer to a copy of s. Used to store a string in
+// atomic.Pointer[string] without aliasing concerns.
+func ptrStr(s string) *string { return &s }

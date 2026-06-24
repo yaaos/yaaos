@@ -122,7 +122,7 @@ async def test_enqueue_config_update_for_all_org_agents_inserts_rows(db_session)
     # Register two agents for the same org.
     agent_id_1 = await _make_agent(org_id=org_id)
     agent_id_2 = await _make_agent(org_id=org_id)
-    # Seed a ConfigUpdate for each so they are "configured".
+    # Seed a ConfigUpdate for each so they are "active".
     await enqueue_config_update_for_agent(agent_id_1, org_id=org_id, session=db_session)
     await enqueue_config_update_for_agent(agent_id_2, org_id=org_id, session=db_session)
     await db_session.flush()

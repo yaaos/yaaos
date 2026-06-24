@@ -5,6 +5,8 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
+import { toast } from "sonner";
+import type { components } from "../generated/schema";
 import {
   type Lesson,
   type StepActivityResponse,
@@ -181,33 +183,13 @@ export function useCreateOrg() {
   });
 }
 
-/** Single-round-trip Dashboard projection per E2a.3. */
-export interface DashboardStats {
-  in_flight: number;
-  hitl_pending: number;
-  completed_today: number;
-  failed_today: number;
-}
-
-export interface DashboardResponse {
-  stats: DashboardStats;
-  in_flight: Ticket[];
-  needs_attention: Ticket[];
-}
-
-export function useDashboard() {
-  return useSuspenseQuery<DashboardResponse>({
-    queryKey: ["tickets", "dashboard"],
-    queryFn: () => apiFetch<DashboardResponse>("/api/tickets/dashboard"),
-  });
-}
-
 /** Per-org workspace agents within the 1-hour retention window.
- *  Invalidated live via `agent_liveness_changed` SSE; no polling. */
+ *  Invalidated live via `agent_changed` SSE; no polling. */
 export interface AgentRow {
   id: string;
   instance_id: string;
   state: "reachable" | "stale" | "offline";
+  lifecycle: "unconfigured" | "active" | "draining" | "shutdown";
   last_heartbeat_at: string | null;
   os: string | null;
   cpu_count: number | null;
@@ -223,6 +205,88 @@ export function useAgents(orgSlug: string) {
       orgSlug
         ? apiFetch<AgentRow[]>(`/api/orgs/${encodeURIComponent(orgSlug)}/agents`)
         : Promise.resolve([]),
+  });
+}
+
+// ── Agent bulk-action mutations ───────────────────────────────────────────────
+// Both aliases below are derived from the backend OpenAPI schema — edit the
+// backend response models (apps/backend/app/domain/orgs/org_settings_web.py
+// + apps/backend/app/core/agent_gateway/service.py) and regenerate via
+// `apps/backend/bin/dump_web_openapi` + `apps/web/bin/gen-api-types`. The
+// per-row outcome string literals are reachable via
+// `ShutdownResult["results"][number]["outcome"]`.
+
+export type ShutdownResult = components["schemas"]["_BulkShutdownResponse"];
+export type CancelShutdownResult = components["schemas"]["_BulkCancelShutdownResponse"];
+
+/** Compute the toast message for a bulk-shutdown response. Exported for unit testing. */
+export function shutdownToastMessage(results: ShutdownResult["results"]): string {
+  const M = results.length;
+  const successCount = results.filter((r) => r.outcome === "draining").length;
+  const noOpCount = M - successCount;
+  if (noOpCount === 0) {
+    return `Shut down ${M} ${M === 1 ? "agent" : "agents"}.`;
+  }
+  if (successCount === 0) {
+    return "No agents were shut down — all were already draining, shut down, or not found.";
+  }
+  return `Shut down ${successCount} of ${M} agents; ${noOpCount} were already draining, shut down, or not found.`;
+}
+
+/** Compute the toast message for a bulk cancel-shutdown response. Exported for unit testing. */
+export function cancelShutdownToastMessage(results: CancelShutdownResult["results"]): string {
+  const M = results.length;
+  const successCount = results.filter((r) => r.outcome === "active").length;
+  const noOpCount = M - successCount;
+  const alreadyShutdownCount = results.filter((r) => r.outcome === "already_shutdown").length;
+  if (noOpCount === 0) {
+    return `Canceled shutdown for ${M} ${M === 1 ? "agent" : "agents"}.`;
+  }
+  if (successCount === 0) {
+    let msg = "No agents were canceled — already shut down or not draining.";
+    if (alreadyShutdownCount >= M / 2) {
+      msg += " Restart the deployment to bring shut-down agents back.";
+    }
+    return msg;
+  }
+  return `Canceled shutdown for ${successCount} of ${M} agents; ${noOpCount} were not draining, already shut down, or not found.`;
+}
+
+/** Bulk-shutdown: set all selected active agents to lifecycle=draining. */
+export function useShutdownAgents(orgSlug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { agent_ids: string[] }) =>
+      apiFetch<ShutdownResult>(`/api/orgs/${encodeURIComponent(orgSlug)}/agents/shutdown`, {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["agents", orgSlug] });
+      toast(shutdownToastMessage(data.results));
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
+  });
+}
+
+/** Bulk cancel-shutdown: restore selected draining agents to lifecycle=active. */
+export function useCancelShutdownAgents(orgSlug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { agent_ids: string[] }) =>
+      apiFetch<CancelShutdownResult>(
+        `/api/orgs/${encodeURIComponent(orgSlug)}/agents/cancel-shutdown`,
+        { method: "POST", body: JSON.stringify(vars) },
+      ),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["agents", orgSlug] });
+      toast(cancelShutdownToastMessage(data.results));
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
   });
 }
 

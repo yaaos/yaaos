@@ -66,7 +66,7 @@ async function setupAuthedAcmeOwner(page: Page, request: APIRequestContext): Pro
 
   await page.goto(`${YAAOS_URL}/login`);
   await page.getByTestId("login-test").click();
-  await page.waitForURL(/\/org\/acme\/dashboard$/);
+  await page.waitForURL(/\/org\/acme\/workspaces$/);
 }
 
 /**

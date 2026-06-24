@@ -24,12 +24,13 @@ The `SubscriberRegistry` keys the WS sender on the bearer-derived `agent_id`.
 
 ## Graceful shutdown — `DELETE /api/v1/agent/identity`
 
-The agent sends this as its last act on clean shutdown (SIGTERM/SIGINT), after stopping heartbeat + claim loops and draining the WS. The control plane eagerly:
+The agent sends this as its last act on clean shutdown (SIGTERM/SIGINT), after stopping heartbeat + claim loops and draining the WS. The handler branches on `lifecycle`:
 
-1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
-2. Revokes the bearer (reason `graceful_shutdown`).
-3. Calls `WorkspaceAgentReportSink.handle_agent_loss` — expires held workspaces, synthesizes `completed_failure` events for any in-flight `current_command_id` so WorkflowExecutions resume rather than hanging in `AWAITING_AGENT`.
-4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card offline without waiting for the sweeper's next tick.
+- **`lifecycle='draining'`** (the managed-drain path): calls `mark_agent_shutdown_complete` atomically — CAS `draining → shutdown`, revokes bearer, writes `workspace_agent.shutdown_complete` audit. Then calls `handle_agent_loss`.
+- **`lifecycle='shutdown'`** (idempotent re-fire): no-op — bearer already revoked, lifecycle already terminal. Returns 204 without extra side effects.
+- **`lifecycle='active'` or `'unconfigured'`** (unexpected disconnect): calls `mark_agent_disconnected` atomically — sets `state=offline + last_shutdown_at=now`, revokes bearer, calls `handle_agent_loss`, writes `workspace_agent.disconnected` audit, publishes `agent_changed` SSE.
+
+`handle_agent_loss` expiries held workspaces and synthesizes `completed_failure` events for any in-flight `current_command_id` so WorkflowExecutions resume rather than hanging in `AWAITING_AGENT`.
 
 Returns 204. Idempotent — a revoked bearer 401s before the handler runs. Best-effort on the agent side: errors are logged but never prevent process exit.
 
@@ -41,13 +42,25 @@ Called on each `_reaper_sweep_once` tick from `core/workspace` (the loop host). 
 - `60 s – 5 min` → `stale`
 - `> 5 min` → `offline`
 
-Writes `state` only on transition (idempotent on the same tick). Returns a list of agent UUIDs that newly became `offline` this sweep. Emits one `agent_liveness_changed` SSE event per transitioned agent via `publish_general_after_commit` on the org's general channel — cache-invalidate only, no state in payload.
+Writes `state` only on transition (idempotent on the same tick). Returns a list of agent UUIDs that newly became `offline` this sweep. Emits one `agent_changed` SSE event per transitioned agent via `publish_general_after_commit` on the org's general channel; payload carries `{agent_id}`.
+
+**Stuck-drain recovery**: when a row transitions to `offline` and its `lifecycle='draining'`, `compute_agent_liveness_transitions` calls `mark_agent_shutdown_complete` inline. The CAS (`draining → shutdown`) is a no-op for non-draining rows — so the call is always safe. This prevents a draining agent that crashed before sending `DELETE /api/v1/agent/identity` from being stuck in `draining` forever.
 
 Cron-beat dedup (via `scheduled_runs ON CONFLICT DO NOTHING`) is the primary cross-pod exclusivity for `requeue_stale_claimed` and `compute_agent_liveness_transitions`; row-level `FOR UPDATE SKIP LOCKED` on the SELECT in each function is the defense-in-depth backstop against overlapping reaper bodies when a slow sweep crosses a cron-beat boundary.
 
 ## `GET /api/orgs/{slug}/agents`
 
-Returns agents for the current org within the 1-hour UI-retention window. Fields: `id`, `instance_id`, `state`, `last_heartbeat_at`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count`, `version`. Excludes agents whose last heartbeat is older than 1 hour (rows stay in the DB). Requires `ORG_READ` (visible to all org members). Implemented in `app/domain/orgs/org_settings_web.py`; delegates to `list_agents_for_org`.
+Returns agents for the current org within the 1-hour UI-retention window. Fields: `id`, `instance_id`, `state`, `lifecycle`, `last_heartbeat_at`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count`, `version`. Excludes agents whose last heartbeat is older than 1 hour (rows stay in the DB). Requires `ORG_READ` (visible to all org members). Implemented in `app/domain/orgs/org_settings_web.py`; delegates to `list_agents_for_org`.
+
+## Admin lifecycle endpoints — `POST /api/orgs/{slug}/agents/shutdown` and `POST /api/orgs/{slug}/agents/cancel-shutdown`
+
+Both require `Action.WORKSPACE_AGENT_SHUTDOWN` (admin role). Both accept `{"agent_ids": [uuid, …]}` (1–100 items, no duplicates — validated in the handler; returns 400 for violations). Both return `{"results": [{agent_id, outcome}]}` with per-row outcomes.
+
+**`shutdown`** — transitions agents to `draining`. Per-row outcomes: `draining` (CAS won), `already_draining`, `already_shutdown`, `not_found` (either unknown ID or ID belongs to a different org). Only `active` and `unconfigured` agents can transition; others return no-op outcomes without an audit row.
+
+**`cancel-shutdown`** — cancels an in-progress drain, returning agents to `active`. Per-row outcomes: `active` (CAS won), `not_draining`, `already_shutdown`, `not_found`.
+
+Implemented in `app/domain/orgs/org_settings_web.py`; delegated to `shutdown_agents` / `cancel_shutdown_agents` in `core/agent_gateway.service`.
 
 ## Identity exchange — `POST /api/v1/agent/identity`
 
@@ -100,12 +113,21 @@ Commands are persisted in `agent_commands` before delivery. The queue provides:
 
 `enqueue_config_update_for_agent(agent_id, *, org_id, session)` is the identity-exchange-specific helper: wraps `enqueue_command` for a `ConfigUpdateCommand` built from `get_settings()`, then immediately pre-stamps `agent_id` on the row so the unconfigured-lifecycle claim SELECT can find it by `(kind='ConfigUpdate', agent_id=this agent)` without a workspace sweep. Called in the same transaction as `ensure_agent_row`. Enqueues unconditionally — duplicate rows drain in FIFO order and `ApplyConfig` is idempotent.
 
-The `claim_next` lifecycle gate: `unconfigured` → SELECT for `ConfigUpdate` rows pre-stamped to this `agent_id` (FIFO, `FOR UPDATE SKIP LOCKED`); `configured` → three-SELECT priority chain — `ConfigUpdate` pinned to this agent (so post-boot key/cert rotations from `enqueue_config_update_for_all_org_agents` actually drain), then unassigned `ProvisionWorkspace`, then agent-pinned workspace commands. ConfigUpdate sits at priority 1 because credentials and OTLP endpoint must land before the next `ProvisionWorkspace` injects per-workspace env at `ExecSpawn` time (the env is set once and lives for the workspace's whole life).
+The `claim_next` lifecycle gate: `lifecycle='unconfigured'` → SELECT for `ConfigUpdate` rows pre-stamped to this `agent_id` (FIFO, `FOR UPDATE SKIP LOCKED`); `lifecycle` in `('active', 'draining')` → three-SELECT priority chain — (1) agent-scoped commands (`ConfigUpdate`, `Shutdown`, `CancelShutdown`) pinned to this agent, then (2) unassigned `ProvisionWorkspace` (when `new_workspaces > 0`), then (3) agent-pinned workspace commands. ConfigUpdate sits at priority 1 because credentials and OTLP endpoint must land before the next `ProvisionWorkspace` injects per-workspace env at `ExecSpawn` time. `Shutdown` and `CancelShutdown` share this priority bucket so a draining agent reliably receives them even with `new_workspaces=0`.
 
 The `received` EventKind is non-terminal: it cancels the lease requeue on the row (`claimed → delivered`). Terminal events retire the row to `done`.
 
 ## Why / invariants
 
+- **`workspace_agents.lifecycle` — drain lifecycle FSM.** Two orthogonal axes track agent state: `state` (liveness: `reachable/stale/offline`) and `lifecycle` (drain: `unconfigured/active/draining/shutdown`). `lifecycle` transitions:
+  - `unconfigured → active` — `mark_agent_configured` CAS (compare-and-swap UPDATE WHERE lifecycle='unconfigured'); called by `record_agent_event` when a `ConfigUpdate` `completed_success` event arrives.
+  - `active/unconfigured → draining` — `shutdown_agents` bulk CAS (`UPDATE … WHERE lifecycle IN ('active','unconfigured')`); called by the admin `POST /{slug}/agents/shutdown` endpoint. Writes `workspace_agent.shutdown_requested` audit per agent that transitions; emits `agent_changed` SSE.
+  - `draining → active` — `cancel_shutdown_agents` bulk CAS (`UPDATE … WHERE lifecycle='draining'`); called by the admin `POST /{slug}/agents/cancel-shutdown` endpoint. Writes `workspace_agent.cancel_shutdown_requested` audit; emits `agent_changed` SSE.
+  - `draining → shutdown` — `mark_agent_shutdown_complete` CAS (`UPDATE … WHERE lifecycle='draining'`); called by the DELETE handler (managed-drain path) or by the liveness sweeper (stuck-drain recovery). Revokes bearer, writes `workspace_agent.shutdown_complete` audit, emits `agent_changed` SSE. Returns `True` on CAS win, `False` on loss (idempotent).
+  - `shutdown → unconfigured` (on re-exchange) — `ensure_agent_row` UPSERT CASE expression; a freshly reconnecting agent that previously completed a full drain restarts at `unconfigured`.
+  - All other UPSERT calls (bearer refresh) preserve the existing lifecycle value.
+  - `mark_agent_offline` writes liveness state only — never touches `lifecycle`.
+  - Every lifecycle change emits `agent_changed` SSE after commit.
 - **`DELETE /api/v1/agent/identity` runs inside `org_context`** — the same auth chain as all operational endpoints; the bearer-derived identity provides `org_id` + `agent_id`. Not on the public allowlist.
 - **`revoke_all_for_arn(arn, reason, session)` revokes by `issued_iam_arn`** — called by `patch_org_settings` on ARN change or clear so old-ARN agents 401 on their next request. Returns the count of revoked rows; caller commits.
 - **Region-mismatch failures write an org-level audit row** — kind `identity_exchange_failed`, only when the canonical ARN matched a registered org (so `org_id` is known). Failures that can't be attributed to an org (unregistered ARN, parse/endpoint/replay/AWS rejections) remain structlog-only. The audit payload carries `category`, `attempted_arn`, `source_ip`.
@@ -142,14 +164,14 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 - **AgentConfig.byok_secrets** — `dict[str, SecretStr]` end-to-end in Python (provider_id → credential). Same serializer discipline as `otlp_token`: `model_dump(mode="python")` keeps `SecretStr` wrappers; `model_dump(mode="json")` unwraps via `@field_serializer("byok_secrets", when_used="json")`. The Go agent receives a flat `{"anthropic": "<raw_token>", ...}` JSON object and injects each entry as an env var (`"anthropic"` → `ANTHROPIC_API_KEY`) when spawning the Claude Code subprocess. Populated by `_build_config_update_dto` via the registered `BytokSecretsProvider` IoC seam.
 - **BytokSecretsProvider IoC seam** — `byok_provider.py` holds a single-slot registry for an async callable `(org_id, *, session) -> dict[str, SecretStr]`. Registered by `core/coding_agent` at import time (`_register_byok_secrets_provider(build_byok_secrets_for_org)`). `agent_gateway` calls `get_byok_secrets_provider()` inside `_build_config_update_dto` without importing `core/byok` or `core/coding_agent` — the IoC seam keeps the `agent_gateway → coding_agent` edge absent. Public exports: `register_byok_secrets_provider`, `get_byok_secrets_provider`, `clear_byok_secrets_provider`.
 - **`enqueue_config_update_for_all_org_agents(org_id, *, session)`** — selects all active `WorkspaceAgentRow` rows for the org and calls `enqueue_config_update_for_agent` for each. Called by `core/coding_agent` via a `core/byok.register_on_change` callback so agents receive fresh `byok_secrets` immediately after every BYOK `set()` or `clear()`.
-- **AgentCommand** — discriminated union: `ProvisionWorkspace | WriteFiles | RefreshWorkspaceAuth | InvokeClaudeCode | CleanupWorkspace | ConfigUpdate`.
+- **AgentCommand** — discriminated union: `ProvisionWorkspace | WriteFiles | RefreshWorkspaceAuth | InvokeClaudeCode | CleanupWorkspace | ConfigUpdate | Shutdown | CancelShutdown`.
 - **AgentEvent** — `progress` or `received` (non-terminal) or `completed_{success|failure|skipped}` (terminal). `received` cancels the lease requeue.
 - **WorkspaceEvent** — `created | ready | exited | destroyed | failed`.
 - **BearerContext** — resolved identity from a verified bearer: `bearer_id`, `agent_id`, `org_id`.
 
 ## Data owned
 
-- `workspace_agents` — per-agent-instance identity rows; one per `(org_id, instance_id)`. Columns: `instance_id` (role-session-name from STS ARN), `iam_arn`, `version`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count` (populated by `record_heartbeat` as `len(workspaces)`; not set by identity exchange), `last_heartbeat_at`, `last_shutdown_at`, `state`.
+- `workspace_agents` — per-agent-instance identity rows; one per `(org_id, instance_id)`. Columns: `instance_id` (role-session-name from STS ARN), `iam_arn`, `version`, `os`, `cpu_count`, `memory_bytes`, `claimed_workspace_count` (populated by `record_heartbeat` as `len(workspaces)`; not set by identity exchange), `last_heartbeat_at`, `last_shutdown_at`, `state`, `lifecycle` (drain FSM: `unconfigured|active|draining|shutdown`; DEFAULT `'unconfigured'`; CHECK constraint on column).
 - `bearer_tokens` — `(token_hash, issued_at, expires_at, revoked_at, revoked_reason, last_seen_at, source_ip, issued_iam_arn)`. Revocation reasons: `arn_change` (ARN rotation via settings), `mode_switch`, `disconnect`, `manual_rotate`, `agent_loss` (per-agent), `graceful_shutdown` (DELETE handler). `revoke_all_for_arn` revokes by `issued_iam_arn`; `revoke_all_for_agent` by `agent_id`; `revoke_all_for_org` by `org_id`.
 - `agent_commands` — durable command queue. Columns: `id` (UUIDv7 PK = FIFO key), `org_id`, `workspace_id` (NULL for org-scoped commands), `workflow_execution_id` (NULL for agent-scoped commands like `ConfigUpdate`; set by `enqueue_command` when a Workspace `WorkflowCommand.dispatch` originates the row — owns the command→workflow correlation read by `record_agent_event`), `command_kind`, `payload` (JSONB), `status` (`pending|claimed|delivered|done`), `agent_id` (NULL until claimed), `claimed_at`, `attempt`, `created_at`. Indexes: `(agent_id, status, id)` + `(status, command_kind, id)`. CHECK `ck_agent_commands_id_uuidv7` (`uuid_extract_version(id)=7`) enforces the time-ordered FIFO key at the row boundary — producers mint `command_id` app-side with `uuid7()`, and this constraint catches a stray `uuid4` that the semgrep taint rule cannot see across the producer-DTO → `enqueue_command` hop (added `NOT VALID`, so rows predating the guard are grandfathered). See [patterns.md § UUID primary keys](patterns.md).
 
@@ -159,7 +181,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_agent_command_dispatch_traceparent.py` covers: the `traceparent` stored in `agent_commands.payload` carries the dispatch span's own span-id, not the outer caller's — verifying the agent's `supervisor.dispatch.<kind>` will parent to `agent_command.dispatch.<kind>` at runtime.
 
-`test/test_service.py` covers: heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `has_any_reachable_agent` respects the 90s cutoff.
+`test/test_service.py` covers: heartbeat reports unknown workspaces; terminal event enqueues `workflow.handle_agent_event`; progress events publish to the workspace-activity channel but do NOT enqueue; stale `command_id` raises `StaleClaimError`; `has_any_reachable_agent` respects the 90s cutoff and excludes `lifecycle='shutdown'` agents (a gracefully-drained agent stays `state='reachable'` until the liveness sweeper retires it).
 
 `test/test_run_sink_return_merges_service.py` covers: a stub `AgentRunSink` returning `{"foo": "bar"}` causes the `HANDLE_AGENT_EVENT` task args to carry `outputs["foo"] == "bar"`; a sink key overrides a same-key native value in `event.outputs`; a sink returning `None` leaves `outputs` equal to `event.outputs`.
 
@@ -169,7 +191,9 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_claim_lifecycle_service.py` covers `claim_next` lifecycle gate: unconfigured leaves DB rows untouched; configured returns a single ProvisionWorkspace command; empty queue returns `None`; a ConfigUpdate enqueued after the agent is configured (BYOK rotation fan-out) is claimable in the configured lifecycle; when both kinds are pending, configured claim returns ConfigUpdate before ProvisionWorkspace.
 
-`test/test_liveness_sweeper_service.py` covers: `compute_agent_liveness_transitions` flips `reachable → stale` at 60s, `stale → offline` and `reachable → offline` beyond 5 min, writes only on transition, returns newly-offline IDs, emits SSE; `GET /api/orgs/{slug}/agents` returns within-retention agents with `claimed_workspace_count`; excludes agents beyond 1h window; excludes other-org agents; requires auth.
+`test/test_liveness_sweeper_service.py` covers: `compute_agent_liveness_transitions` flips `reachable → stale` at 60s, `stale → offline` and `reachable → offline` beyond 5 min, writes only on transition, returns newly-offline IDs, emits SSE; `GET /api/orgs/{slug}/agents` returns within-retention agents with `claimed_workspace_count` and `lifecycle`; excludes agents beyond 1h window; excludes other-org agents; requires auth.
+
+`test/test_lifecycle_service.py` covers: `ensure_agent_row` fresh insert → `lifecycle='unconfigured'`; UPSERT on re-exchange preserves `draining`; UPSERT from `shutdown` resets to `unconfigured`; `mark_agent_configured` CAS flips `unconfigured → active`; CAS is no-op on `active` or `draining`; CAS win publishes `agent_changed` SSE with `agent_id` payload; `record_agent_event` ConfigUpdate `completed_success` triggers `mark_agent_configured`; `record_heartbeat` publishes `agent_changed` SSE only when `(state, claimed_workspace_count)` changes — no publish on a steady-state idle tick, publish on a `claimed_workspace_count` delta, publish on a `stale|offline → reachable` recovery.
 
 `test/test_requeue_stale_claimed_concurrent_service.py` covers: two concurrent `requeue_stale_claimed` calls on independent sessions against the same N stale-claimed rows produce a combined requeue count of exactly N (not 2N) and each row's `attempt` increments by exactly 1 — proving `FOR UPDATE SKIP LOCKED` prevents double-processing.
 
@@ -206,5 +230,21 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 `test/test_subscriber_sweeper_scheduled_service.py` covers: `subscriber_sweeper` is registered with the taskiq broker; sweeper body removes ZSET members older than the stale threshold and leaves fresh members untouched — for both `workflow_subscribers:*` and `agent_routes:*` key patterns.
 
 `test/test_heartbeat_service.py` covers: `heartbeat()` advances both ZSET scores without adding a new member and without publishing to the agent control channel; heartbeat with no prior `track()` does not raise.
+
+`test/test_shutdown_agents_mixed_outcomes_service.py` covers: all-active → draining outcome + DB state; shutdown audit `workspace_agent.shutdown_requested` written; all-draining → already_draining; all-shutdown → already_shutdown; mixed selection returns per-row outcomes; cross-org agent_id → not_found (no data leak); empty list → 400; >100 agents → 400; duplicate ids → 400; non-admin → 403.
+
+`test/test_cancel_shutdown_agents_mixed_outcomes_service.py` covers: draining → active outcome + DB state + audit `workspace_agent.cancel_shutdown_requested`; active → not_draining; unconfigured → not_draining; shutdown → already_shutdown; mixed selection; cross-org → not_found; empty/oversized/duplicate lists → 400; non-admin → 403.
+
+`test/test_mark_agent_shutdown_complete_idempotency.py` covers: CAS win returns True + lifecycle='shutdown'; bearer revoked; audit `workspace_agent.shutdown_complete` written; already-shutdown returns False (no double audit); active lifecycle returns False (no effect).
+
+`test/test_delete_identity_lifecycle_branches_service.py` covers: draining path — lifecycle flips to shutdown, bearer revoked, `shutdown_complete` audit written; shutdown re-fire — 204 with no side effects; active path — state offline + `workspace_agent.disconnected` audit.
+
+`test/test_liveness_sweeper_stuck_drain_recovery_service.py` covers: draining agent past 5-min threshold → sweeper flips lifecycle to shutdown + audit written; active agent offline → lifecycle unchanged; unconfigured agent offline → lifecycle unchanged; draining reachable → no completion; already-shutdown → no-op.
+
+`test/test_drain_end_to_end_service.py` covers: `shutdown_agents` inserts a `ShutdownCommand` row pre-stamped with `agent_id`; draining agent's `claim_next` returns the `ShutdownCommand`; `ShutdownCommand` is not delivered to a different agent; second `shutdown_agents` call returns `already_draining` without inserting a second command row.
+
+`test/test_cancel_drain_end_to_end_service.py` covers: `cancel_shutdown_agents` inserts a `CancelShutdownCommand` row pre-stamped with `agent_id`; draining agent's `claim_next` returns the `CancelShutdownCommand`; full shutdown → claim → cancel → claim round-trip; `cancel_shutdown_agents` on a non-draining agent returns `not_draining` without inserting a row.
+
+`test/test_configupdate_during_drain_service.py` covers: draining agent can still claim `ConfigUpdate` (priority-1 bucket); draining agent with `new_workspaces=0` does not receive `ProvisionWorkspace`; active agent with `lifecycle='active'` finds `ConfigUpdate` before workspace commands.
 
 Registry isolation between tests is provided by the `subscriber_registry_isolation` autouse fixture in `app/testing/isolation`. Seed an agent row via `app.testing.e2e_setup.seed_agent`.

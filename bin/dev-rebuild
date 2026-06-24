@@ -13,6 +13,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# pnpm install runs first so local node_modules tracks pnpm-lock.yaml on
+# every rebuild — matches what RWX's ci-web does on every CI run. Without
+# this, a teammate'\''s newly-added dependency lands on disk via git pull but
+# never reaches node_modules, and the next tsc step fails with a cryptic
+# "Cannot find module" before vite even runs.
+echo "==> Syncing pnpm workspace (matches RWX ci-web)"
+pnpm install --frozen-lockfile
+
 echo "==> Building SPA (apps/web/dist/)"
 pnpm --filter ./apps/web build
 

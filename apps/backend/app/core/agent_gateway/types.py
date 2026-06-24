@@ -27,6 +27,8 @@ class AgentCommandKind(StrEnum):
     INVOKE_CLAUDE_CODE = "InvokeClaudeCode"
     CLEANUP_WORKSPACE = "CleanupWorkspace"
     CONFIG_UPDATE = "ConfigUpdate"
+    SHUTDOWN = "Shutdown"
+    CANCEL_SHUTDOWN = "CancelShutdown"
 
 
 class _CommandBase(BaseModel):
@@ -198,13 +200,46 @@ class ConfigUpdateCommand(BaseModel):
     completion_token: str | None = None
 
 
+class ShutdownCommand(BaseModel):
+    """Agent-scoped command requesting the agent to drain. Carries no workspace_id.
+
+    When the agent executes this command, it flips its local lifecycle to
+    "draining", accelerates its heartbeat to 5s, and triggers a clean exit
+    once all active workspaces have completed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    command_id: UUID
+    traceparent: str
+    kind: Literal[AgentCommandKind.SHUTDOWN] = AgentCommandKind.SHUTDOWN
+    completion_token: str | None = None
+    workflow_execution_id: UUID | None = None
+
+
+class CancelShutdownCommand(BaseModel):
+    """Agent-scoped command cancelling an in-progress drain. Carries no workspace_id.
+
+    When the agent executes this command, it flips its local lifecycle back to
+    "active" and resumes accepting new workspace commands.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    command_id: UUID
+    traceparent: str
+    kind: Literal[AgentCommandKind.CANCEL_SHUTDOWN] = AgentCommandKind.CANCEL_SHUTDOWN
+    completion_token: str | None = None
+    workflow_execution_id: UUID | None = None
+
+
 AgentCommand = Annotated[
     ProvisionWorkspaceCommand
     | WriteFilesCommand
     | RefreshWorkspaceAuthCommand
     | InvokeClaudeCodeCommand
     | CleanupWorkspaceCommand
-    | ConfigUpdateCommand,
+    | ConfigUpdateCommand
+    | ShutdownCommand
+    | CancelShutdownCommand,
     Field(discriminator="kind"),
 ]
 
@@ -325,7 +360,7 @@ class HeartbeatResponse(BaseModel):
 class ClaimRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
     wait_seconds: int = Field(ge=0, le=55)
-    lifecycle: Literal["unconfigured", "configured"] = "unconfigured"
+    lifecycle: Literal["unconfigured", "active", "draining", "shutdown"] = "unconfigured"
     # new_workspaces: capacity for new ProvisionWorkspace commands (max_workspaces - active count).
     new_workspaces: int = Field(ge=0, default=0)
     # workspace_ids: idle workspaces awaiting a command (subset of Active workspaces).

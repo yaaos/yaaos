@@ -22,7 +22,7 @@ async function expectNoViolations(page: Page): Promise<void> {
 }
 
 test.describe("a11y — anchor pages", () => {
-  test("Dashboard has no WCAG AA violations", async ({ page, request }) => {
+  test("Workspaces has no WCAG AA violations", async ({ page, request }) => {
     await loginAsOwner(page, request);
     await expectNoViolations(page);
   });

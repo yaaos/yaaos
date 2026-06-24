@@ -41,7 +41,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
     Outlet: () => null,
     useRouterState: (opts?: { select?: (s: unknown) => unknown }) => {
       const state = {
-        location: { pathname: "/org/acme/dashboard" },
+        location: { pathname: "/org/acme/workspaces" },
         status: "idle",
       };
       return opts?.select ? opts.select(state) : state;

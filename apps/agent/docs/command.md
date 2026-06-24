@@ -31,6 +31,7 @@
 - **Wire serialization via `MarshalWire()`.** The `WorkspaceCommand` interface includes `MarshalWire() ([]byte, error)` — each concrete type marshals its `.Proto` field. This is how `pool.inProcessRunner` and `execRunner` write commands to the workspace pipe. Custom wrappers (e.g. test overrides of `Timeout()`) inherit the method via embedding.
 - **Typed results, map wire.** `Execute` returns a typed `Result`; `ToWire()` produces the `map[string]any` that `AgentEvent.Outputs` carries. The backend wire contract stays `map[string]any`; the Go `command`↔`supervisor` boundary is fully typed.
 - **`ConfigUpdateCommand` is an `AgentCommand`, not a `WorkspaceCommand`.** It runs in the supervisor via `AgentOps.ApplyConfig` — never dispatched to a workspace child.
+- **`ShutdownCommand` and `CancelShutdownCommand` are `AgentCommand`s.** `ShutdownCommand.Execute` calls `AgentOps.RequestShutdown()`; `CancelShutdownCommand.Execute` calls `AgentOps.CancelShutdown()`. Both have empty result wire payloads. Neither carries a `workspace_id`.
 - **ConfigUpdate decodes through `protocol.ConfigUpdateCommand`.** `Decode` unmarshals the nested wire shape (payload under `config`) into the protocol mirror, then maps it to the typed `command.ConfigUpdateCommand`, wrapping the raw token into `AgentConfig.OTLPToken` (`secret.Secret`). There is no second flat wire struct to drift. Decode is fail-closed on two fields: (1) `max_workspaces < 1` (spec minimum is 1) is rejected so a malformed or future-drifted ConfigUpdate can never silently leave the workspace pool uncapped; (2) a non-empty `otlp_endpoint` must be a URL-parseable value with a scheme and host — an empty value is valid (OTLP disabled). Both failures return a `decode error` in the existing `fmt.Errorf("command: ConfigUpdate ...: %w", err)` style, which the supervisor maps to `completed_failure` via the existing decode-error path.
 - **The `protocol.AgentCommand` union is gone.** `ClaimCommand` returns `[]byte`; `command.Decode` is the only entry point for turning raw claim-response bytes into a typed `Command`.
 
@@ -46,7 +47,7 @@
 
 - **Command** — a unit of work from the control plane, modeled as a typed Go value rather than a raw JSON union.
 - **WorkspaceCommand** — a command that executes in a workspace child process against `WorkspaceOps`.
-- **AgentCommand** — a command that executes in the supervisor against `AgentOps`.
+- **AgentCommand** — a command that executes in the supervisor against `AgentOps`. Three kinds today: `ConfigUpdate`, `Shutdown`, `CancelShutdown`.
 - **Ops seam** — a caller-owned capability interface (`WorkspaceOps` / `AgentOps`) the command calls at execution time.
 - **Decode** — the factory: peek `kind`, unmarshal into concrete type, return as `Command`.
 - **Result** — a typed struct whose `ToWire()` produces `AgentEvent.Outputs`.
@@ -55,7 +56,7 @@
 
 - `command.go` — `Command`/`WorkspaceCommand`/`AgentCommand` interfaces + `Decode` factory.
 - `workspace_commands.go` — the 5 `WorkspaceCommand` types + `Execute` bodies.
-- `agent_commands.go` — `ConfigUpdateCommand` + `AgentConfig`.
+- `agent_commands.go` — `ConfigUpdateCommand`, `ShutdownCommand`, `CancelShutdownCommand` + `AgentConfig`.
 - `results.go` — result structs + `ToWire()` + `ExecResult`.
 - `ops.go` — `WorkspaceOps` + `AgentOps` interfaces.
 

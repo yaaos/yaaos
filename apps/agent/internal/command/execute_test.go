@@ -57,14 +57,16 @@ func (f *fakeWorkspaceOps) Cleanup(ctx context.Context, cmd *protocol.CleanupWor
 	return f.cleanupResult, f.cleanupErr
 }
 
-// fakeAgentOps records the config passed to ApplyConfig.
+// fakeAgentOps records calls to each AgentOps method.
 type fakeAgentOps struct {
-	appliedConfig *command.AgentConfig
+	appliedConfig        *command.AgentConfig
+	shutdownCalled       bool
+	cancelShutdownCalled bool
 }
 
-func (f *fakeAgentOps) ApplyConfig(cfg command.AgentConfig) {
-	f.appliedConfig = &cfg
-}
+func (f *fakeAgentOps) ApplyConfig(cfg command.AgentConfig) { f.appliedConfig = &cfg }
+func (f *fakeAgentOps) RequestShutdown()                    { f.shutdownCalled = true }
+func (f *fakeAgentOps) CancelShutdown()                     { f.cancelShutdownCalled = true }
 
 // ── ProvisionWorkspaceCommand.Execute ────────────────────────────────────────
 
@@ -308,6 +310,52 @@ func TestConfigUpdateCommand_Execute(t *testing.T) {
 	}
 	if ops.appliedConfig.MaxWorkspaces != 4 {
 		t.Errorf("MaxWorkspaces = %d, want 4", ops.appliedConfig.MaxWorkspaces)
+	}
+}
+
+// ── ShutdownCommand.Execute ───────────────────────────────────────────────────
+
+func TestShutdownCommand_Execute(t *testing.T) {
+	ops := &fakeAgentOps{}
+	cmd := &command.ShutdownCommand{
+		CommandHeader: protocol.CommandHeader{
+			CommandID: "cmd-shutdown-1",
+			Kind:      protocol.KindShutdown,
+		},
+	}
+	res, err := cmd.Execute(context.Background(), ops)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !ops.shutdownCalled {
+		t.Error("RequestShutdown was not called")
+	}
+	wire := res.ToWire()
+	if len(wire) != 0 {
+		t.Errorf("ShutdownResult.ToWire() should be empty, got %v", wire)
+	}
+}
+
+// ── CancelShutdownCommand.Execute ────────────────────────────────────────────
+
+func TestCancelShutdownCommand_Execute(t *testing.T) {
+	ops := &fakeAgentOps{}
+	cmd := &command.CancelShutdownCommand{
+		CommandHeader: protocol.CommandHeader{
+			CommandID: "cmd-cancelshutdown-1",
+			Kind:      protocol.KindCancelShutdown,
+		},
+	}
+	res, err := cmd.Execute(context.Background(), ops)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !ops.cancelShutdownCalled {
+		t.Error("CancelShutdown was not called")
+	}
+	wire := res.ToWire()
+	if len(wire) != 0 {
+		t.Errorf("CancelShutdownResult.ToWire() should be empty, got %v", wire)
 	}
 }
 

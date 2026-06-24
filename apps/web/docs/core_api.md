@@ -55,7 +55,7 @@ Hand-typed (no generated equivalent — backend endpoints return `unknown`):
 - `Notification` / `NotificationsPopover` — hand-typed in `queries.ts`; backend spec returns `unknown` for these endpoints.
 ### Query hooks
 
-`queries.ts` — one hook per endpoint. All data-display hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. This covers every hook that powers a page or section: `useCurrentUser`, `useTickets`, `useTicket`, `useWorkflowRuns`, `useStepActivity`, `useLessons`, `useNotifications`, `useDashboard`, `useAgents`, `useFindingsForTicket`, `useHitlHistory`, `useMyOrgs`, `useGithubInstallation`, `useGithubRepositories`. `useLessons` accepts a `LessonsFilter` object only (no string shorthand). The polling-based utility hook `useConfigStatus` stays a regular `useQuery` — it powers ambient chrome (the onboarding gate), not data pages. See [core_sse.md](core_sse.md) for the full invalidation map.
+`queries.ts` — one hook per endpoint. All data-display hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. This covers every hook that powers a page or section: `useCurrentUser`, `useTickets`, `useTicket`, `useWorkflowRuns`, `useStepActivity`, `useLessons`, `useNotifications`, `useAgents`, `useFindingsForTicket`, `useHitlHistory`, `useMyOrgs`, `useGithubInstallation`, `useGithubRepositories`. `useLessons` accepts a `LessonsFilter` object only (no string shorthand). The polling-based utility hook `useConfigStatus` stays a regular `useQuery` — it powers ambient chrome (the onboarding gate), not data pages. See [core_sse.md](core_sse.md) for the full invalidation map.
 
 Auth hooks live in `queries.ts` so all layers can call them without importing from `domain/auth`:
 - `currentUserQueryOptions` — exported `queryOptions` object for `["auth","me"]`; use this to subscribe to or seed the cache without triggering a fetch (e.g. `useQuery({ ...currentUserQueryOptions, enabled: false })` in `useOtelIdentitySync`).
@@ -64,11 +64,17 @@ Auth hooks live in `queries.ts` so all layers can call them without importing fr
 - `useLogoutAll()` — mutation, all-sessions sign-out.
 `domain/auth/queries.ts` re-exports these for backward compatibility within the auth domain.
 
-`useAgents(orgSlug)` — fetches `GET /api/orgs/{slug}/agents`. Returns `AgentRow[]` within the 1-hour retention window. Invalidated live via `agent_liveness_changed` SSE. Returns an empty array when `orgSlug` is empty (no request issued).
+`useAgents(orgSlug)` — fetches `GET /api/orgs/{slug}/agents`. Returns `AgentRow[]` within the 1-hour retention window. `AgentRow` carries both `state` (liveness: `reachable | stale | offline`) and `lifecycle` (drain lifecycle: `unconfigured | active | draining | shutdown`). Invalidated live via `agent_changed` SSE. Returns an empty array when `orgSlug` is empty (no request issued).
 
 ### Mutation hooks
 
 Each mutation invalidates the query keys it affects on success. Key taxonomy: [patterns.md § Query keys](patterns.md#query-keys). Hook-to-endpoint mapping is in `queries.ts`.
+
+**Agent bulk-action mutations** (`queries.ts`):
+- `useShutdownAgents(orgSlug)` — `POST /api/orgs/{slug}/agents/shutdown` `{ agent_ids }`. On success: invalidates `["agents", orgSlug]`, dispatches mixed-outcome toast via `shutdownToastMessage`. On error: destructive toast, selection NOT cleared.
+- `useCancelShutdownAgents(orgSlug)` — `POST /api/orgs/{slug}/agents/cancel-shutdown` `{ agent_ids }`. On success: invalidates `["agents", orgSlug]`, dispatches toast via `cancelShutdownToastMessage`. On error: destructive toast.
+- `shutdownToastMessage(results)` / `cancelShutdownToastMessage(results)` — exported pure functions; all-success / mixed / all-no-op paths. Cancel all-no-op appends a restart hint when `already_shutdown >= 50%` of total.
+- Outcome types: `ShutdownOutcome`, `CancelShutdownOutcome`, `ShutdownResult`, `CancelShutdownResult`.
 
 ## Data owned
 

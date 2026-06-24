@@ -72,7 +72,7 @@ Notable constraints:
 
 ## HTTP routes
 
-See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/coding-agents`, `/api/orgs`, `/api/api-keys`). See `sso_web.py` for `/api/sso/*` including `/api/sso/discover`.
+See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/coding-agents`, `/api/orgs`, `/api/api-keys`). See `sso_web.py` for `/api/sso/*` including `/api/sso/discover`. See `org_settings_web.py` for `GET /api/orgs/{slug}/agents`, `POST /api/orgs/{slug}/agents/shutdown`, and `POST /api/orgs/{slug}/agents/cancel-shutdown` (admin-only lifecycle endpoints; see [core_agent_gateway.md § Admin lifecycle endpoints](core_agent_gateway.md#admin-lifecycle-endpoints----post-apiorgsslugagentsshutdown-and-post-apiorgsslugagentscancel-shutdown)).
 
 ## How it's tested
 

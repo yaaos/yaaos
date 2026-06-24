@@ -492,7 +492,13 @@ async def test_workspace_event_with_stale_command_raises(db_session) -> None:
 # ── has_any_reachable_agent ────────────────────────────────────────────
 
 
-def _make_agent_row(org_id, *, state: str = "reachable", seconds_ago: int = 10):
+def _make_agent_row(
+    org_id,
+    *,
+    state: str = "reachable",
+    seconds_ago: int = 10,
+    lifecycle: str = "active",
+):
     """Build a WorkspaceAgentRow for seeding. Returns the unsaved row."""
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
@@ -503,6 +509,7 @@ def _make_agent_row(org_id, *, state: str = "reachable", seconds_ago: int = 10):
         version="0.1.0",
         last_heartbeat_at=datetime.now(UTC) - timedelta(seconds=seconds_ago),
         state=state,
+        lifecycle=lifecycle,
     )
 
 
@@ -529,3 +536,22 @@ async def test_has_any_reachable_agent_false_when_stale(db_session) -> None:
     await db_session.flush()
 
     assert await has_any_reachable_agent(session=db_session) is False
+
+
+@pytest.mark.asyncio
+async def test_has_any_reachable_agent_false_when_lifecycle_shutdown(db_session) -> None:
+    # A gracefully-drained agent keeps state='reachable' with a fresh heartbeat
+    # until the liveness sweeper retires it; the lifecycle filter must exclude it.
+    org_id = uuid4()
+    shutdown_row = _make_agent_row(org_id, state="reachable", seconds_ago=5, lifecycle="shutdown")
+    db_session.add(shutdown_row)
+    await db_session.flush()
+
+    assert await has_any_reachable_agent(session=db_session) is False
+
+    # A normal reachable+active agent still counts.
+    active_row = _make_agent_row(org_id, state="reachable", seconds_ago=5, lifecycle="active")
+    db_session.add(active_row)
+    await db_session.flush()
+
+    assert await has_any_reachable_agent(session=db_session) is True

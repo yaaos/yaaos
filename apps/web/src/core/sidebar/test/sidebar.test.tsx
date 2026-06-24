@@ -8,7 +8,7 @@ import { server } from "../../../test/msw/server";
 import { Sidebar } from "../public/sidebar";
 
 // useRouterState and Link must be vi.mock'd — they are not HTTP hooks.
-const pathnameMock = vi.fn(() => "/org/acme/dashboard");
+const pathnameMock = vi.fn(() => "/org/acme/workspaces");
 
 vi.mock("@tanstack/react-router", () => ({
   useRouterState: (opts?: { select?: (s: { location: { pathname: string } }) => unknown }) => {
@@ -50,7 +50,7 @@ function wrap(node: React.ReactNode) {
 describe("Sidebar", () => {
   beforeEach(() => {
     localStorage.clear();
-    pathnameMock.mockReturnValue("/org/acme/dashboard");
+    pathnameMock.mockReturnValue("/org/acme/workspaces");
     // Default handlers — override per test as needed.
     server.use(
       http.get("/api/auth/me", () => HttpResponse.json(userResp("admin"))),
@@ -77,7 +77,7 @@ describe("Sidebar", () => {
     render(wrap(<Sidebar />));
     // Sidebar suspends until useCurrentUser resolves; wait for any nav link.
     await waitFor(() =>
-      expect(screen.getByTestId("nav-dashboard")).toHaveAttribute("href", "/org/acme/dashboard"),
+      expect(screen.getByTestId("nav-workspaces")).toHaveAttribute("href", "/org/acme/workspaces"),
     );
     expect(screen.getByTestId("nav-tickets")).toHaveAttribute("href", "/org/acme/tickets");
     expect(screen.getByTestId("nav-lessons")).toHaveAttribute("href", "/org/acme/lessons");
@@ -97,7 +97,7 @@ describe("Sidebar", () => {
     server.use(http.get("/api/auth/me", () => HttpResponse.json(userResp("builder"))));
     render(wrap(<Sidebar />));
     // Sidebar suspends until useCurrentUser resolves; wait for any nav link.
-    await waitFor(() => expect(screen.getByTestId("nav-dashboard")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("nav-workspaces")).toBeInTheDocument());
     expect(screen.getByTestId("nav-tickets")).toBeInTheDocument();
     expect(screen.getByTestId("nav-group-org-settings")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("nav-members")).toBeInTheDocument());

@@ -65,6 +65,8 @@ _REQUIRED_ROLE: dict[Action, Role] = {
     Action.LESSONS_WRITE: Role.BUILDER,
     Action.REVIEWER_READ: Role.BUILDER,
     Action.REVIEWER_WRITE: Role.BUILDER,
+    # Workspace-agent lifecycle management. Admin required.
+    Action.WORKSPACE_AGENT_SHUTDOWN: Role.ADMIN,
 }
 
 

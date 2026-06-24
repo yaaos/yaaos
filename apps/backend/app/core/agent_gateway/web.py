@@ -56,7 +56,8 @@ from app.core.agent_gateway.service import (
     claim_next,
     enqueue_config_update_for_agent,
     ensure_agent_row,
-    mark_agent_shutdown,
+    mark_agent_disconnected,
+    mark_agent_shutdown_complete,
     record_agent_event,
     record_heartbeat,
     record_workspace_event,
@@ -83,7 +84,7 @@ from app.core.auth import org_context, public_route, require_org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.observability import spawn as _spawn
-from app.core.sse import GeneralEventKind, publish_general_after_commit, publish_workspace_activity
+from app.core.sse import publish_workspace_activity
 from app.core.webserver import RouteSpec, register_routes
 
 log = structlog.get_logger("agent_gateway.web")
@@ -377,47 +378,63 @@ async def exchange_identity(
 async def deregister_identity(
     agent: bearers.BearerContext = Depends(_bearer_dep),
 ) -> Response:
-    """Graceful-shutdown "going away" signal.
+    """Lifecycle-aware graceful-shutdown "going away" signal.
 
-    The agent sends this as the last action of its SIGTERM/SIGINT handler,
-    after stopping its heartbeat + claim loops and draining the WS. The
-    control plane eagerly:
+    Branches on the agent's current ``lifecycle`` under a ``SELECT … FOR UPDATE``
+    so racing DELETE calls and the liveness sweeper resolve deterministically:
 
-    1. Sets `workspace_agents.state=offline` + `last_shutdown_at=now`.
-    2. Revokes the bearer so subsequent calls 401 immediately.
-    3. Expires any workspaces owned by this agent and synthesizes terminal
-       failure events for in-flight commands so their WorkflowExecutions resume.
-    4. Publishes `agent_liveness_changed` SSE so the dashboard flips the card
-       offline without waiting for the sweeper's next tick.
+    - ``draining``: call ``mark_agent_shutdown_complete`` (CAS + bearer revoke +
+      audit + SSE atomically), then ``handle_agent_loss`` for workspace cleanup.
+      Whether or not this caller wins the CAS, return 204.
+    - ``shutdown``: idempotent re-fire.  Return 204 with no further side effects
+      (bearer already revoked; audit already written).
+    - ``active`` / ``unconfigured``: unexpected disconnect.  Delegate to
+      ``mark_agent_disconnected`` (mark offline + revoke bearer + handle_agent_loss
+      + ``workspace_agent.disconnected`` audit + SSE atomically).
 
-    Returns 204. Idempotent — calling on an already-offline/revoked agent is
-    harmless (bearer verify fails → 401 before this handler runs).
+    Returns 204 in all branches. Idempotent.
     """
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+
     async with org_context(agent.org_id, ActorKind.WORKSPACE, actor_id=agent.agent_id):
         async with db_session() as s:
-            # 1. Mark offline eagerly.
-            await mark_agent_shutdown(agent.agent_id, session=s)
+            # Read current lifecycle under FOR UPDATE so racing callers serialize.
+            agent_row = (
+                await s.execute(
+                    _select(WorkspaceAgentRow).where(WorkspaceAgentRow.id == agent.agent_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            lifecycle = agent_row.lifecycle if agent_row is not None else "active"
 
-            # 2. Revoke this bearer immediately.
-            await bearers.revoke(agent.bearer_id, "graceful_shutdown", session=s)
+            if lifecycle == "shutdown":
+                # Idempotent re-fire: bearer already revoked; nothing to do.
+                pass
 
-            # 3. Expire owned workspaces + synthesize terminal failures.
-            await get_report_sink().handle_agent_loss({agent.agent_id}, s)
+            elif lifecycle == "draining":
+                # mark_agent_shutdown_complete handles CAS + bearer revoke + audit + SSE.
+                await mark_agent_shutdown_complete(agent_id=agent.agent_id, session=s)
+                # Workspace cleanup runs regardless of who won the CAS.
+                await get_report_sink().handle_agent_loss({agent.agent_id}, s)
+                await s.commit()
 
-            # 4. SSE — cache-invalidate so the dashboard flips the card offline.
-            publish_general_after_commit(
-                s,
-                org_id=agent.org_id,
-                kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
-                payload={},
-            )
-
-            await s.commit()
+            else:
+                # Unexpected disconnect (lifecycle is active or unconfigured).
+                await mark_agent_disconnected(
+                    agent_id=agent.agent_id,
+                    org_id=agent.org_id,
+                    bearer_id=agent.bearer_id,
+                    lifecycle=lifecycle,
+                    session=s,
+                )
+                await s.commit()
 
     log.info(
         "agent_gateway.graceful_shutdown",
         agent_id=str(agent.agent_id),
         org_id=str(agent.org_id),
+        lifecycle=lifecycle,
     )
     return Response(status_code=204)
 

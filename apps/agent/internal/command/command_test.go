@@ -216,6 +216,60 @@ func TestDecodeRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("Shutdown", func(t *testing.T) {
+		raw := mustMarshal(t, map[string]any{
+			"command_id":       "cmd-sd-1",
+			"traceparent":      "tp-sd-1",
+			"kind":             "Shutdown",
+			"completion_token": "ct-sd-1",
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		hdr := cmd.Header()
+		if hdr.CommandID != "cmd-sd-1" {
+			t.Errorf("header.CommandID = %q, want cmd-sd-1", hdr.CommandID)
+		}
+		if hdr.Kind != protocol.KindShutdown {
+			t.Errorf("header.Kind = %q, want %q", hdr.Kind, protocol.KindShutdown)
+		}
+		if hdr.CompletionToken != "ct-sd-1" {
+			t.Errorf("header.CompletionToken = %q, want ct-sd-1", hdr.CompletionToken)
+		}
+		assertTimeout(t, cmd.Timeout(), 30*time.Second)
+		if _, ok := cmd.(*command.ShutdownCommand); !ok {
+			t.Errorf("expected *command.ShutdownCommand, got %T", cmd)
+		}
+	})
+
+	t.Run("CancelShutdown", func(t *testing.T) {
+		raw := mustMarshal(t, map[string]any{
+			"command_id":       "cmd-cs-1",
+			"traceparent":      "tp-cs-1",
+			"kind":             "CancelShutdown",
+			"completion_token": "ct-cs-1",
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		hdr := cmd.Header()
+		if hdr.CommandID != "cmd-cs-1" {
+			t.Errorf("header.CommandID = %q, want cmd-cs-1", hdr.CommandID)
+		}
+		if hdr.Kind != protocol.KindCancelShutdown {
+			t.Errorf("header.Kind = %q, want %q", hdr.Kind, protocol.KindCancelShutdown)
+		}
+		if hdr.CompletionToken != "ct-cs-1" {
+			t.Errorf("header.CompletionToken = %q, want ct-cs-1", hdr.CompletionToken)
+		}
+		assertTimeout(t, cmd.Timeout(), 30*time.Second)
+		if _, ok := cmd.(*command.CancelShutdownCommand); !ok {
+			t.Errorf("expected *command.CancelShutdownCommand, got %T", cmd)
+		}
+	})
+
 	t.Run("completion_token survives decode", func(t *testing.T) {
 		raw := mustMarshal(t, map[string]any{
 			"command_id":       "cmd-tok",
@@ -345,6 +399,8 @@ func TestSetTraceparent_AllKinds(t *testing.T) {
 		&command.InvokeClaudeCodeCommand{},
 		&command.CleanupWorkspaceCommand{},
 		&command.ConfigUpdateCommand{},
+		&command.ShutdownCommand{},
+		&command.CancelShutdownCommand{},
 	}
 	for _, c := range cmds {
 		c.SetTraceparent(newTP)

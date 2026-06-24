@@ -103,7 +103,7 @@ function OrgList({ onCreateClick }: { onCreateClick: () => void }) {
       {orgs.map((o) => (
         <li key={o.slug}>
           <Link
-            to="/org/$slug/dashboard"
+            to="/org/$slug/workspaces"
             params={{ slug: o.slug }}
             data-testid={`org-picker-row-${o.slug}`}
             className="flex items-center gap-3 px-4 py-3 rounded-md border border-border hover:bg-accent hover:text-accent-foreground transition-colors"
@@ -153,7 +153,7 @@ function CreateOrgModal({
         onSuccess: (resp) => {
           onOpenChange(false);
           reset();
-          window.location.href = `/org/${resp.slug}/dashboard`;
+          window.location.href = `/org/${resp.slug}/workspaces`;
         },
       },
     );

@@ -103,7 +103,7 @@ async def test_claim_mints_completion_token_and_stores_only_hash(db_session) -> 
 
     claimed = await claim_next(
         agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=1,
         workspace_ids=[],
         wait_seconds=0,
@@ -185,7 +185,7 @@ async def test_enqueue_then_simulated_restart_command_still_claimable(db_session
     # Simulate restart: DB state is durable; claim_next reads from DB.
     command = await claim_next(
         agent_id=agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=4,
         workspace_ids=[],
         wait_seconds=0,
@@ -249,7 +249,7 @@ async def test_claim_next_returns_one_provision_workspace(db_session) -> None:
 
     command = await claim_next(
         agent_id=agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=2,
         workspace_ids=[],
         wait_seconds=0,
@@ -299,7 +299,7 @@ async def test_claim_next_returns_one_pending_for_named_workspace(db_session) ->
     # First call claims one of the two.
     first = await claim_next(
         agent_id=agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=0,
         workspace_ids=[ws_a, ws_b],
         wait_seconds=0,
@@ -311,7 +311,7 @@ async def test_claim_next_returns_one_pending_for_named_workspace(db_session) ->
     # Second call claims the other (FIFO order).
     second = await claim_next(
         agent_id=agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=0,
         workspace_ids=[ws_a, ws_b],
         wait_seconds=0,
@@ -343,7 +343,7 @@ async def test_claim_next_never_returns_excluded_workspace_command(db_session) -
 
     command = await claim_next(
         agent_id=agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=0,
         workspace_ids=[idle_ws],  # only idle_ws; busy_ws excluded
         wait_seconds=0,
@@ -370,7 +370,7 @@ async def test_lease_received_event_flips_claimed_to_delivered(db_session) -> No
     # Claim the command.
     command = await claim_next(
         agent_id=agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=1,
         workspace_ids=[],
         wait_seconds=0,
@@ -425,7 +425,7 @@ async def test_lease_terminal_event_retires_command_to_done(db_session) -> None:
     # Claim then deliver.
     command = await claim_next(
         agent_id=agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=1,
         workspace_ids=[],
         wait_seconds=0,
@@ -488,7 +488,7 @@ async def test_redelivered_received_event_is_idempotent(db_session) -> None:
 
     command = await claim_next(
         agent_id=agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=1,
         workspace_ids=[],
         wait_seconds=0,
@@ -528,7 +528,7 @@ async def test_claim_injects_workflow_execution_id_on_dto(db_session) -> None:
 
     claimed_with = await claim_next(
         agent_id,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=1,
         workspace_ids=[],
         wait_seconds=0,
@@ -547,7 +547,7 @@ async def test_claim_injects_workflow_execution_id_on_dto(db_session) -> None:
 
     claimed_without = await claim_next(
         agent_id2,
-        lifecycle="configured",
+        lifecycle="active",
         new_workspaces=1,
         workspace_ids=[],
         wait_seconds=0,

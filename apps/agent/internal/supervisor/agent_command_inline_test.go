@@ -50,7 +50,7 @@ func mustMarshalConfigUpdate(commandID string, maxWorkspaces int) []byte {
 
 // TestClaimLoop_AgentCommandRunsInline asserts that when the first claim
 // returns an AgentCommand (ConfigUpdate), the second claim is sent with
-// `lifecycle="configured"` — proving ApplyConfig completed BEFORE the claim
+// `lifecycle="active"` — proving ApplyConfig completed BEFORE the claim
 // loop re-armed. Without the inline-dispatch fix, the goroutine model races:
 // the claim loop re-arms while s.config.Load() is still nil, sending a second
 // "unconfigured" request and over-claiming a pinned ConfigUpdate.
@@ -148,10 +148,10 @@ func TestClaimLoop_AgentCommandRunsInline(t *testing.T) {
 	if lifecycles[0] != "unconfigured" {
 		t.Errorf("first claim lifecycle: want 'unconfigured', got %q", lifecycles[0])
 	}
-	// The critical assertion: the SECOND claim must already see lifecycle=configured.
+	// The critical assertion: the SECOND claim must already see lifecycle=active.
 	// If the dispatch ran in a goroutine, the loop would re-arm before ApplyConfig
 	// stored config and we'd see "unconfigured" again here.
-	if lifecycles[1] != "configured" {
-		t.Errorf("second claim lifecycle (post-AgentCommand-dispatch): want 'configured', got %q — proves AgentCommand was NOT run inline before re-arm", lifecycles[1])
+	if lifecycles[1] != "active" {
+		t.Errorf("second claim lifecycle (post-AgentCommand-dispatch): want 'active', got %q — proves AgentCommand was NOT run inline before re-arm", lifecycles[1])
 	}
 }

@@ -29,7 +29,7 @@ export function OrgSwitcher({ expanded, className }: OrgSwitcherProps) {
   const onPick = (slug: string) => {
     setOpen(false);
     if (slug === currentSlug) return;
-    window.location.href = `/org/${slug}/dashboard`;
+    window.location.href = `/org/${slug}/workspaces`;
   };
 
   return (

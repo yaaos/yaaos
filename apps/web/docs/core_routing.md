@@ -28,7 +28,7 @@ The module declares the TanStack `Register` augmentation so `<Link to="/org/$slu
 | `/login` | `LoginPage` (`@domain/auth`) | `beforeLoad` probes `/api/auth/me`; on 200, redirects to `/` (prevents authed-user bounce loop). Reads `?reason=` (`signed_out`, `expired`, `idle`, `not_provisioned`) for the banner. |
 | `/orgs` | `OrgPickerPage` | Standalone (no sidebar). Empty state when the user has zero memberships ("ask an admin to invite you"). |
 | `/org/$slug` | scope-only route | Parent for all org-scoped subtrees, including user-area pages. |
-| `/org/$slug/dashboard` | `DashboardPage` | |
+| `/org/$slug/workspaces` | `WorkspacesPage` | Default post-auth landing — live agent-fleet view. |
 | `/org/$slug/tickets`, `…/$ticketId` | `TicketsPage`, `TicketDetailPage` | `/tickets` validates `{q?, repo?, status?[], mine?}` via Zod |
 | `/org/$slug/lessons` | `LessonsPage` | `/lessons` validates `{q?, repo?, sort?}` via Zod |
 | `/org/$slug/settings` | redirect | 303 → `/org/$slug/settings/auth`. |
@@ -69,6 +69,6 @@ None. The slug is derived from the URL on every read.
 
 ## How it's tested
 
-- `apps/e2e/tests/login-and-membership.spec.ts` covers the full login → org-scoped routes → membership flow via the `oauth_test` provider, including the regression case (hard-nav to `/org/acme/user/details` then click Dashboard).
+- `apps/e2e/tests/login-and-membership.spec.ts` covers the full login → org-scoped routes → membership flow via the `oauth_test` provider, including the regression case (hard-nav to `/org/acme/user/details` then click Workspaces).
 - `apps/e2e/tests/session-died-redirect.spec.ts` covers 401 → `/login?reason=…&next=…` round trips.
 - Backend `apps/backend/app/domain/sessions/test/test_oauth_endpoints.py` covers no-auto-provisioning and the not-provisioned redirect.

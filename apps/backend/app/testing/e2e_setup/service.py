@@ -453,15 +453,76 @@ async def set_session_last_seen(
     await set_session_last_seen_for_tests(db, token_hash=token_hash, last_seen_at=last_seen_at)
 
 
-async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:
+async def seed_member_for_org(
+    *,
+    org_slug: str,
+    email: str,
+    github_id: str,
+    role: str = "builder",
+    display_name: str = "Member",
+    provider: str = "github",
+) -> dict[str, str]:
+    """Create a user + verified email + OAuth identity + org membership on an
+    existing org. The org must already exist (seeded via bootstrap_owner).
+
+    Returns ``{"user_id": ..., "org_id": ..., "org_slug": ...}``.
+    """
+    from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.core.auth import Role  # noqa: PLC0415
+    from app.core.identity import (  # noqa: PLC0415
+        add_email,
+        create_user,
+        link_oauth_identity,
+    )
+    from app.domain.orgs import create_membership, get_org_by_slug  # noqa: PLC0415
+
+    org = await get_org_by_slug(org_slug)
+    if org is None:
+        raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
+
+    async with db_session() as s:
+        user = await create_user(s, display_name=display_name)
+        await add_email(
+            s,
+            user_id=user.id,
+            email=email.lower(),
+            is_primary=True,
+            verified=True,
+        )
+        await link_oauth_identity(
+            s,
+            user_id=user.id,
+            provider=provider,
+            external_subject=str(github_id),
+            verified=True,
+        )
+        await create_membership(
+            s,
+            user_id=user.id,
+            org_id=org.id,
+            role=Role(role),
+            handle=email.split("@", 1)[0][:64].lower(),
+            actor=Actor.system(),
+        )
+        await s.commit()
+        return {"user_id": str(user.id), "org_id": str(org.id), "org_slug": org_slug}
+
+
+async def seed_workspace_agent(*, org_slug: str, lifecycle: str | None = None) -> dict[str, str]:
     """Seed a reachable ``workspace_agents`` row for the given org slug.
 
     Inserts the row with ``state="reachable"`` and a recent ``last_heartbeat_at``
-    so the dashboard's 1-hour retention window includes it immediately. Publishes
-    ``agent_liveness_changed`` after commit so the dashboard's pure-SSE path
+    so the Workspaces page's 1-hour retention window includes it immediately.
+    Publishes ``agent_changed`` after commit so the page's pure-SSE path
     invalidates the agents query without a manual reload. Returns the agent's
     ``id`` and ``instance_id``.
+
+    The optional ``lifecycle`` kwarg overrides the default ``"unconfigured"``
+    state. Accepted values: ``"unconfigured"``, ``"active"``, ``"draining"``,
+    ``"shutdown"``.
     """
+    from sqlalchemy import text as sa_text  # noqa: PLC0415
+
     from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
 
@@ -469,12 +530,22 @@ async def seed_workspace_agent(*, org_slug: str) -> dict[str, str]:
     if org is None:
         raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
     result = await seed_agent(org_id=org.id)
+
+    if lifecycle and lifecycle != "unconfigured":
+        # Override lifecycle via raw SQL — acceptable in test-only seed path.
+        async with db_session() as s:
+            await s.execute(
+                sa_text("UPDATE workspace_agents SET lifecycle = :lc WHERE id = :id"),
+                {"lc": lifecycle, "id": result["id"]},
+            )
+            await s.commit()
+
     async with db_session() as s:
         publish_general_after_commit(
             s,
             org_id=org.id,
-            kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
-            payload={},
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(result["id"])},
         )
         await s.commit()
     return {"id": str(result["id"]), "instance_id": result["instance_id"]}
@@ -485,14 +556,14 @@ async def deregister_workspace_agent(*, agent_id: UUID) -> dict[str, str]:
 
     Mirrors ``DELETE /api/v1/agent/identity`` for the agent with the given
     canonical ``id``: marks the row offline + ``last_shutdown_at``, runs
-    agent-loss cleanup, and publishes ``agent_liveness_changed`` so the
-    dashboard flips the card offline live. Drives the graceful-shutdown
-    Playwright spec without a real bearer or running container.
+    agent-loss cleanup, and publishes ``agent_changed`` so the dashboard
+    flips the card offline live. Drives the graceful-shutdown Playwright spec
+    without a real bearer or running container.
     """
     from app.core.agent_gateway import (  # noqa: PLC0415
         get_agent_info,
         get_report_sink,
-        mark_agent_shutdown,
+        mark_agent_offline,
     )
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
@@ -506,13 +577,13 @@ async def deregister_workspace_agent(*, agent_id: UUID) -> dict[str, str]:
 
     async with org_context(org_id, ActorKind.WORKSPACE, actor_id=agent_id):
         async with db_session() as s:
-            await mark_agent_shutdown(agent_id, session=s)
+            await mark_agent_offline(agent_id, session=s)
             await get_report_sink().handle_agent_loss({agent_id}, s)
             publish_general_after_commit(
                 s,
                 org_id=org_id,
-                kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
-                payload={},
+                kind=GeneralEventKind.AGENT_CHANGED,
+                payload={"agent_id": str(agent_id)},
             )
             await s.commit()
     return {"id": str(agent_id), "instance_id": info["instance_id"]}
@@ -529,6 +600,25 @@ def read_and_clear_email_inbox() -> list[dict[str, str]]:
     return out
 
 
+async def set_org_iam_arn(*, org_slug: str, iam_arn: str, aws_region: str = "us-east-1") -> dict[str, str]:
+    """Override an org's IAM ARN to an arbitrary value.
+
+    Useful in tests that need a *configured* org (non-null ``registered_iam_arn``)
+    without the test-agent Docker container registering to it — set ``iam_arn``
+    to a value that mock-aws never returns so the agent's identity exchange
+    finds no matching org.
+    """
+    from app.core.tenancy import get_org_by_slug, update_org_fields  # noqa: PLC0415
+
+    async with db_session() as s:
+        org = await get_org_by_slug(s, slug=org_slug)
+        if org is None:
+            raise ValueError(f"org not found: {org_slug!r}")
+        await update_org_fields(s, org.id, registered_iam_arn=iam_arn, aws_region=aws_region)
+        await s.commit()
+    return {"org_slug": org_slug, "iam_arn": iam_arn}
+
+
 __all__ = [
     "DEFAULT_ORG_ID",
     "delete_org",
@@ -542,10 +632,12 @@ __all__ = [
     "seed_broken_integration",
     "seed_github_install",
     "seed_lesson",
+    "seed_member_for_org",
     "seed_repo_skill",
     "seed_user_with_session",
     "seed_workspace",
     "seed_workspace_agent",
+    "set_org_iam_arn",
     "set_session_last_seen",
     "stage_oauth_test_profile",
 ]

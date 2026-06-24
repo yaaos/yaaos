@@ -25,7 +25,7 @@ React SPA built with Vite. Bundled into the backend's Docker image at build time
 
 | Module | Responsibility |
 |---|---|
-| [domain_dashboard](domain_dashboard.md) | landing — 4 stat cards + In-flight band + Needs-attention band, with the NotConfiguredBanner on top when the org isn't ready. |
+| [domain_workspaces](domain_workspaces.md) | landing — live agent-fleet view grouped into Active / Draining / Unconfigured / Inactive sections, with admin bulk drain / cancel-shutdown controls and the NotConfiguredBanner when the org isn't ready. |
 | [domain_tickets](domain_tickets.md) | tickets list + ticket detail (header band, StageIndicator, Findings / Activity / HITL tabs). |
 | [domain_lessons](domain_lessons.md) | Per-repo lessons CRUD. |
 | [domain_notifications](domain_notifications.md) | cross-org inbox page + sidebar bell popover. |

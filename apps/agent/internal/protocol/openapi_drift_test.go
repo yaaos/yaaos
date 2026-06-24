@@ -70,6 +70,8 @@ var schemaToStruct = map[string]struct {
 	"CleanupWorkspaceCommand":     {reflect.TypeOf(CleanupWorkspaceCommand{}), nil},
 	"AgentConfig":                 {reflect.TypeOf(AgentConfigWire{}), nil},
 	"ConfigUpdateCommand":         {reflect.TypeOf(ConfigUpdateCommand{}), nil},
+	"ShutdownCommand":             {reflect.TypeOf(ShutdownCommand{}), nil},
+	"CancelShutdownCommand":       {reflect.TypeOf(CancelShutdownCommand{}), nil},
 	"AgentEvent":                  {reflect.TypeOf(AgentEvent{}), nil},
 }
 
@@ -246,6 +248,8 @@ func TestOpenAPIDrift_AgentCommandKindsMatchSpecMapping(t *testing.T) {
 		string(KindInvokeClaudeCode):     {},
 		string(KindCleanupWorkspace):     {},
 		string(KindConfigUpdate):         {},
+		string(KindShutdown):             {},
+		string(KindCancelShutdown):       {},
 	}
 	for k := range yamlKinds {
 		if _, ok := goKinds[k]; !ok {

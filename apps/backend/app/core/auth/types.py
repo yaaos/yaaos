@@ -81,6 +81,9 @@ class Action(StrEnum):
     REVIEWER_READ = "reviewer.read"
     REVIEWER_WRITE = "reviewer.write"
 
+    # Workspace-agent lifecycle management. Admin only.
+    WORKSPACE_AGENT_SHUTDOWN = "workspace_agent.shutdown"
+
 
 class RouteSecurity(StrEnum):
     """The three route categories. See module docstring."""

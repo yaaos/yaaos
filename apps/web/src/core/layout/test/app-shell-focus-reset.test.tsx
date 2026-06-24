@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // ---------------------------------------------------------------------------
 // Mocks for AppShell's real-component tests
 // ---------------------------------------------------------------------------
-const routeState = { pathname: "/org/acme/dashboard", status: "idle" as const };
+const routeState = { pathname: "/org/acme/workspaces", status: "idle" as const };
 
 vi.mock("@core/sse/public/subscriber", () => ({ useServerEvents: () => {} }));
 vi.mock("@core/observability/public/use-otel-identity-sync", () => ({
@@ -44,7 +44,7 @@ import { AppShell } from "../public/app-shell";
 
 afterEach(() => {
   cleanup();
-  routeState.pathname = "/org/acme/dashboard";
+  routeState.pathname = "/org/acme/workspaces";
 });
 
 beforeEach(() => {
@@ -85,7 +85,7 @@ function FocusResetHarness({
 describe("AppShell — focus reset on route change", () => {
   describe("real AppShell: <main> receives focus on mount", () => {
     it("focuses <main> when the Outlet renders nothing", async () => {
-      routeState.pathname = "/org/acme/dashboard";
+      routeState.pathname = "/org/acme/workspaces";
       render(<AppShell />);
 
       await waitFor(
@@ -100,7 +100,7 @@ describe("AppShell — focus reset on route change", () => {
   describe("focus-reset logic (harness): route-driven focus placement", () => {
     it("focuses <main> when no <h1> is present", async () => {
       render(
-        <FocusResetHarness pathname="/org/acme/dashboard">
+        <FocusResetHarness pathname="/org/acme/workspaces">
           <section>content without a heading</section>
         </FocusResetHarness>,
       );
@@ -134,15 +134,15 @@ describe("AppShell — focus reset on route change", () => {
       // NavigationDriver holds both the path and the page content as a single
       // state slice so they update atomically — no timing gap between the
       // pathname changing and the new content appearing.
-      type Page = "dashboard" | "lessons";
+      type Page = "workspaces" | "lessons";
       function NavigationDriver() {
-        const [page, setPage] = useState<Page>("dashboard");
-        const pathname = page === "dashboard" ? "/org/acme/dashboard" : "/org/acme/lessons";
+        const [page, setPage] = useState<Page>("workspaces");
+        const pathname = page === "workspaces" ? "/org/acme/workspaces" : "/org/acme/lessons";
         return (
           <>
             <FocusResetHarness pathname={pathname}>
-              {page === "dashboard" ? (
-                <section>dashboard (no h1)</section>
+              {page === "workspaces" ? (
+                <section>workspaces (no h1)</section>
               ) : (
                 <h1 tabIndex={-1} data-testid="lessons-h1">
                   Lessons

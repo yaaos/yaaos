@@ -172,11 +172,11 @@ func TestClaimRequest_LifecycleFields(t *testing.T) {
 		t.Errorf("new_workspaces: want 0, got %d", req.NewWorkspaces)
 	}
 
-	// Apply config → lifecycle="configured"
+	// Apply config → lifecycle="active"
 	applyConfig(s, 5)
 	req2 := s.buildClaimRequest()
-	if req2.Lifecycle != "configured" {
-		t.Errorf("lifecycle: want 'configured', got %q", req2.Lifecycle)
+	if req2.Lifecycle != "active" {
+		t.Errorf("lifecycle: want 'active', got %q", req2.Lifecycle)
 	}
 }
 

@@ -35,7 +35,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.core.agent_gateway import revoke_all_for_arn
+from app.core.agent_gateway import CancelShutdownResult, ShutdownResult, revoke_all_for_arn
 from app.core.auth import Action, Role, org_id_var, public_route
 from app.core.database import session as db_session
 from app.core.identity import find_session_by_hash, get_user, hash_token, list_emails_for_user
@@ -361,6 +361,7 @@ class AgentView(BaseModel):
     id: UUID
     instance_id: str
     state: str
+    lifecycle: str
     last_heartbeat_at: str | None
     os: str | None
     cpu_count: int | None
@@ -391,6 +392,7 @@ async def list_org_agents(slug: str) -> list[AgentView]:
             id=r["id"],
             instance_id=r["instance_id"],
             state=r["state"],
+            lifecycle=r["lifecycle"],
             last_heartbeat_at=r["last_heartbeat_at"],
             os=r["os"],
             cpu_count=r["cpu_count"],
@@ -400,6 +402,86 @@ async def list_org_agents(slug: str) -> list[AgentView]:
         )
         for r in rows
     ]
+
+
+class _AgentShutdownRequest(BaseModel):
+    agent_ids: list[UUID]
+
+
+class _BulkShutdownResponse(BaseModel):
+    results: list[ShutdownResult]
+
+
+class _BulkCancelShutdownResponse(BaseModel):
+    results: list[CancelShutdownResult]
+
+
+@router.post("/{slug}/agents/shutdown", dependencies=[Depends(require(Action.WORKSPACE_AGENT_SHUTDOWN))])
+async def bulk_shutdown_agents(slug: str, body: _AgentShutdownRequest) -> _BulkShutdownResponse:
+    """Bulk request to transition agents to ``lifecycle='draining'``.
+
+    Returns per-row outcomes: ``draining | already_draining | already_shutdown | not_found``.
+    Admin-only (Action.WORKSPACE_AGENT_SHUTDOWN).
+    """
+    from app.core.agent_gateway import shutdown_agents  # noqa: PLC0415
+    from app.core.audit_log import Actor, ActorKind  # noqa: PLC0415
+    from app.core.auth import current_user_id  # noqa: PLC0415
+
+    org_id = org_id_var.get()
+    if org_id is None:
+        raise _err(400, "no_org_context")
+
+    # Validate list size and duplicates — return 400, not FastAPI's 422
+    if not body.agent_ids or len(body.agent_ids) > 100:
+        raise _err(400, "invalid_payload")
+    if len(set(body.agent_ids)) != len(body.agent_ids):
+        raise _err(400, "invalid_payload")
+
+    actor = Actor(kind=ActorKind.USER, user_id=current_user_id())
+    async with db_session() as s:
+        results = await shutdown_agents(
+            org_id=org_id,
+            agent_ids=body.agent_ids,
+            actor=actor,
+            session=s,
+        )
+        await s.commit()
+    return _BulkShutdownResponse(results=results)
+
+
+@router.post(
+    "/{slug}/agents/cancel-shutdown", dependencies=[Depends(require(Action.WORKSPACE_AGENT_SHUTDOWN))]
+)
+async def bulk_cancel_shutdown_agents(slug: str, body: _AgentShutdownRequest) -> _BulkCancelShutdownResponse:
+    """Bulk request to cancel an in-progress drain, returning agents to ``lifecycle='active'``.
+
+    Returns per-row outcomes: ``active | not_draining | already_shutdown | not_found``.
+    Admin-only (Action.WORKSPACE_AGENT_SHUTDOWN).
+    """
+    from app.core.agent_gateway import cancel_shutdown_agents  # noqa: PLC0415
+    from app.core.audit_log import Actor, ActorKind  # noqa: PLC0415
+    from app.core.auth import current_user_id  # noqa: PLC0415
+
+    org_id = org_id_var.get()
+    if org_id is None:
+        raise _err(400, "no_org_context")
+
+    # Validate list size and duplicates — return 400, not FastAPI's 422
+    if not body.agent_ids or len(body.agent_ids) > 100:
+        raise _err(400, "invalid_payload")
+    if len(set(body.agent_ids)) != len(body.agent_ids):
+        raise _err(400, "invalid_payload")
+
+    actor = Actor(kind=ActorKind.USER, user_id=current_user_id())
+    async with db_session() as s:
+        results = await cancel_shutdown_agents(
+            org_id=org_id,
+            agent_ids=body.agent_ids,
+            actor=actor,
+            session=s,
+        )
+        await s.commit()
+    return _BulkCancelShutdownResponse(results=results)
 
 
 register_routes(RouteSpec(module_name="orgs", router=router, url_prefix="/api/orgs"))

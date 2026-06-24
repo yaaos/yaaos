@@ -20,15 +20,19 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
+
+if TYPE_CHECKING:
+    from app.core.audit_log import Actor
 from uuid import UUID
 
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel, Field, RootModel, TypeAdapter
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +45,7 @@ from app.core.agent_gateway.types import (
     AgentCommandKind,
     AgentConfig,
     AgentEvent,
+    CancelShutdownCommand,
     CleanupWorkspaceCommand,
     ConfigUpdateCommand,
     HeartbeatRequest,
@@ -48,6 +53,7 @@ from app.core.agent_gateway.types import (
     InvokeClaudeCodeCommand,
     ProvisionWorkspaceCommand,
     RefreshWorkspaceAuthCommand,
+    ShutdownCommand,
     StaleClaimError,
     WorkspaceEvent,
     WriteFilesCommand,
@@ -80,7 +86,9 @@ _COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
         | RefreshWorkspaceAuthCommand
         | InvokeClaudeCodeCommand
         | CleanupWorkspaceCommand
-        | ConfigUpdateCommand,
+        | ConfigUpdateCommand
+        | ShutdownCommand
+        | CancelShutdownCommand,
         Field(discriminator="kind"),
     ]
 )
@@ -530,17 +538,25 @@ async def claim_next(
             if row is None:
                 return None
     else:
-        # ConfigUpdate first: a pinned ConfigUpdate carries credential / endpoint
-        # rotations (BYOK keys, OTLP token) that must land before the next
-        # ProvisionWorkspace injects per-workspace env (e.g. ANTHROPIC_API_KEY at
-        # ExecSpawn time, which lives for the workspace's whole life).
+        # Agent-scoped priority bucket first: ConfigUpdate, Shutdown, and
+        # CancelShutdown are pre-stamped with agent_id and carry no workspace_id.
+        # ConfigUpdate carries credential / endpoint rotations (BYOK keys, OTLP
+        # token) that must land before the next ProvisionWorkspace. Shutdown /
+        # CancelShutdown are agent lifecycle signals that must land regardless of
+        # workspace capacity.
         row = (
             (
                 await session.execute(
                     select(AgentCommandRow)
                     .where(
                         AgentCommandRow.status == "pending",
-                        AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                        AgentCommandRow.command_kind.in_(
+                            [
+                                AgentCommandKind.CONFIG_UPDATE,
+                                AgentCommandKind.SHUTDOWN,
+                                AgentCommandKind.CANCEL_SHUTDOWN,
+                            ]
+                        ),
                         AgentCommandRow.agent_id == agent_id,
                     )
                     .order_by(AgentCommandRow.id)
@@ -613,7 +629,13 @@ async def claim_next(
                             select(AgentCommandRow)
                             .where(
                                 AgentCommandRow.status == "pending",
-                                AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                                AgentCommandRow.command_kind.in_(
+                                    [
+                                        AgentCommandKind.CONFIG_UPDATE,
+                                        AgentCommandKind.SHUTDOWN,
+                                        AgentCommandKind.CANCEL_SHUTDOWN,
+                                    ]
+                                ),
                                 AgentCommandRow.agent_id == agent_id,
                             )
                             .order_by(AgentCommandRow.id)
@@ -807,12 +829,34 @@ async def record_heartbeat(
         await session.execute(select(WorkspaceAgentRow).where(WorkspaceAgentRow.id == agent_id))
     ).scalar_one_or_none()
     if row is not None:
+        # Capture the pre-mutation tuple so the SSE publish below only fires on
+        # a field the SPA actually re-renders. last_heartbeat_at changes every
+        # tick but the SPA renders it via a 5s client-side relative-time hook —
+        # the value itself never reaches the wire, so heartbeat ticks alone
+        # shouldn't drive Redis pub/sub.
+        prev_state = row.state
+        prev_count = row.claimed_workspace_count
+
         row.last_heartbeat_at = now
         row.state = "reachable"
         # Persist the count from the heartbeat payload as the single source of truth.
         # The column is populated here (not at identity exchange) because the agent
         # only knows its active workspace set at heartbeat time.
         row.claimed_workspace_count = len(request.workspaces)
+
+        # Publish agent_changed only when something the SPA renders actually
+        # changed: a state recovery (stale|offline → reachable) or a
+        # claimed_workspace_count delta (work started/finished). A healthy
+        # idle agent with no in-flight work emits zero SSE traffic per tick.
+        if prev_state != "reachable" or prev_count != row.claimed_workspace_count:
+            from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+            publish_general_after_commit(
+                session,
+                org_id=row.org_id,
+                kind=GeneralEventKind.AGENT_CHANGED,
+                payload={"agent_id": str(row.id)},
+            )
     else:
         # Heartbeat arrived for an agent the control plane doesn't know about —
         # this happens transiently after a restart before identity exchange
@@ -963,6 +1007,17 @@ async def record_agent_event(
                 payload=event.model_dump(mode="json"),
             )
         return
+
+    # ConfigUpdate completed_success → CAS-flip lifecycle unconfigured → active.
+    # Must run BEFORE release_command_claim so the row is stable before any
+    # downstream SSE. CAS is a no-op if lifecycle is already active/draining/shutdown
+    # (see Invariant — ConfigUpdate during drain in architecture.md).
+    if (
+        event.kind == AgentEventKind.COMPLETED_SUCCESS
+        and cmd_row.command_kind == AgentCommandKind.CONFIG_UPDATE
+        and cmd_row.agent_id is not None
+    ):
+        await mark_agent_configured(agent_id=cmd_row.agent_id, session=session)
 
     # Terminal — release the single-flight workspace claim BEFORE routing to
     # the next step or finalizer, so the next `try_claim` sees
@@ -1126,6 +1181,8 @@ async def ensure_agent_row(
         memory_bytes=memory_bytes,
         last_heartbeat_at=now,
         state="reachable",
+        # lifecycle DEFAULT 'unconfigured' applies on INSERT (column-level DEFAULT).
+        # The UPSERT set_ clause below handles the CONFLICT branch.
     )
     exc = insert_stmt.excluded
     upsert_stmt = insert_stmt.on_conflict_do_update(
@@ -1138,21 +1195,46 @@ async def ensure_agent_row(
             "memory_bytes": func.coalesce(exc.memory_bytes, WorkspaceAgentRow.memory_bytes),
             "last_heartbeat_at": exc.last_heartbeat_at,
             "state": exc.state,
+            # Preserve lifecycle across bearer-refresh (a re-exchange while
+            # draining must not reset backend lifecycle="draining" to unconfigured).
+            # Exception: reconnect of a previously-shutdown agent resets to
+            # unconfigured — treat it as a fresh agent.
+            "lifecycle": case(
+                (WorkspaceAgentRow.lifecycle == "shutdown", "unconfigured"),
+                else_=WorkspaceAgentRow.lifecycle,
+            ),
         },
-    ).returning(WorkspaceAgentRow.id)
-    agent_id: UUID = (await session.execute(upsert_stmt)).scalar_one()
-    return agent_id
+    ).returning(WorkspaceAgentRow.id, WorkspaceAgentRow.org_id)
+    result_row = (await session.execute(upsert_stmt)).one()
+    agent_id_val: UUID = result_row[0]
+    agent_org_id: UUID = result_row[1]
+
+    # Publish agent_changed after commit so the SPA picks up boot/reconnect
+    # events unconditionally — no payload diffing needed; the SPA refetches.
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    publish_general_after_commit(
+        session,
+        org_id=agent_org_id,
+        kind=GeneralEventKind.AGENT_CHANGED,
+        payload={"agent_id": str(agent_id_val)},
+    )
+
+    return agent_id_val
 
 
-async def mark_agent_shutdown(
+async def mark_agent_offline(
     agent_id: UUID,
     *,
     session: AsyncSession,
 ) -> None:
     """Set `state=offline` + `last_shutdown_at=now` on the agent row.
 
-    Called by the graceful-shutdown DELETE handler immediately before revoking
-    bearers + triggering workspace cleanup. Caller commits.
+    Writes liveness state only — never touches `lifecycle`.  Called on the
+    unexpected-disconnect / liveness-offline path (not the managed drain): it
+    marks the row's liveness `state` offline without claiming the row has
+    completed a graceful drain. The managed-drain path flips `lifecycle`
+    instead, via `mark_agent_shutdown_complete`. Caller commits.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
@@ -1164,6 +1246,404 @@ async def mark_agent_shutdown(
         row.state = "offline"
         row.last_shutdown_at = now
         await session.flush()
+
+
+async def mark_agent_configured(
+    *,
+    agent_id: UUID,
+    session: AsyncSession,
+) -> None:
+    """Atomic CAS: `lifecycle='active' WHERE id=? AND lifecycle='unconfigured'`.
+
+    Called by `record_agent_event` on a ConfigUpdate `completed_success`.
+    No-op when `lifecycle` is already `active`, `draining`, or `shutdown` —
+    applying a config never overrides an in-progress drain.  When the CAS
+    flips a row, publishes `agent_changed` after commit.
+
+    Caller commits.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    result = await session.execute(
+        update(WorkspaceAgentRow)
+        .where(
+            WorkspaceAgentRow.id == agent_id,
+            WorkspaceAgentRow.lifecycle == "unconfigured",
+        )
+        .values(lifecycle="active")
+        .returning(WorkspaceAgentRow.org_id)
+    )
+    org_id_val = result.scalar_one_or_none()
+    if org_id_val is not None:
+        # CAS won — publish SSE so the SPA card refreshes immediately.
+        publish_general_after_commit(
+            session,
+            org_id=org_id_val,
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(agent_id)},
+        )
+
+
+# ── Drain lifecycle Pydantic result + audit models ─────────────────────────
+
+
+class ShutdownResult(BaseModel):
+    """Per-agent outcome of a bulk ``shutdown_agents`` call."""
+
+    agent_id: UUID
+    outcome: Literal["draining", "already_draining", "already_shutdown", "not_found"]
+
+
+class CancelShutdownResult(BaseModel):
+    """Per-agent outcome of a bulk ``cancel_shutdown_agents`` call."""
+
+    agent_id: UUID
+    outcome: Literal["active", "not_draining", "already_shutdown", "not_found"]
+
+
+class _AgentShutdownRequestedAudit(BaseModel):
+    previous_lifecycle: str
+
+
+class _AgentCancelShutdownRequestedAudit(BaseModel):
+    previous_lifecycle: str
+
+
+class _AgentShutdownCompleteAudit(BaseModel):
+    pass
+
+
+class _AgentDisconnectedAudit(BaseModel):
+    """Payload for ``workspace_agent.disconnected`` audit rows.
+
+    Written by ``mark_agent_disconnected`` when the DELETE handler runs the
+    non-draining path (lifecycle was ``active`` or ``unconfigured``),
+    indicating an unexpected agent disconnection rather than an admin-initiated
+    drain.
+    """
+
+    lifecycle: str
+
+
+# ── Drain lifecycle service functions ───────────────────────────────────────
+
+
+async def mark_agent_shutdown_complete(
+    *,
+    agent_id: UUID,
+    session: AsyncSession,
+) -> bool:
+    """Atomic CAS ``lifecycle='shutdown' WHERE id=? AND lifecycle='draining'``.
+
+    Executes all four side effects inside the caller's transaction:
+    (1) CAS UPDATE; (2) revoke all active bearers; (3) write
+    ``workspace_agent.shutdown_complete`` audit; (4) publish ``agent_changed``
+    SSE-after-commit.
+
+    Returns ``True`` when this caller wins the CAS; ``False`` when the row was
+    already past ``draining`` (another pod beat this one — no side effects).
+    Propagates bearer-revoke exceptions so the caller's transaction rolls back,
+    keeping the CAS consistent.
+
+    Caller commits.
+    """
+    from app.core.agent_gateway import bearers as _bearers  # noqa: PLC0415
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+    from app.core.audit_log import Actor, ActorKind, audit  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    # 1. CAS UPDATE.
+    result = await session.execute(
+        update(WorkspaceAgentRow)
+        .where(
+            WorkspaceAgentRow.id == agent_id,
+            WorkspaceAgentRow.lifecycle == "draining",
+        )
+        .values(lifecycle="shutdown")
+        .returning(WorkspaceAgentRow.org_id)
+    )
+    org_id_val = result.scalar_one_or_none()
+    if org_id_val is None:
+        return False
+
+    # 2. Revoke all active bearers (propagate on failure — rolls back the CAS).
+    await _bearers.revoke_all_for_agent(agent_id, "shutdown_complete", session=session)
+
+    # 3. Audit.
+    await audit(
+        "workspace_agent",
+        agent_id,
+        "workspace_agent.shutdown_complete",
+        _AgentShutdownCompleteAudit(),
+        Actor(kind=ActorKind.SYSTEM),
+        org_id=org_id_val,
+        session=session,
+    )
+
+    # 4. SSE — cache-invalidate so the SPA card flips lifecycle.
+    publish_general_after_commit(
+        session,
+        org_id=org_id_val,
+        kind=GeneralEventKind.AGENT_CHANGED,
+        payload={"agent_id": str(agent_id)},
+    )
+
+    return True
+
+
+async def mark_agent_disconnected(
+    *,
+    agent_id: UUID,
+    org_id: UUID,
+    bearer_id: UUID,
+    lifecycle: str,
+    session: AsyncSession,
+) -> None:
+    """Finalize an unexpected disconnect (lifecycle was ``active`` or
+    ``unconfigured`` at the DELETE call).
+
+    Runs the five side effects of the non-drain shutdown path inside the
+    caller's transaction: (1) mark liveness offline; (2) revoke the
+    disconnecting bearer; (3) hand owned workspaces to
+    ``report_sink.handle_agent_loss``; (4) write the
+    ``workspace_agent.disconnected`` audit; (5) publish ``agent_changed``
+    SSE-after-commit.
+
+    Symmetric to ``mark_agent_shutdown_complete`` — encapsulates the four-
+    step finalization the DELETE handler used to inline.  Caller commits.
+    """
+    from app.core.agent_gateway import bearers as _bearers  # noqa: PLC0415
+    from app.core.audit_log import Actor, ActorKind, audit  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    # 1. Mark liveness offline.
+    await mark_agent_offline(agent_id, session=session)
+
+    # 2. Revoke this bearer immediately.
+    await _bearers.revoke(bearer_id, "graceful_shutdown", session=session)
+
+    # 3. Expire owned workspaces + synthesize terminal failures.
+    await get_report_sink().handle_agent_loss({agent_id}, session)
+
+    # 4. Audit the unexpected disconnect.
+    await audit(
+        "workspace_agent",
+        agent_id,
+        "workspace_agent.disconnected",
+        _AgentDisconnectedAudit(lifecycle=lifecycle),
+        Actor(kind=ActorKind.WORKSPACE, workspace_id=agent_id),
+        org_id=org_id,
+        session=session,
+    )
+
+    # 5. SSE — cache-invalidate so the dashboard flips the card offline.
+    publish_general_after_commit(
+        session,
+        org_id=org_id,
+        kind=GeneralEventKind.AGENT_CHANGED,
+        payload={"agent_id": str(agent_id)},
+    )
+
+
+async def shutdown_agents(
+    *,
+    org_id: UUID,
+    agent_ids: Sequence[UUID],
+    actor: Actor,
+    session: AsyncSession,
+) -> list[ShutdownResult]:
+    """Bulk request to transition agents to ``lifecycle='draining'``.
+
+    Per-agent loop: non-locking ``SELECT`` to discover current lifecycle for
+    dispatch + audit; CAS UPDATE on ``(id, lifecycle ∈ {unconfigured, active})``
+    is the atomic gate.  No row-level locks are held, so two overlapping admin
+    bulk calls cannot deadlock on opposing row-lock acquisition order.
+
+    Per-row lifecycle outcomes are surfaced via ``ShutdownResult.outcome``;
+    DB / SSE-queue exceptions raised inside the loop (``enqueue_command``,
+    ``session.execute``, ``audit``, ``publish_general_after_commit``) propagate
+    to the caller and abort the batch, rolling back every successful peer.
+    Caller commits.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+    from app.core.audit_log import audit  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    results: list[ShutdownResult] = []
+
+    for aid in agent_ids:
+        row = (
+            await session.execute(
+                select(WorkspaceAgentRow).where(
+                    WorkspaceAgentRow.id == aid,
+                    WorkspaceAgentRow.org_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+        if row is None:
+            results.append(ShutdownResult(agent_id=aid, outcome="not_found"))
+            continue
+
+        lc = row.lifecycle
+        if lc == "shutdown":
+            results.append(ShutdownResult(agent_id=aid, outcome="already_shutdown"))
+            continue
+        if lc == "draining":
+            results.append(ShutdownResult(agent_id=aid, outcome="already_draining"))
+            continue
+
+        # CAS: unconfigured | active → draining
+        prev_lc = row.lifecycle
+        cas = await session.execute(
+            update(WorkspaceAgentRow)
+            .where(
+                WorkspaceAgentRow.id == aid,
+                WorkspaceAgentRow.lifecycle.in_(["unconfigured", "active"]),
+            )
+            .values(lifecycle="draining")
+            .returning(WorkspaceAgentRow.org_id)
+        )
+        if cas.scalar_one_or_none() is None:
+            # Lost the race (another pod moved it between our SELECT and UPDATE).
+            results.append(ShutdownResult(agent_id=aid, outcome="already_draining"))
+            continue
+
+        # Enqueue a ShutdownCommand so the agent sees the drain request on its
+        # next claim. Pre-stamp agent_id so the priority-bucket SELECT finds it
+        # without a workspace_ids sweep (same pattern as ConfigUpdate).
+        from uuid import uuid7  # noqa: PLC0415
+
+        from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+        shutdown_cmd = ShutdownCommand(command_id=uuid7(), traceparent="")
+        await enqueue_command(org_id=org_id, command=shutdown_cmd, session=session)
+        placeholder_hash = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
+        await session.execute(
+            update(AgentCommandRow)
+            .where(AgentCommandRow.id == shutdown_cmd.command_id)
+            .values(agent_id=aid, completion_token_hash=placeholder_hash)
+        )
+        await session.flush()
+
+        await audit(
+            "workspace_agent",
+            aid,
+            "workspace_agent.shutdown_requested",
+            _AgentShutdownRequestedAudit(previous_lifecycle=prev_lc),
+            actor,
+            org_id=org_id,
+            session=session,
+        )
+        publish_general_after_commit(
+            session,
+            org_id=org_id,
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(aid)},
+        )
+        results.append(ShutdownResult(agent_id=aid, outcome="draining"))
+
+    return results
+
+
+async def cancel_shutdown_agents(
+    *,
+    org_id: UUID,
+    agent_ids: Sequence[UUID],
+    actor: Actor,
+    session: AsyncSession,
+) -> list[CancelShutdownResult]:
+    """Bulk request to transition agents from ``lifecycle='draining'`` back to ``active``.
+
+    Symmetric to ``shutdown_agents``: non-locking ``SELECT`` for dispatch +
+    audit; CAS UPDATE on ``(id, lifecycle='draining')`` is the atomic gate.
+    No row-level locks, so two overlapping admin bulk calls cannot deadlock on
+    opposing row-lock acquisition order.
+
+    Per-row lifecycle outcomes are surfaced via ``CancelShutdownResult.outcome``;
+    DB / SSE-queue exceptions propagate to the caller and abort the batch,
+    rolling back every successful peer.  Caller commits.
+    """
+    from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
+    from app.core.audit_log import audit  # noqa: PLC0415
+    from app.core.sse import GeneralEventKind, publish_general_after_commit  # noqa: PLC0415
+
+    results: list[CancelShutdownResult] = []
+
+    for aid in agent_ids:
+        row = (
+            await session.execute(
+                select(WorkspaceAgentRow).where(
+                    WorkspaceAgentRow.id == aid,
+                    WorkspaceAgentRow.org_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+        if row is None:
+            results.append(CancelShutdownResult(agent_id=aid, outcome="not_found"))
+            continue
+
+        lc = row.lifecycle
+        if lc == "shutdown":
+            results.append(CancelShutdownResult(agent_id=aid, outcome="already_shutdown"))
+            continue
+        if lc in ("unconfigured", "active"):
+            results.append(CancelShutdownResult(agent_id=aid, outcome="not_draining"))
+            continue
+
+        # CAS: draining → active
+        prev_lc = row.lifecycle
+        cas = await session.execute(
+            update(WorkspaceAgentRow)
+            .where(
+                WorkspaceAgentRow.id == aid,
+                WorkspaceAgentRow.lifecycle == "draining",
+            )
+            .values(lifecycle="active")
+            .returning(WorkspaceAgentRow.org_id)
+        )
+        if cas.scalar_one_or_none() is None:
+            # Lost the race.
+            results.append(CancelShutdownResult(agent_id=aid, outcome="not_draining"))
+            continue
+
+        # Enqueue a CancelShutdownCommand so the agent sees the resume signal on
+        # its next claim. Pre-stamp agent_id so the priority-bucket SELECT finds
+        # it (same pattern as ConfigUpdate / ShutdownCommand).
+        from uuid import uuid7  # noqa: PLC0415
+
+        from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+        cancel_cmd = CancelShutdownCommand(command_id=uuid7(), traceparent="")
+        await enqueue_command(org_id=org_id, command=cancel_cmd, session=session)
+        placeholder_hash = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
+        await session.execute(
+            update(AgentCommandRow)
+            .where(AgentCommandRow.id == cancel_cmd.command_id)
+            .values(agent_id=aid, completion_token_hash=placeholder_hash)
+        )
+        await session.flush()
+
+        await audit(
+            "workspace_agent",
+            aid,
+            "workspace_agent.cancel_shutdown_requested",
+            _AgentCancelShutdownRequestedAudit(previous_lifecycle=prev_lc),
+            actor,
+            org_id=org_id,
+            session=session,
+        )
+        publish_general_after_commit(
+            session,
+            org_id=org_id,
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(aid)},
+        )
+        results.append(CancelShutdownResult(agent_id=aid, outcome="active"))
+
+    return results
 
 
 async def get_agent_info(
@@ -1198,8 +1678,13 @@ async def has_any_reachable_agent(
     session: AsyncSession,
 ) -> bool:
     """Return `True` when at least one workspace agent instance heartbeated
-    within the last 90 s — used by health-check callers to avoid cross-module
-    Row access.
+    within the last 90 s and is not draining/shut-down — used by health-check
+    callers to avoid cross-module Row access.
+
+    Excludes `lifecycle='shutdown'` rows: a gracefully-drained agent keeps
+    `state='reachable'` with a fresh `last_heartbeat_at` until the liveness
+    sweeper (which owns `state`) retires it, so the lifecycle predicate is the
+    only thing that prevents a false reachable-positive during that window.
     """
     from app.core.agent_gateway.models import WorkspaceAgentRow  # noqa: PLC0415
 
@@ -1210,6 +1695,7 @@ async def has_any_reachable_agent(
                 select(WorkspaceAgentRow.id)
                 .where(
                     WorkspaceAgentRow.state == "reachable",
+                    WorkspaceAgentRow.lifecycle != "shutdown",
                     WorkspaceAgentRow.last_heartbeat_at.is_not(None),
                     WorkspaceAgentRow.last_heartbeat_at >= cutoff,
                 )
@@ -1310,7 +1796,7 @@ async def compute_agent_liveness_transitions(
 
     Writes `state` only when a transition occurs — idempotent on the same tick.
     Returns the list of agent UUIDs that newly became offline on this sweep.
-    Emits one ``agent_liveness_changed`` SSE event per transitioned agent via
+    Emits one ``agent_changed`` SSE event per transitioned agent via
     ``publish_general_after_commit`` so the dashboard invalidates live.
 
     Lives in ``core/agent_gateway`` because it owns the ``workspace_agents``
@@ -1358,6 +1844,12 @@ async def compute_agent_liveness_transitions(
 
         if target_state == "offline":
             newly_offline.append(row.id)
+            # Stuck-drain recovery: if the agent crashed mid-drain (lifecycle is
+            # still "draining" but it stopped heartbeating), settle the lifecycle
+            # to "shutdown" atomically in this same sweep tick.  The CAS inside
+            # mark_agent_shutdown_complete is a no-op for non-draining rows, so
+            # this call is safe for ALL newly-offline rows.
+            await mark_agent_shutdown_complete(agent_id=row.id, session=session)
 
         log.info(
             "agent_gateway.liveness_transition",
@@ -1370,8 +1862,8 @@ async def compute_agent_liveness_transitions(
         publish_general_after_commit(
             session,
             org_id=row.org_id,
-            kind=GeneralEventKind.AGENT_LIVENESS_CHANGED,
-            payload={},
+            kind=GeneralEventKind.AGENT_CHANGED,
+            payload={"agent_id": str(row.id)},
         )
 
     return newly_offline
@@ -1415,6 +1907,7 @@ async def list_agents_for_org(
             "id": row.id,
             "instance_id": row.instance_id,
             "state": row.state,
+            "lifecycle": row.lifecycle,
             "last_heartbeat_at": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None,
             "os": row.os,
             "cpu_count": row.cpu_count,

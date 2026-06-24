@@ -362,12 +362,13 @@ components:
           description: Long-poll horizon. 0 returns immediately if no work.
         lifecycle:
           type: string
-          enum: [unconfigured, configured]
+          enum: [unconfigured, active, draining, shutdown]
           description: |
-            Agent lifecycle state. `unconfigured` means the agent has not yet
-            received a ConfigUpdate; the backend returns ConfigUpdateCommand.
-            `configured` means the agent is ready for workspace commands; the
-            backend returns the first eligible queued command.
+            Agent lifecycle state.
+            `unconfigured` — agent has not yet received a ConfigUpdate; backend returns ConfigUpdateCommand.
+            `active` — agent is ready for workspace commands; backend returns the first eligible queued command.
+            `draining` — agent is draining; accepts no new workspaces (`new_workspaces=0`); still receives in-flight workspace commands and agent-scoped commands.
+            `shutdown` — reserved; the agent itself never sends this on a claim (it exits before that).
           default: unconfigured
         new_workspaces:
           type: integer
@@ -395,6 +396,8 @@ components:
         - $ref: '#/components/schemas/InvokeClaudeCodeCommand'
         - $ref: '#/components/schemas/CleanupWorkspaceCommand'
         - $ref: '#/components/schemas/ConfigUpdateCommand'
+        - $ref: '#/components/schemas/ShutdownCommand'
+        - $ref: '#/components/schemas/CancelShutdownCommand'
       discriminator:
         propertyName: kind
         mapping:
@@ -404,6 +407,8 @@ components:
           InvokeClaudeCode: '#/components/schemas/InvokeClaudeCodeCommand'
           CleanupWorkspace: '#/components/schemas/CleanupWorkspaceCommand'
           ConfigUpdate: '#/components/schemas/ConfigUpdateCommand'
+          Shutdown: '#/components/schemas/ShutdownCommand'
+          CancelShutdown: '#/components/schemas/CancelShutdownCommand'
 
     CommandBase:
       type: object
@@ -665,6 +670,59 @@ components:
             the terminal AgentEvent; backend verifies it by hash before
             accepting the event. Absent when the command was not claimed via
             the normal FIFO path.
+
+    ShutdownCommand:
+      type: object
+      required: [command_id, traceparent, kind]
+      description: |
+        Agent-scoped command requesting the agent to drain. Carries no workspace_id —
+        applies globally to the agent process. When executed, the agent flips its
+        local lifecycle to "draining", accelerates its heartbeat to 5s, and triggers
+        a clean exit once all active workspaces have completed.
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        traceparent:
+          type: string
+        kind:
+          type: string
+          enum: [Shutdown]
+        completion_token:
+          type: string
+          nullable: true
+          description: Per-command capability token minted at claim. Agent echoes it on the terminal AgentEvent.
+        workflow_execution_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Always null for agent-scoped commands.
+
+    CancelShutdownCommand:
+      type: object
+      required: [command_id, traceparent, kind]
+      description: |
+        Agent-scoped command cancelling an in-progress drain. Carries no workspace_id.
+        When executed, the agent flips its local lifecycle back to "active" and resumes
+        accepting new workspace commands.
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        traceparent:
+          type: string
+        kind:
+          type: string
+          enum: [CancelShutdown]
+        completion_token:
+          type: string
+          nullable: true
+          description: Per-command capability token minted at claim. Agent echoes it on the terminal AgentEvent.
+        workflow_execution_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Always null for agent-scoped commands.
 
     AgentEvent:
       type: object

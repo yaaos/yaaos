@@ -17,7 +17,7 @@ export interface NavLink {
   id: string; // stable id used for active-route matching + group keys
   label: string;
   icon: LucideIcon;
-  /** Path WITHIN an org context (e.g. "/dashboard"). The sidebar prepends `/org/{slug}`. */
+  /** Path WITHIN an org context (e.g. "/workspaces"). The sidebar prepends `/org/{slug}`. */
   path: string;
   role?: NavRole;
 }

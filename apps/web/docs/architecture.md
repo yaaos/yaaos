@@ -20,13 +20,15 @@ Three groupings under `apps/web/src/`:
 
 - **TanStack Query** — single `QueryClient` in `main.tsx`. Keys are module-scoped arrays; see [patterns.md § Query keys](patterns.md#query-keys). Hooks use `useSuspenseQuery`; callers wrap in `<Suspense>` + `<ErrorBoundary>` from `react-error-boundary`.
 - **SSE** — `useServerEvents()` (`core/sse`) runs in the root `AppShell`. One org-keyed `EventSource` (`?org=<slug>`, since `EventSource` can't send `X-Yaaos-Org-Slug`) → `ticket_status_changed` → `invalidateQueries(...)`. Domain modules consume queries, not events. See [core_sse.md](core_sse.md).
-- **Routing** — `src/router.tsx` (composition root) declares the full route tree; `core/routing` owns the search schemas. Domain modules export their page components. See [core_routing.md](core_routing.md).
+- **Routing** — `src/router.tsx` (composition root) declares the full route tree; `core/routing` owns the search schemas. Domain modules export their page components. Default post-auth landing is `/org/$slug/workspaces` (`orgWorkspacesRoute`). See [core_routing.md](core_routing.md).
 - **Org slug** — derived from the URL on every read (`core/api/org-context.ts`). No module-global cache. `apiFetch` attaches `X-Yaaos-Org-Slug`; domain hooks stay org-agnostic at the call site.
 - **Generated types** — `src/core/api/generated/schema.d.ts` is generated from the committed backend artifact `apps/backend/openapi/web-api.json` by `bin/gen-api-types` and committed. `/api/testing/*` paths are excluded upstream (stripped in the backend artifact). `bin/gen-api-types --check` (regenerate + compare against the committed file) runs as a gating stage in `bin/ci` before `tsc` — no running backend required. Only `core/api` imports the generated dir.
 - **MSW test infra** — `src/test/msw/` holds the Node.js MSW server and per-domain handlers. Global lifecycle in `src/test-setup.ts`. Domain tests use real `QueryClient` + real `apiFetch` + MSW HTTP interception. See [patterns.md § MSW testing strategy](patterns.md#msw-testing-strategy).
 - **Observability** — `core/observability` initializes the OTel Web SDK at boot (`configure()` in `main.tsx`). `FetchInstrumentation` injects `traceparent` on same-origin `/api/` fetches only (cross-origin fetches never receive it) so browser spans continue as children of the backend trace. Render errors flow through `react-error-boundary` → `recordException` → span exception events (not console.error). See [core_observability.md](core_observability.md).
 
 ## Key flows
+
+**Domain modules:** `domain/workspaces` (live fleet page, `orgWorkspacesRoute` at `/workspaces`) · `domain/tickets` · `domain/lessons` · `domain/org_settings` · `domain/notifications` · `domain/auth` · `domain/user` · `domain/orgs`.
 
 **SSE → re-render** (crosses core/sse → core/api → domain):
 `EventSource message` → `useServerEvents` maps `kind` → `qc.invalidateQueries(key)` → TanStack Query refetch → domain component re-renders.
