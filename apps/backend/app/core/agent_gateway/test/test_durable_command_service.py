@@ -35,6 +35,7 @@ from app.core.agent_gateway.types import (
     WriteFilesCommand,
     WriteFilesEntry,
 )
+from app.core.tenancy import get_org_full
 from app.testing.e2e_setup import seed_agent, seed_org
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -221,7 +222,9 @@ async def test_unconfigured_claim_returns_only_config_update(db_session) -> None
     from app.core.agent_gateway.types import ConfigUpdateCommand  # noqa: PLC0415
 
     assert isinstance(command, ConfigUpdateCommand)
-    assert command.config.max_workspaces == 4  # orgs.workspace_max_count server default
+    org_full = await get_org_full(db_session, org_id)
+    assert org_full is not None
+    assert command.config.max_workspaces == org_full.workspace_max_count
 
     # The pending workspace command must still be pending (not claimed).
     row = (
