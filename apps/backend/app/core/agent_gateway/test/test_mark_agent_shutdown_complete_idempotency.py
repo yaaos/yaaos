@@ -145,3 +145,66 @@ async def test_mark_shutdown_complete_active_lifecycle_returns_false(db_session)
     assert result is False
     await db_session.refresh(row)
     assert row.lifecycle == "active"  # unchanged
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_mark_shutdown_complete_pins_state_offline_and_stamps_last_shutdown_at(
+    db_session,
+) -> None:
+    """CAS winner also flips state→offline + stamps last_shutdown_at.
+
+    Without this, the dashboard would render "Online / Shutdown" until the
+    next 5-min heartbeat-miss sweep — the agent process is already gone.
+    """
+    from app.core.agent_gateway.service import mark_agent_shutdown_complete  # noqa: PLC0415
+
+    row = await _create_agent_with_org(db_session, lifecycle="draining")
+    assert row.state == "reachable"
+    assert row.last_shutdown_at is None
+    await db_session.commit()
+
+    result = await mark_agent_shutdown_complete(agent_id=row.id, session=db_session)
+    await db_session.commit()
+
+    assert result is True
+    await db_session.refresh(row)
+    assert row.lifecycle == "shutdown"
+    assert row.state == "offline"
+    assert row.last_shutdown_at is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_liveness_sweeper_does_not_churn_shutdown_state_back_to_reachable(
+    db_session,
+) -> None:
+    """Sweeper skips lifecycle='shutdown' rows.
+
+    After a graceful drain `state='offline'` even though last_heartbeat_at is
+    recent (the agent was heartbeating up to the moment it exited).  The sweep
+    must not re-classify shutdown rows back to reachable/stale based on the
+    recent heartbeat.
+    """
+    from app.core.agent_gateway.service import (  # noqa: PLC0415
+        compute_agent_liveness_transitions,
+        mark_agent_shutdown_complete,
+    )
+
+    row = await _create_agent_with_org(db_session, lifecycle="draining")
+    await db_session.commit()
+
+    await mark_agent_shutdown_complete(agent_id=row.id, session=db_session)
+    await db_session.commit()
+
+    # Sweep "right after" shutdown — last_heartbeat_at is still very fresh.
+    newly_offline = await compute_agent_liveness_transitions(
+        datetime.now(UTC),
+        session=db_session,
+    )
+    await db_session.commit()
+
+    assert row.id not in newly_offline  # nothing transitioned
+    await db_session.refresh(row)
+    assert row.state == "offline"  # state preserved — sweeper did not churn
+    assert row.lifecycle == "shutdown"
