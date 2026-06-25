@@ -162,6 +162,42 @@ async def test_enqueue_config_update_for_all_org_agents_inserts_rows(db_session)
     )
 
 
+@pytest.mark.service
+async def test_fan_out_resolves_per_org_inputs_once(db_session) -> None:
+    """The fan-out path resolves the per-org `AgentConfig` (org row + BYOK
+    secrets) exactly once and reuses it across every agent — not once per
+    agent. Regression-locks the O(N)→O(1) collapse in
+    `enqueue_config_update_for_all_org_agents`."""
+    from app.core.agent_gateway import (  # noqa: PLC0415
+        clear_byok_secrets_provider,
+        enqueue_config_update_for_all_org_agents,
+        register_byok_secrets_provider,
+    )
+
+    org_id = await seed_org()
+    # Three agents so a per-agent call would inflate the counter to 3.
+    await _make_agent(org_id=org_id)
+    await _make_agent(org_id=org_id)
+    await _make_agent(org_id=org_id)
+
+    calls = 0
+
+    async def counting_provider(oid, *, session):
+        nonlocal calls
+        calls += 1
+        return {}
+
+    clear_byok_secrets_provider()
+    register_byok_secrets_provider(counting_provider)
+    try:
+        await enqueue_config_update_for_all_org_agents(org_id, session=db_session)
+        await db_session.flush()
+    finally:
+        clear_byok_secrets_provider()
+
+    assert calls == 1, f"BYOK provider must be called exactly once per fan-out; got {calls}"
+
+
 # ── byok.set triggers ConfigUpdate fan-out ──────────────────────────────────
 
 

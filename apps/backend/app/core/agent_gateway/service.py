@@ -329,6 +329,39 @@ async def get_command_workflow_execution_id(
     return row[0]
 
 
+async def _build_agent_config(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> AgentConfig:
+    """Build the per-org `AgentConfig` body from current Settings + per-org BYOK secrets.
+
+    Invariant per `(org_id, session)` within one transaction — the org fetch
+    and BYOK provider read are both deterministic — so the fan-out path can
+    safely call this once and reuse the result across N agents.
+    """
+    from app.core.agent_gateway.byok_provider import get_byok_secrets_provider  # noqa: PLC0415
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.tenancy import get_org_full  # noqa: PLC0415
+
+    settings = get_settings()
+    org_full = await get_org_full(session, org_id)
+    if org_full is None:
+        raise LookupError(f"org {org_id} not found")
+    byok_secrets: dict = {}
+    provider = get_byok_secrets_provider()
+    if provider is not None:
+        byok_secrets = await provider(org_id, session=session)
+    return AgentConfig(
+        max_workspaces=org_full.workspace_max_count,
+        otlp_endpoint=settings.yaaos_dash0_endpoint,
+        otlp_token=settings.yaaos_agent_dash0_bearer_token,
+        otlp_dataset=settings.yaaos_dash0_dataset,
+        environment=settings.environment,
+        byok_secrets=byok_secrets,
+    )
+
+
 async def _build_config_update_dto(
     org_id: UUID,
     *,
@@ -343,30 +376,41 @@ async def _build_config_update_dto(
     """
     from uuid import uuid7  # noqa: PLC0415
 
-    from app.core.agent_gateway.byok_provider import get_byok_secrets_provider  # noqa: PLC0415
-    from app.core.config import get_settings  # noqa: PLC0415
-    from app.core.tenancy import get_org_full  # noqa: PLC0415
+    config = await _build_agent_config(org_id, session=session)
+    return ConfigUpdateCommand(command_id=uuid7(), traceparent="", config=config)
 
-    settings = get_settings()
-    org_full = await get_org_full(session, org_id)
-    if org_full is None:
-        raise LookupError(f"org {org_id} not found")
-    byok_secrets: dict = {}
-    provider = get_byok_secrets_provider()
-    if provider is not None:
-        byok_secrets = await provider(org_id, session=session)
-    return ConfigUpdateCommand(
-        command_id=uuid7(),
-        traceparent="",
-        config=AgentConfig(
-            max_workspaces=org_full.workspace_max_count,
-            otlp_endpoint=settings.yaaos_dash0_endpoint,
-            otlp_token=settings.yaaos_agent_dash0_bearer_token,
-            otlp_dataset=settings.yaaos_dash0_dataset,
-            environment=settings.environment,
-            byok_secrets=byok_secrets,
-        ),
+
+async def _enqueue_config_update_with_config(
+    agent_id: UUID,
+    *,
+    org_id: UUID,
+    config: AgentConfig,
+    session: AsyncSession,
+) -> None:
+    """Insert one ConfigUpdate row for `agent_id` using a pre-built `AgentConfig`.
+
+    Per-row work: mints a fresh `command_id`, inserts the row, then stamps
+    `agent_id` + a placeholder `completion_token_hash` (overwritten by
+    `claim_next` at claim time). The fan-out path reuses the same `config`
+    across every agent in the org.
+    """
+    from uuid import uuid7  # noqa: PLC0415
+
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    cmd = ConfigUpdateCommand(command_id=uuid7(), traceparent="", config=config)
+    # Pre-stamp the agent_id so the unconfigured claim SELECT finds it without
+    # a workspace_ids sweep. `enqueue_command` leaves agent_id NULL; we patch it
+    # immediately after — also setting a placeholder `completion_token_hash`
+    # (claim-time mint overwrites it).
+    await enqueue_command(org_id=org_id, command=cmd, session=session)
+    placeholder_hash = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
+    await session.execute(
+        update(AgentCommandRow)
+        .where(AgentCommandRow.id == cmd.command_id)
+        .values(agent_id=agent_id, completion_token_hash=placeholder_hash)
     )
+    await session.flush()
 
 
 async def enqueue_config_update_for_agent(
@@ -390,21 +434,8 @@ async def enqueue_config_update_for_agent(
 
     Caller commits.
     """
-    cmd = await _build_config_update_dto(org_id, session=session)
-    # Pre-stamp the agent_id so the unconfigured claim SELECT finds it without
-    # a workspace_ids sweep. `enqueue_command` leaves agent_id NULL; we patch it
-    # immediately after — also setting a placeholder `completion_token_hash`
-    # (claim-time mint overwrites it).
-    await enqueue_command(org_id=org_id, command=cmd, session=session)
-    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
-
-    placeholder_hash = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
-    await session.execute(
-        update(AgentCommandRow)
-        .where(AgentCommandRow.id == cmd.command_id)
-        .values(agent_id=agent_id, completion_token_hash=placeholder_hash)
-    )
-    await session.flush()
+    config = await _build_agent_config(org_id, session=session)
+    await _enqueue_config_update_with_config(agent_id, org_id=org_id, config=config, session=session)
 
 
 async def enqueue_config_update_for_all_org_agents(
@@ -414,9 +445,14 @@ async def enqueue_config_update_for_all_org_agents(
 ) -> None:
     """Insert a ConfigUpdate command row for every reachable agent in the org.
 
-    Used to fan-out a BYOK key change (set or clear) to all currently-registered
-    agents so each agent's next claim picks up the updated byok_secrets. Agents
-    that are not yet configured (no prior ConfigUpdate) are also notified.
+    Used to fan-out a BYOK key change (set or clear) or a `workspace_max_count`
+    update to all currently-registered agents so each agent's next claim picks
+    up the new config. Agents that are not yet configured (no prior
+    ConfigUpdate) are also notified.
+
+    The per-org `AgentConfig` is built once and reused across every agent in
+    the org — the per-agent work is just minting `command_id`, inserting the
+    row, and stamping `agent_id` + `completion_token_hash`.
 
     Caller commits. No-op when the org has no agents.
     """
@@ -427,8 +463,11 @@ async def enqueue_config_update_for_all_org_agents(
         .scalars()
         .all()
     )
+    if not rows:
+        return
+    config = await _build_agent_config(org_id, session=session)
     for agent_id in rows:
-        await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=session)
+        await _enqueue_config_update_with_config(agent_id, org_id=org_id, config=config, session=session)
 
 
 def _row_to_command(row: object) -> AgentCommand:
