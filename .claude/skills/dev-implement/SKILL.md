@@ -1,7 +1,7 @@
 ---
 name: dev-implement
 description: Slash command /dev-implement [slug] — execute plan/ticket/<slug>/plan.md phase by phase, commit, push, and open a PR. Basic, no embellishment. Manual trigger only.
-model: claude-opus-4-7
+model: claude-sonnet-5
 effort: xhigh
 ---
 
