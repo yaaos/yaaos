@@ -307,23 +307,3 @@ async def delete_user_artifacts(user_id: UUID) -> dict[str, bool]:
     _guard_dev()
     await service.delete_user(user_id)
     return {"deleted": True}
-
-
-class _SetOrgIamArnRequest(BaseModel):
-    org_slug: str
-    iam_arn: str
-    aws_region: str = "us-east-1"
-
-
-@router.post("/seed/org_iam_arn")
-async def set_org_iam_arn(req: _SetOrgIamArnRequest) -> dict[str, str]:
-    """Override an org's IAM ARN to a custom value.
-
-    Useful in tests that need a configured org (non-null ``registered_iam_arn``)
-    without the test-agent Docker container registering to it — supply an ARN
-    that mock-aws never returns.
-    """
-    _guard_dev()
-    return await service.set_org_iam_arn(
-        org_slug=req.org_slug, iam_arn=req.iam_arn, aws_region=req.aws_region
-    )

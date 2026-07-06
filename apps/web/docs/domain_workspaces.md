@@ -53,9 +53,9 @@ The Settings → Workspaces page is a separate surface at `/org/$slug/settings/w
 - `test/AgentSections.test.tsx` — component/Vitest: section partitioning by (state, lifecycle), sort order within sections, hide-empty rule, status-pair label formatting.
 - `test/admin-controls.test.tsx` — component/Vitest: admin sees checkboxes + bulk buttons; non-admin does not; select-all and per-card checkbox mechanics; button disabled/enabled states.
 - `test/dialogs.test.tsx` — component/Vitest: ShutdownDialog and CancelShutdownDialog copy, confirm callback, cancel dismiss.
+- `test/empty-state.test.tsx` — component/Vitest + MSW: EmptyState with CTA renders when configured and zero agents; NotConfiguredBanner renders when unconfigured and zero agents.
 - `test/mixed-outcome-toast.test.tsx` — unit/Vitest: `shutdownToastMessage` and `cancelShutdownToastMessage` all-success, mixed, all-no-op outcomes; already_shutdown suffix.
 - `apps/e2e/tests/workspaces-agents.spec.ts` — Playwright: navigate to /workspaces, agent card appears via SSE, correct section placement.
 - `apps/e2e/tests/workspaces-admin-drain.spec.ts` — Playwright: owner selects active agents, shuts them down, cards move to Draining.
 - `apps/e2e/tests/workspaces-admin-cancel-shutdown.spec.ts` — Playwright: owner selects draining agents, cancels shutdown, cards move to Active.
 - `apps/e2e/tests/workspaces-builder-readonly.spec.ts` — Playwright: builder sees cards but no checkboxes or buttons.
-- `apps/e2e/tests/workspaces-empty-state.spec.ts` — Playwright: empty-state EmptyState renders with CTA when org has zero agents and is configured.
