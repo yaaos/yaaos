@@ -41,7 +41,6 @@ from app.testing.e2e_setup.service import (
     seed_user_with_session,
     seed_workspace,
     seed_workspace_agent,
-    set_org_iam_arn,
     set_session_last_seen,
     stage_oauth_test_profile,
 )
@@ -66,7 +65,6 @@ __all__: list[str] = [
     "seed_user_with_session",
     "seed_workspace",
     "seed_workspace_agent",
-    "set_org_iam_arn",
     "set_session_last_seen",
     "stage_oauth_test_profile",
 ]
