@@ -3,9 +3,10 @@
 Inherits directly from `AgentDispatchCommand` rather than `WorkspaceOpCommand`
 because no workspace row exists yet when this command runs — `dispatch_via_workspace`
 (Layer 2) requires a row to look up `org_id` and `owning_agent_id`, so this
-command uses `dispatch_provision_workspace` (Layer 1) directly. The workspace
-row is created lean on the agent's first workspace event by the sink in
-`agent_report.py`.
+command's `dispatch` delegates to the plain `dispatch_provision` function in
+`core.workspace.dispatch`, which calls `dispatch_provision_workspace` (Layer 1)
+directly. The workspace row is created lean on the agent's first workspace
+event by the sink in `agent_report.py`.
 """
 
 from __future__ import annotations
@@ -16,13 +17,8 @@ from uuid import UUID, uuid7
 import structlog
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from app.core.agent_gateway import (
-    AuthBlock,
-    RepoRef,
-)
 from app.core.workflow import AgentDispatchCommand, CommandContext, Outcome
-from app.core.workspace.remote_provider import dispatch_provision_workspace
-from app.core.workspace.service import list_workspace_providers
+from app.core.workspace.dispatch import ProvisionWorkspaceSpec, dispatch_provision
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,57 +90,29 @@ class ProvisionWorkspace(AgentDispatchCommand):
         *,
         session: AsyncSession,
     ) -> UUID:
-        """Mint a `workspace_id` UUID (no row yet), fetch install credentials,
-        enqueue a `ProvisionWorkspace` AgentCommand durably inside the caller's
-        transaction, and return its command_id. The `workspaces` row is created
-        lean on the agent's first workspace event (`created` or `ready`) by the
-        sink in `agent_report.py`.
+        """Mint a `workspace_id` UUID (no row yet) and delegate to
+        `core.workspace.dispatch.dispatch_provision` to fetch install
+        credentials and enqueue the `ProvisionWorkspace` AgentCommand. The
+        `workspaces` row is created lean on the agent's first workspace event
+        (`created` or `ready`) by the sink in `agent_report.py`.
 
-        `clone_url` and `installation_token` come from `core/vcs.get_install_credentials`
-        so credentials are fetched at dispatch time. Commit identity
-        (`git_user_name`/`git_user_email`) is not set here — it defaults to the
-        backend-supplied constants on `ProvisionWorkspaceCommand` itself.
         Raises `VcsInstallNotFound` when the org has no active VCS App installation.
         """
-        import app.core.vcs as _vcs  # noqa: PLC0415
-
-        providers = list_workspace_providers()
-        if not providers:
-            raise RuntimeError("no workspace provider registered")
-
         ws_id = uuid7()
-
-        creds = await _vcs.get_install_credentials(
-            inputs.plugin_id,
-            inputs.org_id,
-            inputs.repo_external_id,
-        )
-
-        repo = RepoRef(
+        spec = ProvisionWorkspaceSpec(
+            workspace_id=ws_id,
+            org_id=inputs.org_id,
             plugin_id=inputs.plugin_id,
-            external_id=inputs.repo_external_id,
-            clone_url=creds.clone_url,
+            repo_external_id=inputs.repo_external_id,
             head_sha=inputs.head_sha,
             branch_name=inputs.branch_name,
             base_sha=inputs.base_sha,
         )
-        auth = AuthBlock(
-            kind="github_installation",
-            token=creds.installation_token.get_secret_value(),
-        )
-        result = await dispatch_provision_workspace(
-            inputs.org_id,
-            ws_id,
-            repo=repo,
-            auth=auth,
-            traceparent="",
-            session=session,
-            workflow_execution_id=UUID(ctx.workflow_execution_id),
-        )
+        command_id = await dispatch_provision(spec, ctx, session=session)
         log.debug(
             "provision_workspace.dispatched",
             workflow_execution_id=ctx.workflow_execution_id,
             workspace_id=str(ws_id),
-            command_id=str(result.command_id),
+            command_id=str(command_id),
         )
-        return result.command_id
+        return command_id

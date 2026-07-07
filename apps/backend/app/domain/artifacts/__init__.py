@@ -2,9 +2,11 @@
 
 No descriptor/lineage entity — the lineage ("the ticket's requirements
 document") is the `(ticket_id, stage_name)` group. Read-only for humans;
-revisions arrive only via instruct/re-run on a later engine phase.
+revisions arrive only via instruct/re-run once the run engine drives them.
 """
 
+# Side-effect import: registers /api/artifacts/* routes.
+import app.domain.artifacts.web  # noqa: F401
 from app.domain.artifacts.service import (
     ArtifactNotFoundError,
     get,

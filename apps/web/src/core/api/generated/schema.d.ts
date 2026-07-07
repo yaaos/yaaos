@@ -61,6 +61,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Artifacts Endpoint */
+        get: operations["list_artifacts_endpoint_api_artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/artifacts/{artifact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Artifact Endpoint */
+        get: operations["get_artifact_endpoint_api_artifacts__artifact_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit": {
         parameters: {
             query?: never;
@@ -1947,6 +1981,71 @@ export interface components {
             /** Body */
             body: string;
         };
+        /** ArtifactDetailResponse */
+        ArtifactDetailResponse: {
+            /** Body */
+            body: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Final */
+            is_final: boolean;
+            /** Iteration */
+            iteration: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Stage Name */
+            stage_name: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * ArtifactGroup
+         * @description Versions grouped by `stage_name` — the version-dropdown shape.
+         */
+        ArtifactGroup: {
+            /** Stage Name */
+            stage_name: string;
+            /** Versions */
+            versions: components["schemas"]["ArtifactMeta"][];
+        };
+        /**
+         * ArtifactMeta
+         * @description Metadata-only view of one artifact version — no body.
+         */
+        ArtifactMeta: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Final */
+            is_final: boolean;
+            /** Iteration */
+            iteration: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Version */
+            version: number;
+        };
         /** AuditEntryView */
         AuditEntryView: {
             /** Actor Kind */
@@ -2323,6 +2422,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** ListArtifactsResponse */
+        ListArtifactsResponse: {
+            /** Artifacts */
+            artifacts: components["schemas"]["ArtifactGroup"][];
         };
         /** ListPipelinesResponse */
         ListPipelinesResponse: {
@@ -3027,6 +3131,76 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_artifacts_endpoint_api_artifacts_get: {
+        parameters: {
+            query: {
+                ticket_id: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListArtifactsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_artifact_endpoint_api_artifacts__artifact_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                artifact_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDetailResponse"];
                 };
             };
             /** @description Validation Error */

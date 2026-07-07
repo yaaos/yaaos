@@ -15,7 +15,8 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 - **Remote-dispatch only.** All review work dispatches via the `WorkspaceAgent` — the control plane never execs the CLI in-process.
 - **Plugin owns skill resolution, stdout parsing, and settings validation.** `core/coding_agent` owns dispatch and the run lifecycle; plugins own the exec-spec shape, parse logic, and schema enforcement for their settings.
 - **BYOK secrets delivered via ConfigUpdate, not invocation env.** `build_byok_secrets_for_org` aggregates per-org secrets across all registered plugins and registers as the `BytokSecretsProvider` IoC seam in `core/agent_gateway`. `_build_config_update_dto` calls the provider to populate `AgentConfig.byok_secrets` on every ConfigUpdate. The agent injects them as env vars when spawning Claude Code. `InvokeCodingAgent.env` is intentionally empty — no credentials travel via the exec env.
-- **`dispatch_invocation` is Layer 3 — the full intent-to-wire helper.** Takes `workspace_id`, `invocation`, `plugin`, `ctx`, `session`. Loads the workspace owner for `org_id`, calls `plugin.compile_invocation(invocation)` to get the exec block, builds an `InvokeClaudeCodeCommand`, delegates to `dispatch_via_workspace` (Layer 2 in `core/workspace`) with `claim_workspace=True`, then inserts a `coding_agent_runs` row. Returns the minted `command_id`. Durable iff the caller's transaction commits.
+- **`dispatch_invocation` is Layer 3 — the full intent-to-wire helper.** Takes `invocation`, `plugin`, `ctx`, a required caller-minted `command_id`, `session`. Loads the workspace owner for `org_id`, calls `plugin.compile_invocation(invocation)` to get the exec block, builds an `InvokeClaudeCodeCommand`, delegates to `dispatch_via_workspace` (Layer 2 in `core/workspace`) with `claim_workspace=True`, then inserts a `coding_agent_runs` row. Returns `command_id`. Durable iff the caller's transaction commits.
+- **`command_id` is caller-minted, not minted inside `dispatch_invocation`.** A caller that needs the id before dispatch (`domain/pipelines`'s skill-stage dispatch needs it for the skill's `artifact_path = "$TMPDIR/<command_id>.md"`) mints it first and passes it in. `CodingAgentCommand.@final dispatch` (the old engine's sole caller) mints its own `uuid7()` immediately before calling `dispatch_invocation` — no default, no shim.
 
 ## `CodingAgentPlugin` Protocol
 
@@ -40,13 +41,13 @@ The `@final dispatch` (inherited from `AgentDispatchCommand`) calls `build_invoc
 
 ### `dispatch_invocation`
 
-`dispatch_invocation(*, workspace_id: UUID, invocation: Invocation, plugin: CodingAgentPlugin, ctx: CommandContext, session: AsyncSession) -> UUID`
+`dispatch_invocation(*, invocation: Invocation, plugin: CodingAgentPlugin, ctx: CommandContext, command_id: UUID, session: AsyncSession) -> UUID`
 
-Layer 3 helper in `service.py`. Flow:
-1. `get_workspace_owner(workspace_id)` — loads `org_id` + `owning_agent_id` from the workspace row; raises `WorkspaceNotFoundError` if absent.
+Layer 3 helper in `service.py`. `workspace_id` is read from `invocation.workspace_id`. Flow:
+1. `get_workspace_owner(invocation.workspace_id)` — loads `org_id` + `owning_agent_id` from the workspace row; raises `WorkspaceNotFoundError` if absent.
 2. `plugin.compile_invocation(invocation)` — translates high-level intent to an exec block; raises `CodingAgentError` on unknown skills.
 3. Computes `skill_path = f".claude/skills/{invocation.skill}/SKILL.md"` — the conventional on-disk path of the named skill inside the checkout. Exception: `invocation.skill == "pr_review"` (the legacy reviewer's hardcoded skill identifier — `ClaudeCodePlugin.compile_invocation` only ever accepts this value) gets `skill_path = ""` — that flow renders its whole prompt inline and reviews arbitrary third-party repos that were never expected to carry a yaaos skill file. An empty `skill_path` resolves to the workspace root on the agent side (always present), so the pre-spawn check always succeeds for it. The exemption goes away once the legacy reviewer's dispatch path is removed.
-4. Mints a UUIDv7 `command_id`; builds `InvokeClaudeCodeCommand` with `invocation.exec` wrapped correctly and `skill_path` set.
+4. Builds `InvokeClaudeCodeCommand` from the caller-supplied `command_id` with `invocation.exec` wrapped correctly and `skill_path` set.
 5. `dispatch_via_workspace(command, workspace_id, ctx, session, claim_workspace=True)` — Layer 2: enqueues, pins to owning agent, atomically claims via `try_claim`; raises `WorkspaceClaimFailed` when busy or inactive.
 6. `create_run(...)` — inserts `coding_agent_runs` row.
 Returns `command_id`. `org_id` is resolved from the workspace row, not a caller parameter.
@@ -123,7 +124,7 @@ Partitioned RANGE on `created_at` (weekly child partitions, ~4-week TTL). One ro
 
 - `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `set_coding_agents_for_tests` isolation.
 - `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set, Protocol has exactly `compile_invocation` + `byok_requirement` + `parse_result` + `validate_settings`, retired names not importable.
-- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns UUIDv7, inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` on the enqueued command from the `.claude/skills/<skill_name>/SKILL.md` convention.
+- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns exactly the caller-supplied `command_id` (a UUIDv7), inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` on the enqueued command from the `.claude/skills/<skill_name>/SKILL.md` convention.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service: create/finalize round-trip, activity blob, `get_step_activity`.
 - `app/core/coding_agent/test/test_sink_uses_parse_result_service.py` — service: `CodingAgentRunSinkImpl.handle_terminal_event` calls `plugin.parse_result`, writes run row, returns `output` + `error_message`; non-`InvokeClaudeCode` kinds return `None`.
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `_parse_usage` + `_render_activity_log` private helpers.

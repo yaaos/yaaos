@@ -34,6 +34,8 @@ None. Transport only — Redis is the substrate.
 - `agent_changed` — workspace-agent state change (liveness transition, heartbeat, or lifecycle flip); payload carries `{agent_id}`; org-scoped
 - `workflow_state_changed` — workflow_executions row state transition; payload carries `{ticket_id, workflow_execution_id, state}`; published by [`core/workflow`](core_workflow.md) at every `wfx.state =` site so the Ticket page's run view re-fetches without polling
 - `run_state_changed` — `pipeline_runs` row state transition; payload carries `{ticket_id, run_id, state}`; published by [`domain/pipelines`](domain_pipelines.md) at every run-state write (promotion to `running`, and every terminal)
+- `stage_state_changed` — a `stage_executions` row reached a terminal status (`completed`/`failed`); payload carries `{ticket_id, run_id}`; published by [`domain/pipelines`](domain_pipelines.md)
+- `artifact_stored` — a new `artifacts` row was written; payload carries `{ticket_id}`; published by [`domain/pipelines`](domain_pipelines.md) after `domain/artifacts.store`
 
 ## How it's tested
 

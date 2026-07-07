@@ -67,7 +67,7 @@ async def _seed_active_workspace(org_id: UUID) -> UUID:
 
 @pytest.mark.asyncio
 async def test_dispatch_invocation_returns_uuid(db_session) -> None:
-    """dispatch_invocation returns a UUID (the minted command_id)."""
+    """dispatch_invocation returns the caller-supplied command_id."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
@@ -76,6 +76,7 @@ async def test_dispatch_invocation_returns_uuid(db_session) -> None:
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -93,6 +94,7 @@ async def test_dispatch_invocation_inserts_run_row(db_session) -> None:
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -118,6 +120,7 @@ async def test_dispatch_invocation_run_row_correlates_via_get_run_id_for_command
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -142,6 +145,7 @@ async def test_dispatch_invocation_run_row_step_id(db_session) -> None:
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=ctx,
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -156,7 +160,9 @@ async def test_dispatch_invocation_run_row_step_id(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_invocation_idempotent_command_id_is_uuidv7(db_session) -> None:
-    """The returned command_id is a UUIDv7 (required by the FK check constraint on agent_commands)."""
+    """`dispatch_invocation` returns exactly the caller-supplied `command_id`
+    (required by the FK check constraint on `agent_commands` — callers must
+    mint a UUIDv7, never a plain uuid4)."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
@@ -165,6 +171,7 @@ async def test_dispatch_invocation_idempotent_command_id_is_uuidv7(db_session) -
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -175,7 +182,7 @@ async def test_dispatch_invocation_idempotent_command_id_is_uuidv7(db_session) -
 
 @pytest.mark.asyncio
 async def test_dispatch_invocation_different_calls_return_distinct_ids(db_session) -> None:
-    """Each dispatch mints a fresh command_id."""
+    """Each dispatch returns exactly the distinct `command_id` its caller supplied."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
@@ -184,6 +191,7 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -203,6 +211,7 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
         invocation=_invocation(ws_id2),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id2),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -229,6 +238,7 @@ async def test_dispatch_invocation_sets_skill_path_from_convention(db_session) -
         invocation=invocation,
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -252,6 +262,7 @@ async def test_dispatch_invocation_skill_path_empty_for_legacy_pr_review(db_sess
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -270,6 +281,7 @@ async def test_dispatch_invocation_workspace_not_found_raises(db_session) -> Non
             invocation=_invocation(nonexistent_ws_id),
             plugin=FakeCodingAgentPlugin(),
             ctx=_ctx(uuid.uuid4()),
+            command_id=uuid.uuid7(),
             session=db_session,
         )
 
@@ -296,5 +308,6 @@ async def test_dispatch_invocation_busy_workspace_raises_claim_failed(db_session
             invocation=_invocation(ws_id),
             plugin=FakeCodingAgentPlugin(),
             ctx=_ctx(wfe_id),
+            command_id=uuid.uuid7(),
             session=db_session,
         )

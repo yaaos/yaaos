@@ -9,6 +9,7 @@ per-step command classes. See `apps/backend/docs/domain_pipelines.md`.
 
 # Side-effect import: registers /api/pipelines/* routes.
 import app.domain.pipelines.web  # noqa: F401
+from app.core.agent_gateway import register_agent_event_consumer as _register_agent_event_consumer
 from app.domain.pipelines.definition import (
     ActionStage,
     BoundaryControl,
@@ -20,6 +21,7 @@ from app.domain.pipelines.definition import (
     SkillStage,
     Stage,
 )
+from app.domain.pipelines.engine import HANDLE_AGENT_EVENT as _HANDLE_AGENT_EVENT
 from app.domain.pipelines.service import (
     MissingInheritedArtifactError,
     NotEscalationTargetError,
@@ -100,3 +102,7 @@ __all__ = [
     "start_run",
     "update_pipeline",
 ]
+
+# Register into the shared agent-event consumer registry — the coexistence
+# bridge with `core/workflow` (see `core/agent_gateway.register_agent_event_consumer`).
+_register_agent_event_consumer(_HANDLE_AGENT_EVENT)

@@ -7,11 +7,11 @@ forbid_circular_dependencies = true
 
 [[modules]]
 path = "app.core.agent_gateway"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.core.workflow"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.audit_log"
-depends_on = ["app.core.database", "app.domain.tickets"]
+depends_on = ["app.core.database"]
 
 [[modules]]
 path = "app.core.auth"
@@ -95,7 +95,7 @@ depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core
 
 [[modules]]
 path = "app.core.workflow"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.observability", "app.core.sse", "app.core.tasks"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.observability", "app.core.sse", "app.core.tasks"]
 
 [[modules]]
 path = "app.core.workspace"
@@ -107,7 +107,7 @@ depends_on = ["app.domain.findings"]
 
 [[modules]]
 path = "app.domain.artifacts"
-depends_on = ["app.core.database"]
+depends_on = ["app.core.auth", "app.core.database", "app.core.sessions", "app.core.webserver"]
 
 [[modules]]
 path = "app.domain.findings"
@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pipelines"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.identity", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.domain.actions", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.identity", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.actions", "app.domain.artifacts", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.pr_review"
@@ -253,6 +253,7 @@ expose = [
   "compute_agent_liveness_transitions",
   "connection_status_for_org",
   "delete_identity_exchange_rate_limits",
+  "enqueue_agent_event",
   "enqueue_command",
   "enqueue_command_payload",
   "enqueue_config_update_for_all_org_agents",
@@ -274,6 +275,7 @@ expose = [
   "record_agent_event",
   "record_heartbeat",
   "record_workspace_event",
+  "register_agent_event_consumer",
   "register_byok_secrets_provider",
   "register_org_arn_lookup",
   "register_report_sink",
@@ -812,6 +814,7 @@ expose = [
   "ProvisionWorkspace",
   "ProvisionWorkspaceInputs",
   "ProvisionWorkspaceOutputs",
+  "ProvisionWorkspaceSpec",
   "RefreshWorkspaceAuth",
   "RefreshWorkspaceAuthInputs",
   "RefreshWorkspaceAuthOutputs",
@@ -835,6 +838,10 @@ expose = [
   "WorkspaceSpec",
   "WorkspaceStatus",
   "close_workspace",
+  "dispatch_auth_refresh",
+  "dispatch_cleanup",
+  "dispatch_provision",
+  "dispatch_push",
   "dispatch_via_workspace",
   "get_provider",
   "get_workspace_claim_state",

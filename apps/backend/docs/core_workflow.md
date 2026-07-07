@@ -6,7 +6,7 @@
 
 - **Owns:** `Workflow`, `StepRef`, `WorkflowCommand` types, engine state machine, three taskiq task bodies (`start_step`, `handle_agent_event`, `route_workflow`), `workflow_executions` + `pending_human_decisions` tables.
 - **Does not own:** business logic (callers register typed `Workflow` + `WorkflowCommand` impls); workspace provisioning ([`core/workspace`](core_workspace.md)); task durability ([`core/tasks`](core_tasks.md)).
-- **Boundary:** callers enqueue work by calling `engine.start()`; the engine routes via taskiq; terminal AgentEvents arrive from [`core/agent_gateway`](core_agent_gateway.md) via `handle_agent_event`.
+- **Boundary:** callers enqueue work by calling `engine.start()`; the engine routes via taskiq; terminal AgentEvents arrive from [`core/agent_gateway`](core_agent_gateway.md) via `handle_agent_event`, registered at this module's own import time into agent_gateway's agent-event consumer registry (coexistence bridge with `domain/pipelines` — see [core_agent_gateway.md § Agent-event consumer registry](core_agent_gateway.md#agent-event-consumer-registry)). `handle_agent_event`'s own body is unchanged: it already no-ops on an unrecognized `workflow_execution_id`.
 
 ## Why / invariants
 

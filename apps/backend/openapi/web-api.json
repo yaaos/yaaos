@@ -355,6 +355,121 @@
         "title": "Artifact",
         "type": "object"
       },
+      "ArtifactDetailResponse": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_final": {
+            "title": "Is Final",
+            "type": "boolean"
+          },
+          "iteration": {
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "stage_name",
+          "version",
+          "iteration",
+          "is_final",
+          "body",
+          "run_id",
+          "created_at"
+        ],
+        "title": "ArtifactDetailResponse",
+        "type": "object"
+      },
+      "ArtifactGroup": {
+        "description": "Versions grouped by `stage_name` — the version-dropdown shape.",
+        "properties": {
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactMeta"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stage_name",
+          "versions"
+        ],
+        "title": "ArtifactGroup",
+        "type": "object"
+      },
+      "ArtifactMeta": {
+        "description": "Metadata-only view of one artifact version — no body.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_final": {
+            "title": "Is Final",
+            "type": "boolean"
+          },
+          "iteration": {
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "run_id",
+          "iteration",
+          "is_final",
+          "created_at"
+        ],
+        "title": "ArtifactMeta",
+        "type": "object"
+      },
       "AuditEntryView": {
         "properties": {
           "actor_kind": {
@@ -1192,6 +1307,22 @@
           "updated_at"
         ],
         "title": "Lesson",
+        "type": "object"
+      },
+      "ListArtifactsResponse": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactGroup"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "artifacts"
+        ],
+        "title": "ListArtifactsResponse",
         "type": "object"
       },
       "ListPipelinesResponse": {
@@ -2888,6 +3019,156 @@
         "summary": "Validate Key",
         "tags": [
           "byok"
+        ]
+      }
+    },
+    "/api/artifacts": {
+      "get": {
+        "operationId": "list_artifacts_endpoint_api_artifacts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ticket_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ticket Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Artifacts Endpoint",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "get_artifact_endpoint_api_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Artifact Endpoint",
+        "tags": [
+          "artifacts"
         ]
       }
     },

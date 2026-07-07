@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from typing import TYPE_CHECKING, ClassVar, final
-from uuid import UUID
+from uuid import UUID, uuid7
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -126,6 +126,11 @@ class CodingAgentCommand(AgentDispatchCommand):
         context under the `output_schema` key so the skill prompt carries the
         validated response contract without each subclass having to set it.
 
+        Mints `command_id` here (`dispatch_invocation` requires it explicitly,
+        no default) — this is the sole shipped caller inside the old engine;
+        `domain/pipelines` mints its own earlier still, since it also needs
+        the id for the skill's `artifact_path`.
+
         The workspace is identified by `Invocation.workspace_id`, which the
         subclass sets in `build_invocation`. `dispatch` never reads `workspace_id`
         from the opaque `inputs` object — `inputs: object` is genuinely opaque
@@ -154,6 +159,7 @@ class CodingAgentCommand(AgentDispatchCommand):
                 invocation=invocation,
                 plugin=plugin,
                 ctx=ctx,
+                command_id=uuid7(),
                 session=session,
             )
         except Exception as exc:

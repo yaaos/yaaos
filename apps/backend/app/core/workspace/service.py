@@ -198,7 +198,7 @@ def _row_to_info(row: WorkspaceRow) -> WorkspaceInfo:
     return WorkspaceInfo(
         id=str(row.id),
         provider_id=row.provider_id,
-        sha=row.spec.get("sha", ""),
+        sha=row.spec.get("sha") or "",
         status=WorkspaceStatus(row.status),
         created_at=row.created_at,
         activated_at=row.activated_at,
@@ -422,8 +422,10 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     For each expired workspace that holds an in-flight `current_command_id`,
     the owning workflow execution is resolved from `agent_commands.workflow_execution_id`
     (the durable correlation column). A synthetic terminal-failure event is enqueued
-    via `HANDLE_AGENT_EVENT` so the WorkflowExecution resumes (fails the step)
-    rather than hanging in AWAITING_AGENT indefinitely.
+    via `agent_gateway.enqueue_agent_event` — the same agent-event consumer
+    registry `record_agent_event` uses — so whichever engine owns the
+    correlation id (`core/workflow` or `domain/pipelines`) resumes (fails the
+    step) rather than hanging in `AWAITING_AGENT`/`running` indefinitely.
 
     Workspaces with a NULL `owning_agent_id` (legacy rows) are skipped — they
     carry no owning pod to declare lost.
@@ -433,11 +435,10 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     DELETE handler (with the single agent's ID).
     """
     from app.core.agent_gateway import (  # noqa: PLC0415
+        enqueue_agent_event,
         get_command_workflow_execution_id,
         revoke_all_for_agent,
     )
-    from app.core.tasks import enqueue  # noqa: PLC0415
-    from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
 
     # Active workspaces whose owning pod is in the offline set.
     # CREATING is excluded: lean-created rows enter ACTIVE on first event;
@@ -485,15 +486,10 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
         if current_command_id is not None:
             holder_workflow_id = await get_command_workflow_execution_id(current_command_id, session=s)
             if holder_workflow_id is not None:
-                await enqueue(
-                    HANDLE_AGENT_EVENT,
-                    args={
-                        "workflow_execution_id": str(holder_workflow_id),
-                        "agent_command_id": str(current_command_id),
-                        "outcome_label": "failure",
-                        "outputs": {},
-                        "traceparent": None,
-                    },
+                await enqueue_agent_event(
+                    workflow_execution_id=holder_workflow_id,
+                    agent_command_id=current_command_id,
+                    outcome_label="failure",
                     session=s,
                 )
 

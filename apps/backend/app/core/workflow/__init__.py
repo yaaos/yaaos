@@ -3,6 +3,7 @@
 See `apps/backend/docs/core_workflow.md`.
 """
 
+from app.core.agent_gateway import register_agent_event_consumer as _register_agent_event_consumer
 from app.core.workflow.factories import step, workflow_input
 from app.core.workflow.service import (
     HANDLE_AGENT_EVENT,
@@ -113,3 +114,9 @@ __all__ = [
     "step",
     "workflow_input",
 ]
+
+# Register into the shared agent-event consumer registry so `core/agent_gateway`
+# never imports `core/workflow` directly — the coexistence bridge with
+# `domain/pipelines`. Its body already no-ops on an unknown/foreign
+# `workflow_execution_id`, so registering it here is side-effect-only.
+_register_agent_event_consumer(HANDLE_AGENT_EVENT)

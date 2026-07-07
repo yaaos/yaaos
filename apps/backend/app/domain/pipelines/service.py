@@ -3,8 +3,8 @@
 Definition CRUD (`create_pipeline` / `update_pipeline` / `delete_pipeline` /
 `get_pipeline` / `list_pipelines` / `pipeline_referenced_by_call`) is real.
 `start_run` and `request_cancel` are real, delegating the run-lifecycle
-mechanics (promotion, the `ROUTE_RUN`/`START_STAGE` taskiq trio, terminal
-bookkeeping) to `engine.py`. `start_rerun_from_stage`, `resolve_pause`,
+mechanics (promotion, the `ROUTE_RUN`/`START_STAGE`/`HANDLE_AGENT_EVENT`
+taskiq trio, terminal bookkeeping) to `engine.py`. `start_rerun_from_stage`, `resolve_pause`,
 `instantiate_template`, `list_templates`, `list_runs_for_ticket`,
 `get_run_overview`, and `has_run_in_flight` stay stubs — bodies raise
 `NotImplementedError`; only the signatures are load-bearing.

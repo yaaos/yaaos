@@ -7,8 +7,10 @@ calls it on each reaper tick.
 
 Event ingestion (`record_agent_event`) delegates the stale-claim guard lookup
 to the registered `WorkspaceAgentReportSink` (owned by `core/workspace`), then
-enqueues `core/workflow.handle_agent_event` via the outbox in the same
-transaction when the event is terminal.
+enqueues every task registered via `register_agent_event_consumer` — the
+list-shaped registry both `core/workflow` and `domain/pipelines` register
+into during coexistence — via the outbox in the same transaction when the
+event is terminal.
 
 `received` is a non-terminal event: when the agent POSTs it for a claimed
 command the lease is cancelled (`claimed → delivered`). Terminal events retire
@@ -59,7 +61,7 @@ from app.core.agent_gateway.types import (
     WriteFilesCommand,
 )
 from app.core.observability import current_traceparent
-from app.core.tasks import enqueue
+from app.core.tasks import TaskRef, enqueue
 
 log = structlog.get_logger("core.agent_gateway")
 _tracer = trace.get_tracer(__name__)
@@ -67,6 +69,27 @@ _tracer = trace.get_tracer(__name__)
 # Lease window in seconds: if a claimed command has no `received` event within
 # this window it is requeued to `pending`.
 LEASE_SECONDS: int = 30
+
+# ── Agent-event consumer registry ───────────────────────────────────────
+#
+# List-shaped (like the web/worker shutdown registries in
+# `app.core.shutdown_registry`) so multiple engines can independently resume
+# off the same terminal AgentEvent during coexistence. `record_agent_event`
+# enqueues the SAME args to every registered consumer; each consumer's task
+# body owns deciding whether it recognizes `workflow_execution_id` (a
+# no-op/return when it doesn't is the coexistence bridge — see
+# `core/workflow.handle_agent_event` and `domain/pipelines.handle_agent_event`).
+_agent_event_consumers: list[TaskRef] = []
+
+
+def register_agent_event_consumer(task_ref: TaskRef) -> None:
+    """Append `task_ref` to the agent-event consumer registry.
+
+    Called at import time by every engine that resumes off terminal
+    AgentEvents (`core/workflow` and `domain/pipelines` during coexistence).
+    """
+    _agent_event_consumers.append(task_ref)
+
 
 # Maximum requeue attempts before a command is retired to `done` as a terminal
 # failure. Prevents infinite retry of a structurally bad command.
@@ -1129,20 +1152,44 @@ async def record_agent_event(
     if holder_workflow_id is None:
         return
 
-    from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
-
-    await enqueue(
-        HANDLE_AGENT_EVENT,
-        args={
-            "workflow_execution_id": str(holder_workflow_id),
-            "agent_command_id": str(event.command_id),
-            "outcome_label": event.outcome_label
-            or ("failure" if event.kind == AgentEventKind.COMPLETED_FAILURE else "success"),
-            "outputs": outputs,
-            "traceparent": event.traceparent,
-        },
+    await enqueue_agent_event(
+        workflow_execution_id=holder_workflow_id,
+        agent_command_id=event.command_id,
+        outcome_label=event.outcome_label
+        or ("failure" if event.kind == AgentEventKind.COMPLETED_FAILURE else "success"),
+        outputs=outputs,
+        traceparent=event.traceparent,
         session=session,
     )
+
+
+async def enqueue_agent_event(
+    *,
+    workflow_execution_id: UUID,
+    agent_command_id: UUID,
+    outcome_label: str,
+    outputs: dict[str, Any] | None = None,
+    traceparent: str | None = None,
+    session: AsyncSession,
+) -> None:
+    """Enqueue a terminal-event args payload to every registered agent-event
+    consumer (see `register_agent_event_consumer`).
+
+    The shared tail of `record_agent_event`'s real-event path — also the
+    entry point for callers that synthesize a terminal event without an
+    inbound `AgentEvent` (e.g. `core/workspace`'s agent-loss failsafe,
+    which resolves `workflow_execution_id` from `agent_commands` directly
+    and needs the same fan-out both engines rely on).
+    """
+    consumer_args = {
+        "workflow_execution_id": str(workflow_execution_id),
+        "agent_command_id": str(agent_command_id),
+        "outcome_label": outcome_label,
+        "outputs": outputs or {},
+        "traceparent": traceparent,
+    }
+    for consumer in _agent_event_consumers:
+        await enqueue(consumer, args=consumer_args, session=session)
 
 
 async def record_workspace_event(

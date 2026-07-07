@@ -19,6 +19,11 @@ from app.core.workspace.commands import (
 )
 from app.core.workspace.commands_base import WorkspaceOpCommand
 from app.core.workspace.dispatch import (
+    ProvisionWorkspaceSpec,
+    dispatch_auth_refresh,
+    dispatch_cleanup,
+    dispatch_provision,
+    dispatch_push,
     dispatch_via_workspace,
     release_claim,
     try_claim,
@@ -77,6 +82,7 @@ __all__ = [
     "ProvisionWorkspace",
     "ProvisionWorkspaceInputs",
     "ProvisionWorkspaceOutputs",
+    "ProvisionWorkspaceSpec",
     "RefreshWorkspaceAuth",
     "RefreshWorkspaceAuthInputs",
     "RefreshWorkspaceAuthOutputs",
@@ -100,6 +106,10 @@ __all__ = [
     "WorkspaceSpec",
     "WorkspaceStatus",
     "close_workspace",
+    "dispatch_auth_refresh",
+    "dispatch_cleanup",
+    "dispatch_provision",
+    "dispatch_push",
     "dispatch_via_workspace",
     "get_provider",
     "get_workspace_claim_state",

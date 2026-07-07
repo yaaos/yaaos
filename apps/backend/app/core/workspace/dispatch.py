@@ -15,9 +15,10 @@ claims the workspace. All workspace dispatch helpers except `ProvisionWorkspace`
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid7
 
 import structlog
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,3 +152,122 @@ async def dispatch_via_workspace(
             raise WorkspaceClaimFailed(f"workspace {workspace_id} is busy or inactive")
 
     return command.command_id
+
+
+# ---------------------------------------------------------------------------
+# Plain dispatch functions — extracted from the lifecycle commands' enqueue
+# bodies (`commands/provision.py`, `cleanup.py`, `refresh_auth.py`) so a
+# caller that isn't a `WorkflowCommand` instance (`domain/pipelines`) can
+# dispatch the same operations. `ctx: CommandContext` for now — both engines
+# share the type during coexistence (see architecture's dispatch-plumbing
+# note); it carries only the generic correlation fields (`workflow_execution_id`,
+# `ticket_id`, `step_id`, `attempt`, `traceparent`) either engine needs.
+# ---------------------------------------------------------------------------
+
+
+class ProvisionWorkspaceSpec(BaseModel):
+    """Everything `dispatch_provision` needs to enqueue a `ProvisionWorkspace`
+    AgentCommand. `workspace_id` is caller-minted — no workspace row exists
+    yet at provision time, so the caller (which needs the id immediately, to
+    reference before the terminal event arrives) mints it rather than this
+    function minting one internally."""
+
+    model_config = ConfigDict(frozen=True)
+    workspace_id: UUID
+    org_id: UUID
+    plugin_id: str
+    repo_external_id: str
+    # Checkout instruction: exactly one of head_sha (detached pin) or
+    # branch_name (named work branch) must be set — mirrors RepoRef's own
+    # exactly-one-of contract.
+    head_sha: str | None = None
+    branch_name: str | None = None
+    base_sha: str | None = None
+
+
+async def dispatch_provision(
+    spec: ProvisionWorkspaceSpec,
+    ctx: CommandContext,
+    *,
+    session: AsyncSession,
+) -> UUID:
+    """Fetch install credentials and enqueue a `ProvisionWorkspace`
+    AgentCommand for `spec.workspace_id`. Extracted from
+    `core.workspace.commands.provision.ProvisionWorkspace.dispatch` so a
+    caller without a `WorkflowCommand` instance can dispatch provisioning.
+    The `workspaces` row itself is still created lean on the agent's first
+    workspace event — this function only enqueues the command.
+
+    Raises `VcsInstallNotFound` when the org has no active VCS App
+    installation; `RuntimeError` when no workspace provider is registered.
+    """
+    import app.core.vcs as _vcs  # noqa: PLC0415
+    from app.core.agent_gateway import AuthBlock, RepoRef  # noqa: PLC0415
+    from app.core.workspace.remote_provider import dispatch_provision_workspace  # noqa: PLC0415
+    from app.core.workspace.service import list_workspace_providers  # noqa: PLC0415
+
+    if not list_workspace_providers():
+        raise RuntimeError("no workspace provider registered")
+
+    creds = await _vcs.get_install_credentials(spec.plugin_id, spec.org_id, spec.repo_external_id)
+    repo = RepoRef(
+        plugin_id=spec.plugin_id,
+        external_id=spec.repo_external_id,
+        clone_url=creds.clone_url,
+        head_sha=spec.head_sha,
+        branch_name=spec.branch_name,
+        base_sha=spec.base_sha,
+    )
+    auth = AuthBlock(kind="github_installation", token=creds.installation_token.get_secret_value())
+    result = await dispatch_provision_workspace(
+        spec.org_id,
+        spec.workspace_id,
+        repo=repo,
+        auth=auth,
+        traceparent=ctx.traceparent or "",
+        session=session,
+        workflow_execution_id=UUID(ctx.workflow_execution_id),
+    )
+    return result.command_id
+
+
+async def dispatch_cleanup(workspace_id: UUID, ctx: CommandContext, *, session: AsyncSession) -> UUID:
+    """Enqueue a `CleanupWorkspace` AgentCommand for `workspace_id`. Extracted
+    from `CleanupWorkspace.build_command`; never claims (cleanup runs
+    regardless of who currently holds the workspace)."""
+    from app.core.agent_gateway import CleanupWorkspaceCommand  # noqa: PLC0415
+
+    cmd = CleanupWorkspaceCommand(
+        command_id=uuid7(), workspace_id=workspace_id, traceparent=ctx.traceparent or ""
+    )
+    return await dispatch_via_workspace(
+        command=cmd, workspace_id=workspace_id, ctx=ctx, session=session, claim_workspace=False
+    )
+
+
+async def dispatch_auth_refresh(workspace_id: UUID, ctx: CommandContext, *, session: AsyncSession) -> UUID:
+    """Enqueue the auth-refresh recovery AgentCommand for `workspace_id`.
+    Extracted from `RefreshWorkspaceAuth.build_command` — dispatches a
+    placeholder `CleanupWorkspaceCommand` wire payload; a real
+    `RefreshWorkspaceAuth` AgentCommand type doesn't exist yet."""
+    from app.core.agent_gateway import CleanupWorkspaceCommand  # noqa: PLC0415
+
+    cmd = CleanupWorkspaceCommand(
+        command_id=uuid7(), workspace_id=workspace_id, traceparent=ctx.traceparent or ""
+    )
+    return await dispatch_via_workspace(
+        command=cmd, workspace_id=workspace_id, ctx=ctx, session=session, claim_workspace=False
+    )
+
+
+async def dispatch_push(workspace_id: UUID, ctx: CommandContext, *, session: AsyncSession) -> UUID:
+    """Enqueue a bare `PushBranch` re-push AgentCommand for `workspace_id` —
+    push-failure recovery only: a re-push of the workspace's current HEAD
+    after a `refresh-auth` credential rotation, so claude is never re-run
+    just to retry a push."""
+    from app.core.agent_gateway import PushBranchCommand  # noqa: PLC0415
+
+    cmd = PushBranchCommand(command_id=uuid7(), workspace_id=workspace_id, traceparent=ctx.traceparent or "")
+    return await dispatch_via_workspace(
+        command=cmd, workspace_id=workspace_id, ctx=ctx, session=session, claim_workspace=False
+    )

@@ -68,6 +68,75 @@ class PauseResolution(BaseModel, frozen=True):
 
 
 # ---------------------------------------------------------------------------
+# Stage-invocation context — engine-assembled input to every skill/review
+# invocation. Several fields are structurally present but stay empty/None
+# until later machinery exists (see per-field notes below); the shape is
+# fixed now so `Invocation.context` never needs a breaking change.
+# ---------------------------------------------------------------------------
+
+
+class UpstreamStageRef(BaseModel, frozen=True):
+    """One upstream stage's produced artifact, offered to a later stage's
+    invocation context (filtered by `context_stages`)."""
+
+    stage_name: str
+    description: str
+    artifact_id: UUID
+    artifact_body: str
+
+
+class PRContext(BaseModel, frozen=True):
+    """How review skills know what to diff. Assembled from the ticket + the
+    run's kickoff, not pipeline config. Not populated until PR-ticket wiring
+    exists — always `None` on `StageInvocationContext` until then."""
+
+    pr_external_id: str
+    head_sha: str
+    base_sha: str
+    prev_reviewed_head_sha: str | None = None
+
+
+class RevisionContext(BaseModel, frozen=True):
+    """Carries a re-entry's instruction/gap/fix text plus the stage's own
+    prior artifact body. Not populated until re-entry machinery (instruct,
+    send-back, fix loop) exists — always `None` on `StageInvocationContext`
+    until then."""
+
+    source: Literal["instruction", "send_back", "fix"]
+    text: str
+    prior_artifact: str
+
+
+class PriorFindingRef(BaseModel, frozen=True):
+    """One durable finding offered to a review invocation's context, by id.
+    Empty until the findings module + review loop exist."""
+
+    finding_id: UUID
+    severity: str
+    body: str
+    code_file: str | None = None
+    code_line: int | None = None
+    artifact_section: str | None = None
+
+
+class StageInvocationContext(BaseModel, frozen=True):
+    """Engine-assembled input to every skill/review invocation — rides
+    `Invocation.context` (via `.model_dump(mode="json")`); the output schema
+    is injected separately (`SkillReturn.model_json_schema()`), not carried
+    on this type."""
+
+    ticket_id: UUID
+    stage_name: str
+    branch_name: str
+    input: str
+    pr: PRContext | None = None
+    upstream_stages: tuple[UpstreamStageRef, ...] = ()
+    revision: RevisionContext | None = None
+    prior_findings: tuple[PriorFindingRef, ...] = ()
+    artifact_path: str
+
+
+# ---------------------------------------------------------------------------
 # Run + stage read models
 # ---------------------------------------------------------------------------
 
