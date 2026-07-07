@@ -458,6 +458,116 @@ class GitHubPlugin:
         # No-op for GitHub (GitHub marks outdated automatically on force push).
         return
 
+    async def create_pr(
+        self,
+        org_id: UUID,
+        repo_external_id: str,
+        *,
+        head_branch: str,
+        base_branch: str,
+        title: str,
+        body: str,
+    ) -> str:
+        """Open a PR; idempotent on an existing open PR for `head_branch`.
+
+        GitHub's real signal for "a PR already exists" is a 422 Validation
+        Failed on create — not a precondition GET. On 422 we look up the
+        existing open PR via the head-branch filter and return it instead.
+        """
+        owner, repo = repo_external_id.split("/", 1)
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            headers = await self._api_headers(org_id)
+            resp = await client.post(
+                f"/repos/{owner}/{repo}/pulls",
+                json={"title": title, "body": body, "head": head_branch, "base": base_branch},
+                headers=headers,
+            )
+            if resp.status_code == 422:
+                existing = await client.get(
+                    f"/repos/{owner}/{repo}/pulls",
+                    params={"head": f"{owner}:{head_branch}", "state": "open"},
+                    headers=headers,
+                )
+                existing.raise_for_status()
+                prs = existing.json()
+                if not prs:
+                    resp.raise_for_status()  # no existing PR either — surface the original 422
+                return f"{owner}/{repo}#{prs[0]['number']}"
+        resp.raise_for_status()
+        return f"{owner}/{repo}#{resp.json()['number']}"
+
+    async def approve_pr(self, org_id: UUID, external_id: str) -> None:
+        # Submits an approving review as the app. Never merges.
+        owner, repo, num = _split_external(external_id)
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            resp = await client.post(
+                f"/repos/{owner}/{repo}/pulls/{num}/reviews",
+                json={"event": "APPROVE"},
+                headers=await self._api_headers(org_id),
+            )
+        resp.raise_for_status()
+
+    async def has_active_approval(self, org_id: UUID, external_id: str) -> bool:
+        """GitHub is the source of truth — no local marker. Reviews come back
+        oldest-first; the app's latest review is the currently-effective one."""
+        owner, repo, num = _split_external(external_id)
+        bot_login = f"{get_settings().yaaos_github_app_slug}[bot]"
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            resp = await client.get(
+                f"/repos/{owner}/{repo}/pulls/{num}/reviews",
+                headers=await self._api_headers(org_id),
+            )
+        resp.raise_for_status()
+        ours = [r for r in resp.json() if (r.get("user") or {}).get("login") == bot_login]
+        if not ours:
+            return False
+        return ours[-1].get("state") == "APPROVED"
+
+    async def resolve_finding_thread(self, org_id: UUID, external_id: str, comment_external_id: str) -> None:
+        """GitHub has no REST endpoint for resolving a review thread — only the
+        GraphQL `resolveReviewThread` mutation. Two round trips: locate the
+        thread anchoring `comment_external_id`, then resolve it.
+        """
+        owner, repo, num = _split_external(external_id)
+        headers = await self._api_headers(org_id)
+        query = """
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviewThreads(first: 100) {
+                nodes { id isResolved comments(first: 50) { nodes { databaseId } } }
+              }
+            }
+          }
+        }
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            resp = await client.post(
+                "/graphql",
+                json={"query": query, "variables": {"owner": owner, "repo": repo, "number": num}},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            nodes = resp.json()["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+            target_id = int(comment_external_id)
+            thread_id = next(
+                (n["id"] for n in nodes if any(c["databaseId"] == target_id for c in n["comments"]["nodes"])),
+                None,
+            )
+            if thread_id is None:
+                raise VCSNotFoundError(f"no review thread found for comment {comment_external_id}")
+            mutation = """
+            mutation($threadId: ID!) {
+              resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
+            }
+            """
+            mut_resp = await client.post(
+                "/graphql",
+                json={"query": mutation, "variables": {"threadId": thread_id}},
+                headers=headers,
+            )
+        mut_resp.raise_for_status()
+
 
 async def record_app_install(
     session,

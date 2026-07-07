@@ -248,6 +248,52 @@ def clone_url(plugin_id: str, repo_external_id: str) -> str:
     return get_plugin(plugin_id).clone_url(repo_external_id)
 
 
+async def create_pr(
+    plugin_id: str,
+    org_id: UUID,
+    repo_external_id: str,
+    *,
+    head_branch: str,
+    base_branch: str,
+    title: str,
+    body: str,
+) -> str:
+    """Dispatch to `VCSPlugin.create_pr` within a `vcs.{plugin_id}.create_pr` span."""
+    plugin = get_plugin(plugin_id)
+    with _tracer.start_as_current_span(f"vcs.{plugin_id}.create_pr"):
+        return await plugin.create_pr(
+            org_id,
+            repo_external_id,
+            head_branch=head_branch,
+            base_branch=base_branch,
+            title=title,
+            body=body,
+        )
+
+
+async def approve_pr(plugin_id: str, org_id: UUID, external_id: str) -> None:
+    """Dispatch to `VCSPlugin.approve_pr` within a `vcs.{plugin_id}.approve_pr` span."""
+    plugin = get_plugin(plugin_id)
+    with _tracer.start_as_current_span(f"vcs.{plugin_id}.approve_pr"):
+        await plugin.approve_pr(org_id, external_id)
+
+
+async def resolve_finding_thread(
+    plugin_id: str, org_id: UUID, external_id: str, comment_external_id: str
+) -> None:
+    """Dispatch to `VCSPlugin.resolve_finding_thread` within a span."""
+    plugin = get_plugin(plugin_id)
+    with _tracer.start_as_current_span(f"vcs.{plugin_id}.resolve_finding_thread"):
+        await plugin.resolve_finding_thread(org_id, external_id, comment_external_id)
+
+
+async def has_active_approval(plugin_id: str, org_id: UUID, external_id: str) -> bool:
+    """Dispatch to `VCSPlugin.has_active_approval` within a span."""
+    plugin = get_plugin(plugin_id)
+    with _tracer.start_as_current_span(f"vcs.{plugin_id}.has_active_approval"):
+        return await plugin.has_active_approval(org_id, external_id)
+
+
 async def get_install_credentials(plugin_id: str, org_id: UUID, repo_external_id: str) -> InstallCredentials:
     """Return clone URL and installation token for a repo in one call.
 

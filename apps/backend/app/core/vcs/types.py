@@ -286,3 +286,36 @@ class VCSPlugin(Protocol):
         Returns an empty list when the install is absent or the call fails.
         """
         ...
+
+    async def create_pr(
+        self,
+        org_id: UUID,
+        repo_external_id: str,
+        *,
+        head_branch: str,
+        base_branch: str,
+        title: str,
+        body: str,
+    ) -> str:
+        """Open a PR from `head_branch` to `base_branch`. Returns the external id.
+
+        Idempotent on an existing open PR for the same head branch — returns
+        that PR's external id instead of erroring.
+        """
+        ...
+
+    async def approve_pr(self, org_id: UUID, external_id: str) -> None:
+        """Submit an approving review as the app. Never merges."""
+        ...
+
+    async def resolve_finding_thread(self, org_id: UUID, external_id: str, comment_external_id: str) -> None:
+        """Resolve the review thread anchoring the given posted comment."""
+        ...
+
+    async def has_active_approval(self, org_id: UUID, external_id: str) -> bool:
+        """Does yaaos currently hold a non-dismissed approval on this PR?
+
+        The VCS provider is the source of truth for approval state (dismiss-
+        on-push configs, manual dismissals) — no local marker is kept.
+        """
+        ...

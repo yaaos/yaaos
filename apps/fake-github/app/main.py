@@ -28,7 +28,7 @@ WEBHOOK_SECRET_BYTES = os.environ.get("GITHUB_WEBHOOK_SECRET", WEBHOOK_SECRET).e
 
 app = FastAPI(title="fake-github")
 
-# Git HTTP smart-protocol routes for ProvisionWorkspace clone support.
+# Git HTTP smart-protocol routes for ProvisionWorkspace clone + push support.
 # Mounted before the API routes so /{owner}/{repo}/info/refs doesn't clash
 # with the PR/repo REST routes (those all use deeper paths).
 app.include_router(git_router)
@@ -225,11 +225,116 @@ async def get_pull_files(
 
 @app.get("/repos/{owner}/{repo}/pulls")
 async def list_pulls(
-    owner: str, repo: str, state_: str = "", authorization: str | None = Header(default=None)
+    owner: str,
+    repo: str,
+    state_: str = Query(default="", alias="state"),
+    head: str = "",
+    authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
+    """`head` (when given) is GitHub's `owner:branch` filter — used by
+    `create_pr`'s idempotency fallback to find the existing open PR for a
+    head branch after a 422 create."""
     _check_bearer(authorization)
     prefix = f"{owner}/{repo}#"
-    return [pr for k, pr in state.seeded_prs.items() if k.startswith(prefix)]
+    prs = [pr for k, pr in state.seeded_prs.items() if k.startswith(prefix)]
+    if state_:
+        prs = [pr for pr in prs if pr.get("state") == state_]
+    if head:
+        _, _, want_branch = head.partition(":")
+        prs = [pr for pr in prs if (pr.get("head") or {}).get("ref") == want_branch]
+    return prs
+
+
+@app.post("/repos/{owner}/{repo}/pulls", status_code=201)
+async def create_pull(
+    owner: str,
+    repo: str,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> Response:
+    """Open a PR. Mirrors GitHub's real idempotency signal: a second create
+    for a head branch that already has an open PR returns 422 Validation
+    Failed — callers fall back to `GET .../pulls?head=...` to find it."""
+    _check_bearer(authorization)
+    head_branch = body.get("head", "")
+    prefix = f"{owner}/{repo}#"
+    existing = [
+        pr
+        for k, pr in state.seeded_prs.items()
+        if k.startswith(prefix) and pr.get("state") == "open" and (pr.get("head") or {}).get("ref") == head_branch
+    ]
+    if existing:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "message": "Validation Failed",
+                "errors": [
+                    {
+                        "resource": "PullRequest",
+                        "code": "custom",
+                        "message": f"A pull request already exists for {owner}:{head_branch}.",
+                    }
+                ],
+            },
+        )
+    number = state.next_pr_number()
+    now = datetime.now(timezone.utc).isoformat()
+    pr = {
+        "number": number,
+        "title": body.get("title", ""),
+        "body": body.get("body"),
+        "draft": False,
+        "merged": False,
+        "state": "open",
+        "html_url": f"https://github.com/{owner}/{repo}/pull/{number}",
+        "user": {"login": state.app_bot_login, "type": "Bot"},
+        "head": {"ref": head_branch, "sha": f"head-sha-{owner}-{repo}-{number}", "repo": {"fork": False}},
+        "base": {"ref": body.get("base", ""), "sha": f"base-sha-{owner}-{repo}-{number}"},
+        "created_at": now,
+        "updated_at": now,
+    }
+    state.seeded_prs[f"{owner}/{repo}#{number}"] = pr
+    return JSONResponse(status_code=201, content=pr)
+
+
+@app.post("/repos/{owner}/{repo}/pulls/{number}/reviews", status_code=200)
+async def submit_review(
+    owner: str,
+    repo: str,
+    number: int,
+    body: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Submit a review — used by `approve_pr` with `event="APPROVE"`. Reviews
+    submitted here are always attributed to the app's bot login, matching
+    real GitHub's "review as the App" behavior. The request's `event` field
+    ("APPROVE"/"REQUEST_CHANGES"/"COMMENT") maps to GitHub's past-tense
+    `state` field ("APPROVED"/"CHANGES_REQUESTED"/"COMMENTED") the way real
+    GitHub's response does — same mapping `has_active_approval` expects."""
+    _check_bearer(authorization)
+    key = f"{owner}/{repo}#{number}"
+    event_to_state = {
+        "APPROVE": "APPROVED",
+        "REQUEST_CHANGES": "CHANGES_REQUESTED",
+        "COMMENT": "COMMENTED",
+    }
+    review = {
+        "id": state.next_review_id(),
+        "user": {"login": state.app_bot_login, "type": "Bot"},
+        "state": event_to_state.get(body.get("event", "COMMENT"), "COMMENTED"),
+        "body": body.get("body", ""),
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    state.reviews.setdefault(key, []).append(review)
+    return review
+
+
+@app.get("/repos/{owner}/{repo}/pulls/{number}/reviews")
+async def list_reviews(
+    owner: str, repo: str, number: int, authorization: str | None = Header(default=None)
+) -> list[dict[str, Any]]:
+    _check_bearer(authorization)
+    return state.reviews.get(f"{owner}/{repo}#{number}", [])
 
 
 @app.get("/repos/{owner}/{repo}")
@@ -262,6 +367,15 @@ async def post_inline_comment(
             "body": body.get("body", ""),
         }
     )
+    # Every inline review comment anchors its own review thread — mirrors
+    # real GitHub closely enough for `resolve_finding_thread`'s GraphQL
+    # lookup (one comment per finding; no multi-comment threads in tests).
+    thread_id = f"PRRT_{cid}"
+    state.review_threads[thread_id] = {
+        "pr_key": f"{owner}/{repo}#{number}",
+        "comment_ids": [cid],
+        "resolved": False,
+    }
     return {"id": cid}
 
 
@@ -374,6 +488,52 @@ async def test_seed_compare_commits(body: dict[str, Any]) -> dict[str, str]:
     """
     state.compare_commits[body["base_to_head"]] = list(body.get("commits", []))
     return {"status": "seeded"}
+
+
+# ── GraphQL shim (review-thread resolution only) ────────────────────────────
+
+
+@app.post("/graphql")
+async def graphql(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Minimal GraphQL shim — only the two operations `resolve_finding_thread`
+    needs. Dispatches by string-matching the operation name in `query`
+    rather than parsing GraphQL, since this fake never needs a general
+    GraphQL engine.
+    """
+    _check_bearer(authorization)
+    body = await request.json()
+    query = body.get("query", "")
+    variables = body.get("variables") or {}
+
+    if "resolveReviewThread" in query:
+        thread_id = variables.get("threadId", "")
+        thread = state.review_threads.get(thread_id)
+        if thread is None:
+            return {"errors": [{"message": f"thread {thread_id} not found"}]}
+        thread["resolved"] = True
+        return {"data": {"resolveReviewThread": {"thread": {"id": thread_id, "isResolved": True}}}}
+
+    if "reviewThreads" in query:
+        owner = variables.get("owner", "")
+        repo = variables.get("repo", "")
+        number = variables.get("number")
+        pr_key = f"{owner}/{repo}#{number}"
+        nodes = [
+            {
+                "id": tid,
+                "isResolved": t["resolved"],
+                "comments": {"nodes": [{"databaseId": cid} for cid in t["comment_ids"]]},
+            }
+            for tid, t in state.review_threads.items()
+            if t["pr_key"] == pr_key
+        ]
+        return {
+            "data": {
+                "repository": {"pullRequest": {"reviewThreads": {"nodes": nodes}}},
+            }
+        }
+
+    return {"errors": [{"message": "unsupported operation"}]}
 
 
 # ── Test control endpoints ──────────────────────────────────────────────────

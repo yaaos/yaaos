@@ -89,6 +89,15 @@ class StubVCSPlugin:
         self.posted_findings: list[tuple[UUID, str, dict[str, object]]] = []
         # Each entry: (org_id, external_id, body)
         self.posted_comments: list[tuple[UUID, str, str]] = []
+        # Recording for the PR write surface — tests assert flow side-effects.
+        # Each entry: (org_id, repo_external_id, head_branch, base_branch, title, body)
+        self.created_prs: list[tuple[UUID, str, str, str, str, str]] = []
+        # Each entry: (org_id, external_id)
+        self.approved_prs: list[tuple[UUID, str]] = []
+        # Each entry: (org_id, external_id, comment_external_id)
+        self.resolved_threads: list[tuple[UUID, str, str]] = []
+        # external_id -> bool; tests set via `set_active_approval` before driving the flow.
+        self._active_approval: dict[str, bool] = {}
 
     # ── Test-driven state setters ────────────────────────────────────────
 
@@ -108,6 +117,9 @@ class StubVCSPlugin:
 
     def set_force_push(self, repo_external_id: str, before_sha: str, after_sha: str, value: bool) -> None:
         self._force_push[(repo_external_id, before_sha, after_sha)] = value
+
+    def set_active_approval(self, external_id: str, value: bool) -> None:
+        self._active_approval[external_id] = value
 
     # ── VCSPlugin Protocol ───────────────────────────────────────────────
 
@@ -204,6 +216,30 @@ class StubVCSPlugin:
     async def list_installation_repos(self, org_id: UUID) -> list[str]:
         del org_id
         return []
+
+    async def create_pr(
+        self,
+        org_id: UUID,
+        repo_external_id: str,
+        *,
+        head_branch: str,
+        base_branch: str,
+        title: str,
+        body: str,
+    ) -> str:
+        self.created_prs.append((org_id, repo_external_id, head_branch, base_branch, title, body))
+        return f"{repo_external_id}#{len(self.created_prs)}"
+
+    async def approve_pr(self, org_id: UUID, external_id: str) -> None:
+        self.approved_prs.append((org_id, external_id))
+        self._active_approval[external_id] = True
+
+    async def resolve_finding_thread(self, org_id: UUID, external_id: str, comment_external_id: str) -> None:
+        self.resolved_threads.append((org_id, external_id, comment_external_id))
+
+    async def has_active_approval(self, org_id: UUID, external_id: str) -> bool:
+        del org_id
+        return self._active_approval.get(external_id, False)
 
 
 @contextmanager

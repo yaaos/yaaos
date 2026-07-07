@@ -75,6 +75,13 @@ All calls use short-lived per-method `httpx` clients against `github_api_base_ur
 
 `clone_url(repo_external_id)` returns `<github_git_base_url>/<external_id>.git` (falls back to `github_web_base_url` when the git base is unset). Workspace provider pairs this with a fresh installation token via `GIT_ASKPASS`. The git base is split from the web base so the agent clones from a host its container can reach — the web base is browser-facing (OAuth redirects).
 
+### PR write surface
+
+- `create_pr` — `POST /pulls`; idempotent per head branch: on GitHub's 422 "PR already exists" response, falls back to `GET /pulls?head=<owner>:<branch>&state=open` and returns that PR's external id instead of erroring.
+- `approve_pr` — `POST /pulls/{n}/reviews` with `event=APPROVE`; submitted as the app, never merges.
+- `has_active_approval` — `GET /pulls/{n}/reviews`; reads the latest review by the app's own bot login (`<yaaos_github_app_slug>[bot]`) and returns whether its state is `APPROVED`. GitHub is the source of truth — no local marker.
+- `resolve_finding_thread` — GitHub has no REST endpoint for resolving a review thread. Two GraphQL round trips against `POST /graphql`: a `reviewThreads` query to locate the thread id anchoring the given comment (`databaseId`), then the `resolveReviewThread` mutation.
+
 ## Data owned
 
 - `github_app_installations` — `(org_id, install_external_id, account_login, status)`. Written by both install callback and `installation.*` webhooks.
@@ -93,5 +100,7 @@ Unit tests in `app/plugins/github/test/`:
 - `test_set_github_plugin_for_tests.py` — `set_github_plugin_for_tests` swaps and restores the singleton for the block.
 
 `set_github_plugin_for_tests` (exported from `app.plugins.github`) is the test seam for swapping the singleton `GitHubPlugin` instance. `get_plugin` is module-private (not in `__all__`); tests access the singleton via the context manager's yielded value.
+
+The PR write surface (`create_pr`/`approve_pr`/`has_active_approval`/`resolve_finding_thread`) is covered by `app/core/vcs/test/test_write_ops_against_fake_github.py` — a live `apps/fake-github` subprocess round trip, since these operations are best proven against the fake's real REST + GraphQL shim rather than `httpx_mock`.
 
 Full webhook, login, install handshake, repositories proxy, and force-push detection exercised by `apps/e2e/` specs against `apps/fake-github`.

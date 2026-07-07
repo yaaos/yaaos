@@ -1,13 +1,17 @@
 """Git HTTP smart-protocol backend for fake-github.
 
-Creates bare git repos at startup for each e2e scenario repo and serves
-`git clone` requests via `git http-backend` (CGI). Routes are mounted into
-the main FastAPI app by main.py.
+Creates bare git repos at startup for each e2e scenario repo and serves both
+`git clone`/`fetch` (`git-upload-pack`) and `git push` (`git-receive-pack`)
+via `git http-backend` (CGI). Routes are mounted into the main FastAPI app
+by main.py.
 
 Repos served:
   - acme/review-happy.git
   - acme/review-nonconforming.git
   - acme/review-agentfail.git
+
+Each bare repo is created with `http.receivepack=true` so pushes (the
+agent's `git push origin HEAD`, yaaos's `PushBranch` command) succeed.
 
 HEAD SHAs are accessible via `GET /__test/git_head_sha/{owner}/{repo}` so
 e2e specs can build PR payloads that reference a real commit SHA.
@@ -81,6 +85,11 @@ def bootstrap_repos() -> None:
 
         # Initialise bare repo.
         _run(["git", "init", "--bare", "--initial-branch=main", str(bare_path)])
+        # `git http-backend` refuses receive-pack (push) unless the repo opts
+        # in — GIT_HTTP_EXPORT_ALL only affects dumb-HTTP file export, not the
+        # smart-protocol push permission. The agent's `git push origin HEAD`
+        # (and yaaos's PushBranch command) need this set on every repo we serve.
+        _run(["git", "config", "http.receivepack", "true"], cwd=str(bare_path))
 
         # Use a temp workdir to create an initial commit, then push to the bare.
         with tempfile.TemporaryDirectory() as workdir:
@@ -234,6 +243,35 @@ async def git_upload_pack(owner: str, repo: str, request: Request) -> Response:
 
     body = await request.body()
     path_info = f"/{owner}/{repo_name}.git/git-upload-pack"
+    content_type = request.headers.get("content-type", "")
+
+    status, headers, resp_body = _invoke_git_http_backend(
+        bare_path,
+        method="POST",
+        path_info=path_info,
+        query_string="",
+        content_type=content_type,
+        body=body,
+    )
+    return Response(content=resp_body, status_code=status, headers=headers)
+
+
+@router.post("/{owner}/{repo}/git-receive-pack")
+async def git_receive_pack(owner: str, repo: str, request: Request) -> Response:
+    """Smart HTTP data transfer: `POST /{owner}/{repo}.git/git-receive-pack`.
+
+    Accepts `git push`. Discovery (`GET .../info/refs?service=git-receive-pack`)
+    already works via `git_info_refs` above — it forwards whatever `service`
+    query param the client sends to `git http-backend`. Push is permitted
+    because `bootstrap_repos` sets `http.receivepack=true` on every bare repo.
+    """
+    repo_name = repo.removesuffix(".git")
+    bare_path = _repo_path(owner, repo_name)
+    if not bare_path.exists():
+        return Response(status_code=404, content=b"not found")
+
+    body = await request.body()
+    path_info = f"/{owner}/{repo_name}.git/git-receive-pack"
     content_type = request.headers.get("content-type", "")
 
     status, headers, resp_body = _invoke_git_http_backend(
