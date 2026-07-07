@@ -15,6 +15,7 @@ const (
 	defaultRefreshWorkspaceAuthTimeout = 30 * time.Second
 	defaultCleanupWorkspaceTimeout     = 30 * time.Second
 	defaultInvokeClaudeCodeTimeout     = 15 * time.Minute
+	defaultPushBranchTimeout           = 120 * time.Second
 )
 
 // ── ProvisionWorkspaceCommand ─────────────────────────────────────────────────
@@ -165,3 +166,34 @@ func (c *CleanupWorkspaceCommand) MarshalWire() ([]byte, error) { return json.Ma
 
 // SetTraceparent implements Command.
 func (c *CleanupWorkspaceCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }
+
+// ── PushBranchCommand ─────────────────────────────────────────────────────────
+
+// PushBranchCommand is push-failure recovery only: a bare re-push of the
+// workspace's current HEAD after a RefreshWorkspaceAuth credential rotation,
+// so claude is never re-run just to retry a push.
+type PushBranchCommand struct {
+	Proto protocol.PushBranchCommand
+}
+
+// Header implements Command.
+func (c *PushBranchCommand) Header() protocol.CommandHeader {
+	return c.Proto.CommandHeader
+}
+
+// Timeout implements Command. Go-side default — no wire-supplied override
+// for this kind.
+func (c *PushBranchCommand) Timeout() time.Duration {
+	return defaultPushBranchTimeout
+}
+
+// Execute calls ops.PushBranch and returns a PushBranchResult.
+func (c *PushBranchCommand) Execute(ctx context.Context, ops WorkspaceOps) (Result, error) {
+	return ops.PushBranch(ctx, &c.Proto)
+}
+
+// MarshalWire returns the flat JSON representation of this command.
+func (c *PushBranchCommand) MarshalWire() ([]byte, error) { return json.Marshal(c.Proto) }
+
+// SetTraceparent implements Command.
+func (c *PushBranchCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }

@@ -41,3 +41,7 @@ func (StubHandler) RunClaude(_ context.Context, cmd *protocol.InvokeClaudeCodeCo
 func (StubHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	return command.CleanupResult{WorkspaceID: cmd.WorkspaceID, Destroyed: true}, nil
 }
+
+func (StubHandler) PushBranch(_ context.Context, cmd *protocol.PushBranchCommand) (command.PushBranchResult, error) {
+	return command.PushBranchResult{WorkspaceID: cmd.WorkspaceID, Pushed: true}, nil
+}

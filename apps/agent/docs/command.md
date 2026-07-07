@@ -6,9 +6,9 @@
 
 **Owns:**
 - `Command` interface — the polymorphic root every command kind implements.
-- Two command families: `WorkspaceCommand` (5 kinds, executed in workspace children) and `AgentCommand` (1 kind today, executed in the supervisor).
+- Two command families: `WorkspaceCommand` (6 kinds, executed in workspace children) and `AgentCommand` (3 kinds today — `ConfigUpdate`, `Shutdown`, `CancelShutdown` — executed in the supervisor).
 - `WorkspaceOps` and `AgentOps` capability seams — caller-owned interfaces the command types call at execution time.
-- Typed result structs (`ProvisionResult`, `WriteFilesResult`, `RefreshResult`, `InvokeResult`, `CleanupResult`, `ConfigUpdateResult`) + `ExecResult` for subprocess outcomes.
+- Typed result structs (`ProvisionResult`, `WriteFilesResult`, `RefreshResult`, `InvokeResult`, `CleanupResult`, `PushBranchResult`, `ConfigUpdateResult`) + `ExecResult` for subprocess outcomes.
 - `AgentConfig` — the typed config struct `ConfigUpdateCommand` carries.
 - `Decode(raw []byte) (Command, error)` — the one surviving kind-switch (factory).
 
@@ -32,6 +32,7 @@
 - **Typed results, map wire.** `Execute` returns a typed `Result`; `ToWire()` produces the `map[string]any` that `AgentEvent.Outputs` carries. The backend wire contract stays `map[string]any`; the Go `command`↔`supervisor` boundary is fully typed.
 - **`ArtifactResult` is a separate optional interface, not part of `Result`.** `InvokeResult` implements `ArtifactPayload() (*string, string)` so `workspace.executeCommand` can populate the `AgentEvent`'s top-level `Artifact`/`ArtifactError` fields — these ride alongside `Outputs`, not inside it, so they don't belong on the `Result`/`ToWire()` contract every other kind also implements.
 - **`ConfigUpdateCommand` is an `AgentCommand`, not a `WorkspaceCommand`.** It runs in the supervisor via `AgentOps.ApplyConfig` — never dispatched to a workspace child.
+- **`PushBranchCommand` is push-failure recovery only.** A bare re-push of the workspace's current HEAD after a `RefreshWorkspaceAuth` credential rotation, so claude is never re-run just to retry a push. Carries no body beyond the header — the workspace is expected to already be on its named work branch by `ProvisionWorkspace`'s checkout invariant.
 - **`ShutdownCommand` and `CancelShutdownCommand` are `AgentCommand`s.** `ShutdownCommand.Execute` calls `AgentOps.RequestShutdown()`; `CancelShutdownCommand.Execute` calls `AgentOps.CancelShutdown()`. Both have empty result wire payloads. Neither carries a `workspace_id`.
 - **ConfigUpdate decodes through `protocol.ConfigUpdateCommand`.** `Decode` unmarshals the nested wire shape (payload under `config`) into the protocol mirror, then maps it to the typed `command.ConfigUpdateCommand`, wrapping the raw token into `AgentConfig.OTLPToken` (`secret.Secret`). There is no second flat wire struct to drift. Decode is fail-closed on two fields: (1) `max_workspaces < 1` (spec minimum is 1) is rejected so a malformed or future-drifted ConfigUpdate can never silently leave the workspace pool uncapped; (2) a non-empty `otlp_endpoint` must be a URL-parseable value with a scheme and host — an empty value is valid (OTLP disabled). Both failures return a `decode error` in the existing `fmt.Errorf("command: ConfigUpdate ...: %w", err)` style, which the supervisor maps to `completed_failure` via the existing decode-error path.
 - **The `protocol.AgentCommand` union is gone.** `ClaimCommand` returns `[]byte`; `command.Decode` is the only entry point for turning raw claim-response bytes into a typed `Command`.

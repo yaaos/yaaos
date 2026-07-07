@@ -964,6 +964,246 @@ func TestRealHandler_ProvisionWorkspace_RealGitClone_FetchesBaseSHA(t *testing.T
 	}
 }
 
+// ── checkout-mode matrix ─────────────────────────────────────────────────
+
+func TestRealHandler_ProvisionWorkspace_RealGitClone_HeadSHAOnly_StaysDetached(t *testing.T) {
+	// No branch_name hint at all — the plainest form of today's behaviour.
+	cloneURL, headSHA := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-detached-only")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = headSHA
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	symref := exec.Command("git", "symbolic-ref", "-q", "--short", "HEAD")
+	symref.Dir = res.Path
+	if err := symref.Run(); err == nil {
+		t.Error("want detached HEAD (symbolic-ref should fail), got a named branch")
+	}
+	gotSHA := runGitForTest(t, res.Path, "rev-parse", "HEAD")
+	if gotSHA != headSHA {
+		t.Errorf("HEAD: want %s got %s", headSHA, gotSHA)
+	}
+}
+
+func TestRealHandler_ProvisionWorkspace_RealGitClone_BranchName_TracksExistingRemoteBranch(t *testing.T) {
+	cloneURL, _ := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-branch-track")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = ""
+	cmd.Repo.BranchName = "main"
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	branch := runGitForTest(t, res.Path, "symbolic-ref", "--short", "HEAD")
+	if branch != "main" {
+		t.Errorf("branch: want main got %q", branch)
+	}
+	upstream := runGitForTest(t, res.Path, "rev-parse", "--abbrev-ref", "main@{upstream}")
+	if upstream != "origin/main" {
+		t.Errorf("upstream: want origin/main got %q", upstream)
+	}
+}
+
+func TestRealHandler_ProvisionWorkspace_RealGitClone_BranchName_FreshWhenRemoteMissing(t *testing.T) {
+	cloneURL, _ := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-branch-fresh")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = ""
+	cmd.Repo.BranchName = "yaaos/work-1"
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	branch := runGitForTest(t, res.Path, "symbolic-ref", "--short", "HEAD")
+	if branch != "yaaos/work-1" {
+		t.Errorf("branch: want yaaos/work-1 got %q", branch)
+	}
+	upstreamCheck := exec.Command("git", "rev-parse", "--abbrev-ref", "yaaos/work-1@{upstream}")
+	upstreamCheck.Dir = res.Path
+	if err := upstreamCheck.Run(); err == nil {
+		t.Error("want no upstream for a freshly created branch (remote doesn't have it yet)")
+	}
+	if _, err := os.Stat(filepath.Join(res.Path, "README.md")); err != nil {
+		t.Errorf("checkout missing README.md: %v", err)
+	}
+}
+
+func TestRealHandler_ProvisionWorkspace_MissingCheckoutInstruction_Errors(t *testing.T) {
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-missing")
+	cmd.Repo.HeadSHA = ""
+	cmd.Repo.BranchName = ""
+
+	_, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err == nil {
+		t.Fatal("want error when neither head_sha nor branch_name is set")
+	}
+	if !strings.Contains(err.Error(), "missing head_sha or branch_name") {
+		t.Errorf("err: want 'missing head_sha or branch_name' substring, got %q", err.Error())
+	}
+}
+
+// ── git identity ──────────────────────────────────────────────────────────
+
+func TestRealHandler_ProvisionWorkspace_RealGitClone_SetsGitIdentityFromPayload(t *testing.T) {
+	cloneURL, headSHA := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-identity")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = headSHA
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+	cmd.GitUserName = "yaaos"
+	cmd.GitUserEmail = "yaaos[bot]@users.noreply.github.com"
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	if got := runGitForTest(t, res.Path, "config", "user.name"); got != "yaaos" {
+		t.Errorf("user.name: want yaaos got %q", got)
+	}
+	if got := runGitForTest(t, res.Path, "config", "user.email"); got != "yaaos[bot]@users.noreply.github.com" {
+		t.Errorf("user.email: want yaaos[bot]@users.noreply.github.com got %q", got)
+	}
+}
+
+func TestRealHandler_ProvisionWorkspace_NoGitIdentityInPayload_IsNoop(t *testing.T) {
+	// Older wire payloads / fixtures that don't set GitUserName/GitUserEmail
+	// (both zero-value) must not fail provisioning.
+	h := realHandlerWithNoopClone(t)
+	if _, err := h.ProvisionWorkspace(context.Background(), newProvision("ws-1")); err != nil {
+		t.Fatalf("provision without git identity should succeed, got %v", err)
+	}
+}
+
+// ── PushBranchCommand ─────────────────────────────────────────────────────
+
+func TestRealHandler_PushBranch_ExecutesBarePushAndReportsSuccess(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not on PATH; install with `apk add git` to exercise real-clone push tests")
+	}
+	cloneURL, _ := localBareRepo(t)
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-push")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = ""
+	cmd.Repo.BranchName = "main"
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+	cr, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	// Simulate a skill commit on the work branch.
+	if err := os.WriteFile(filepath.Join(cr.Path, "new-file.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runGitForTest(t, cr.Path, "add", ".")
+	runGitForTest(t, cr.Path, "commit", "-m", "work")
+	wantSHA := runGitForTest(t, cr.Path, "rev-parse", "HEAD")
+
+	res, err := h.PushBranch(context.Background(), &protocol.PushBranchCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-push", WorkspaceID: "ws-push"},
+	})
+	if err != nil {
+		t.Fatalf("PushBranch: %v", err)
+	}
+	if !res.Pushed {
+		t.Error("want Pushed=true")
+	}
+
+	out := runGitForTest(t, "", "ls-remote", cloneURL, "refs/heads/main")
+	if !strings.Contains(out, wantSHA) {
+		t.Errorf("remote main not updated to %s: ls-remote output=%q", wantSHA, out)
+	}
+}
+
+func TestRealHandler_PushBranch_UnknownWorkspace_Errors(t *testing.T) {
+	h := realHandlerWithNoopClone(t)
+	_, err := h.PushBranch(context.Background(), &protocol.PushBranchCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "missing"},
+	})
+	if !errors.Is(err, ErrUnknownWorkspace) {
+		t.Errorf("want ErrUnknownWorkspace, got %v", err)
+	}
+}
+
+func TestRealHandler_PushBranch_DetachedHead_Errors(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not on PATH")
+	}
+	cloneURL, headSHA := localBareRepo(t)
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-detached-push")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = headSHA
+	cmd.Auth = protocol.AuthBlock{}
+	if _, err := h.ProvisionWorkspace(context.Background(), cmd); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	_, err := h.PushBranch(context.Background(), &protocol.PushBranchCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "ws-detached-push"},
+	})
+	if err == nil {
+		t.Fatal("want error when HEAD is detached")
+	}
+	if !strings.Contains(err.Error(), "not a named branch") {
+		t.Errorf("err: want 'not a named branch' substring, got %q", err.Error())
+	}
+}
+
+func TestPushURLWithCurrentToken_UsesRefreshedTokenNotStaleOne(t *testing.T) {
+	// PushBranch must rebuild the push URL from the *current* in-memory
+	// token — RefreshWorkspaceAuth only updates realSlot.authTok, never a
+	// stored origin-remote URL, so this is the seam that guarantees a push
+	// run right after a credential rotation can't silently fall back to a
+	// stale clone-time token.
+	slot := &realSlot{
+		path:     "/unused",
+		repo:     protocol.RepoRef{CloneURL: "https://github.com/acme/web.git"},
+		authKind: "github_installation",
+		authTok:  secret.New("stale-token"),
+	}
+	slot.authTok = secret.New("fresh-token") // simulates RefreshAuth having run
+
+	got, err := pushURLWithCurrentToken(slot)
+	if err != nil {
+		t.Fatalf("pushURLWithCurrentToken: %v", err)
+	}
+	if !strings.Contains(got, "fresh-token") {
+		t.Errorf("want fresh-token in push URL, got %q", got)
+	}
+	if strings.Contains(got, "stale-token") {
+		t.Errorf("stale token leaked into push URL: %q", got)
+	}
+}
+
 // ── skill_path pre-spawn check ───────────────────────────────────────────
 
 func TestRealHandler_RunClaude_SkillNotFound_ReturnsDeterministicFailure(t *testing.T) {

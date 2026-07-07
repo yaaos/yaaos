@@ -395,6 +395,7 @@ components:
         - $ref: '#/components/schemas/RefreshWorkspaceAuthCommand'
         - $ref: '#/components/schemas/InvokeClaudeCodeCommand'
         - $ref: '#/components/schemas/CleanupWorkspaceCommand'
+        - $ref: '#/components/schemas/PushBranchCommand'
         - $ref: '#/components/schemas/ConfigUpdateCommand'
         - $ref: '#/components/schemas/ShutdownCommand'
         - $ref: '#/components/schemas/CancelShutdownCommand'
@@ -406,6 +407,7 @@ components:
           RefreshWorkspaceAuth: '#/components/schemas/RefreshWorkspaceAuthCommand'
           InvokeClaudeCode: '#/components/schemas/InvokeClaudeCodeCommand'
           CleanupWorkspace: '#/components/schemas/CleanupWorkspaceCommand'
+          PushBranch: '#/components/schemas/PushBranchCommand'
           ConfigUpdate: '#/components/schemas/ConfigUpdateCommand'
           Shutdown: '#/components/schemas/ShutdownCommand'
           CancelShutdown: '#/components/schemas/CancelShutdownCommand'
@@ -445,14 +447,14 @@ components:
       allOf:
         - $ref: '#/components/schemas/CommandBase'
         - type: object
-          required: [kind, repo, history, auth, ttl_seconds, max_idle_seconds]
+          required: [kind, repo, history, auth, ttl_seconds, max_idle_seconds, git_user_name, git_user_email]
           properties:
             kind:
               type: string
               enum: [ProvisionWorkspace]
             repo:
               type: object
-              required: [plugin_id, external_id, clone_url, head_sha]
+              required: [plugin_id, external_id, clone_url]
               properties:
                 plugin_id:
                   type: string
@@ -462,12 +464,23 @@ components:
                   type: string
                 head_sha:
                   type: string
+                  nullable: true
+                  description: |
+                    Detached-pin checkout target — `git checkout --detach`,
+                    the fork-safe fetch-by-SHA path review flows use.
+                    Exactly one of head_sha / branch_name must be set.
                 base_sha:
                   type: string
                   nullable: true
                 branch_name:
                   type: string
                   nullable: true
+                  description: |
+                    Named work branch. The agent checks it out with `git
+                    checkout -B`, tracking the remote branch when it
+                    already exists (falls back to creating a fresh local
+                    branch otherwise). Exactly one of head_sha /
+                    branch_name must be set.
             history:
               type: integer
               description: Shallow-clone depth.
@@ -488,6 +501,19 @@ components:
             max_idle_seconds:
               type: integer
               minimum: 60
+            git_user_name:
+              type: string
+              description: |
+                Commit identity the agent applies via `git config
+                user.name` after clone. Backend-supplied constant (e.g.
+                "yaaos") — not user-configurable; without it the first
+                skill commit fails.
+            git_user_email:
+              type: string
+              description: |
+                Commit identity the agent applies via `git config
+                user.email` after clone. Backend-supplied constant (e.g.
+                "yaaos[bot]@users.noreply.github.com").
 
     WriteFilesCommand:
       allOf:
@@ -616,6 +642,22 @@ components:
             kind:
               type: string
               enum: [CleanupWorkspace]
+
+    PushBranchCommand:
+      description: |
+        Push-failure recovery only: a bare re-push of the workspace's current
+        HEAD after a `refresh-auth` credential rotation, so claude is never
+        re-run just to retry a push. `workspace_id` (on CommandBase) is
+        required — the workspace is expected to already be on its named
+        work branch by provision's checkout invariant.
+      allOf:
+        - $ref: '#/components/schemas/CommandBase'
+        - type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum: [PushBranch]
 
     AgentConfig:
       type: object

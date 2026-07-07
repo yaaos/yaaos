@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer, model_validator
 
 # ── Discriminator + shared base ─────────────────────────────────────────
 
@@ -26,6 +26,7 @@ class AgentCommandKind(StrEnum):
     REFRESH_WORKSPACE_AUTH = "RefreshWorkspaceAuth"
     INVOKE_CLAUDE_CODE = "InvokeClaudeCode"
     CLEANUP_WORKSPACE = "CleanupWorkspace"
+    PUSH_BRANCH = "PushBranch"
     CONFIG_UPDATE = "ConfigUpdate"
     SHUTDOWN = "Shutdown"
     CANCEL_SHUTDOWN = "CancelShutdown"
@@ -50,14 +51,32 @@ class _CommandBase(BaseModel):
 # ── The five concrete AgentCommand kinds ────────────────────────────────
 
 
+# Backend-supplied commit identity applied via `git config user.name`/
+# `user.email` in every provisioned checkout. Not user-configurable — the
+# first skill commit fails without an identity, and there is no per-org or
+# per-repo override today.
+DEFAULT_GIT_USER_NAME = "yaaos"
+DEFAULT_GIT_USER_EMAIL = "yaaos[bot]@users.noreply.github.com"
+
+
 class RepoRef(BaseModel):
     model_config = ConfigDict(frozen=True)
     plugin_id: str
     external_id: str
     clone_url: str
-    head_sha: str
+    # Checkout instruction: exactly one of head_sha (detached pin — the
+    # fork-safe fetch-by-SHA path review flows use) or branch_name (named
+    # work branch; the agent checks it out with `git checkout -B`, tracking
+    # the remote when it already exists) must be set.
+    head_sha: str | None = None
     base_sha: str | None = None
     branch_name: str | None = None
+
+    @model_validator(mode="after")
+    def _check_checkout_mode(self) -> RepoRef:
+        if bool(self.head_sha) == bool(self.branch_name):
+            raise ValueError("RepoRef requires exactly one of head_sha or branch_name (checkout instruction)")
+        return self
 
 
 class AuthBlock(BaseModel):
@@ -73,6 +92,11 @@ class ProvisionWorkspaceCommand(_CommandBase):
     auth: AuthBlock
     ttl_seconds: int = Field(ge=60)
     max_idle_seconds: int = Field(ge=60)
+    # Commit identity the agent applies via `git config user.name`/
+    # `user.email` after clone. Backend-supplied constants — see
+    # DEFAULT_GIT_USER_NAME / DEFAULT_GIT_USER_EMAIL above.
+    git_user_name: str = DEFAULT_GIT_USER_NAME
+    git_user_email: str = DEFAULT_GIT_USER_EMAIL
 
 
 class WriteFilesEntry(BaseModel):
@@ -115,6 +139,17 @@ class InvokeClaudeCodeCommand(_CommandBase):
 
 class CleanupWorkspaceCommand(_CommandBase):
     kind: Literal[AgentCommandKind.CLEANUP_WORKSPACE] = AgentCommandKind.CLEANUP_WORKSPACE
+
+
+class PushBranchCommand(_CommandBase):
+    """Push-failure recovery only: a bare re-push of the workspace's current
+    HEAD after a `refresh-auth` credential rotation, so claude is never
+    re-run just to retry a push. `workspace_id` (on `_CommandBase`) is
+    required — the workspace is expected to already be on its named work
+    branch by provision's checkout invariant.
+    """
+
+    kind: Literal[AgentCommandKind.PUSH_BRANCH] = AgentCommandKind.PUSH_BRANCH
 
 
 class InvokeClaudeCodeFields(BaseModel):
@@ -248,6 +283,7 @@ AgentCommand = Annotated[
     | RefreshWorkspaceAuthCommand
     | InvokeClaudeCodeCommand
     | CleanupWorkspaceCommand
+    | PushBranchCommand
     | ConfigUpdateCommand
     | ShutdownCommand
     | CancelShutdownCommand,

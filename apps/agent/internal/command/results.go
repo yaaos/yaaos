@@ -143,6 +143,20 @@ func (r CleanupResult) ToWire() map[string]any {
 	return m
 }
 
+// PushBranchResult is the typed output of PushBranch.
+type PushBranchResult struct {
+	WorkspaceID string
+	Pushed      bool
+}
+
+// ToWire returns the map[string]any the backend expects from PushBranch.
+func (r PushBranchResult) ToWire() map[string]any {
+	return map[string]any{
+		"workspace_id": r.WorkspaceID,
+		"pushed":       r.Pushed,
+	}
+}
+
 // ConfigUpdateResult is the typed output of ConfigUpdateCommand.Execute.
 // The backend doesn't read specific fields from a config-update's outputs;
 // an empty map is a valid success response, but we include the max_workspaces

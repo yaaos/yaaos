@@ -22,6 +22,7 @@ const (
 	KindRefreshWorkspaceAuth CommandKind = "RefreshWorkspaceAuth"
 	KindInvokeClaudeCode     CommandKind = "InvokeClaudeCode"
 	KindCleanupWorkspace     CommandKind = "CleanupWorkspace"
+	KindPushBranch           CommandKind = "PushBranch"
 	KindConfigUpdate         CommandKind = "ConfigUpdate"
 	KindShutdown             CommandKind = "Shutdown"
 	KindCancelShutdown       CommandKind = "CancelShutdown"
@@ -46,11 +47,19 @@ type CommandHeader struct {
 }
 
 // RepoRef matches the spec's nested `repo` object on ProvisionWorkspace.
+//
+// Checkout instruction: exactly one of HeadSHA (detached pin — the
+// fork-safe fetch-by-SHA path review flows use) or BranchName (named work
+// branch; the agent checks it out with `git checkout -B`, tracking the
+// remote when it already exists) is set by a well-formed backend command.
+// When both are present (legacy shape: BranchName as a `--branch` clone
+// hint alongside a required HeadSHA), HeadSHA wins and BranchName is used
+// only as a clone-speed hint — see gitClone.
 type RepoRef struct {
 	PluginID   string `json:"plugin_id"`
 	ExternalID string `json:"external_id"`
 	CloneURL   string `json:"clone_url"`
-	HeadSHA    string `json:"head_sha"`
+	HeadSHA    string `json:"head_sha,omitempty"`
 	BaseSHA    string `json:"base_sha,omitempty"`
 	BranchName string `json:"branch_name,omitempty"`
 }
@@ -69,6 +78,12 @@ type ProvisionWorkspaceCommand struct {
 	Auth           AuthBlock `json:"auth"`
 	TTLSeconds     int       `json:"ttl_seconds"`
 	MaxIdleSeconds int       `json:"max_idle_seconds"`
+	// GitUserName/GitUserEmail are the commit identity RealHandler.ProvisionWorkspace
+	// applies via `git config user.name`/`user.email` after clone —
+	// backend-supplied constants (e.g. "yaaos" / "yaaos[bot]@users.noreply.github.com").
+	// Without them the first skill commit on a named work branch fails.
+	GitUserName  string `json:"git_user_name"`
+	GitUserEmail string `json:"git_user_email"`
 }
 
 type WriteFilesEntry struct {
@@ -107,6 +122,16 @@ type InvokeClaudeCodeCommand struct {
 }
 
 type CleanupWorkspaceCommand struct {
+	CommandHeader
+}
+
+// PushBranchCommand is push-failure recovery only: a bare re-push of the
+// workspace's current HEAD after a RefreshWorkspaceAuth credential
+// rotation, so claude is never re-run just to retry a push. WorkspaceID
+// (on CommandHeader) is required — the workspace is expected to already be
+// on its named work branch by ProvisionWorkspace's checkout invariant. No
+// kind-specific fields beyond the header.
+type PushBranchCommand struct {
 	CommandHeader
 }
 

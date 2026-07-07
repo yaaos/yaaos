@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid7
 
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.core.agent_gateway import (
     AuthBlock,
@@ -41,8 +41,18 @@ class ProvisionWorkspaceInputs(BaseModel):
     org_id: UUID
     plugin_id: str
     repo_external_id: str
-    head_sha: str
+    # Checkout instruction: exactly one of head_sha (detached pin — every
+    # review-flow caller today) or branch_name (named work branch) must be
+    # set. Mirrors RepoRef's own exactly-one-of contract in agent_gateway.
+    head_sha: str | None = None
+    branch_name: str | None = None
     base_sha: str | None = None
+
+    @model_validator(mode="after")
+    def _check_checkout_mode(self) -> ProvisionWorkspaceInputs:
+        if bool(self.head_sha) == bool(self.branch_name):
+            raise ValueError("ProvisionWorkspaceInputs requires exactly one of head_sha or branch_name")
+        return self
 
 
 class ProvisionWorkspaceOutputs(BaseModel):
@@ -91,7 +101,9 @@ class ProvisionWorkspace(AgentDispatchCommand):
         sink in `agent_report.py`.
 
         `clone_url` and `installation_token` come from `core/vcs.get_install_credentials`
-        so credentials are fetched at dispatch time.
+        so credentials are fetched at dispatch time. Commit identity
+        (`git_user_name`/`git_user_email`) is not set here — it defaults to the
+        backend-supplied constants on `ProvisionWorkspaceCommand` itself.
         Raises `VcsInstallNotFound` when the org has no active VCS App installation.
         """
         import app.core.vcs as _vcs  # noqa: PLC0415
@@ -113,6 +125,7 @@ class ProvisionWorkspace(AgentDispatchCommand):
             external_id=inputs.repo_external_id,
             clone_url=creds.clone_url,
             head_sha=inputs.head_sha,
+            branch_name=inputs.branch_name,
             base_sha=inputs.base_sha,
         )
         auth = AuthBlock(

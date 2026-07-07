@@ -37,6 +37,12 @@
 //                            skill-path convention.
 //   - Cleanup              — `os.RemoveAll` the tempdir + drop the slot.
 //                            Idempotent on a missing workspace_id.
+//   - PushBranch           — push-failure recovery only: re-points `origin`
+//                            at a URL carrying the workspace's *current*
+//                            auth token (RefreshWorkspaceAuth only updates
+//                            the in-memory slot — the origin URL set at
+//                            clone time may hold a stale one) and runs
+//                            `git push origin HEAD`. No claude re-run.
 //
 // Concurrency: a single sync.Mutex serializes slot lookups + mutations.
 // Each method is short and non-blocking; the workspace process itself
@@ -263,6 +269,16 @@ func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.Prov
 		// Tear down the empty tempdir on clone failure so we don't leak.
 		_ = os.RemoveAll(path)
 		return command.ProvisionResult{}, fmt.Errorf("git clone: %w", cloneErr)
+	}
+
+	// Commit identity: backend-supplied constants, not agent policy. Every
+	// skill commit on a named work branch needs `user.name`/`user.email`
+	// set — detached-checkout review flows never commit, so this is a
+	// harmless no-op for them. Best-effort on an empty pair (older wire
+	// payloads / test fixtures that don't set these fields).
+	if err := configureGitIdentity(ctx, path, cmd.GitUserName, cmd.GitUserEmail); err != nil {
+		_ = os.RemoveAll(path)
+		return command.ProvisionResult{}, fmt.Errorf("git identity: %w", err)
 	}
 
 	// Startup-reconciliation manifest: write the workspace_id to a
@@ -596,6 +612,51 @@ func (h *RealHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceC
 	}, nil
 }
 
+// PushBranch is push-failure recovery only: a bare re-push of the
+// workspace's current HEAD after a RefreshWorkspaceAuth credential
+// rotation, so claude is never re-run just to retry a push. Re-points
+// `origin` at a URL carrying the slot's *current* auth token before
+// pushing — RefreshAuth (above) only updates the in-memory slot, never the
+// git remote's stored URL, so a push run straight after a credential
+// rotation must not fall back to the (now possibly expired) token embedded
+// at clone time. Requires HEAD to be a named branch — provision's checkout
+// invariant guarantees this for any workspace this command is dispatched
+// against.
+func (h *RealHandler) PushBranch(ctx context.Context, cmd *protocol.PushBranchCommand) (command.PushBranchResult, error) {
+	h.mu.Lock()
+	slot, ok := h.slots[cmd.WorkspaceID]
+	h.mu.Unlock()
+	if !ok {
+		return command.PushBranchResult{}, ErrUnknownWorkspace
+	}
+	branch, err := headBranchName(ctx, slot.path)
+	if err != nil || branch == "" {
+		return command.PushBranchResult{}, fmt.Errorf("PushBranch: HEAD is not a named branch in %q", slot.path)
+	}
+	freshURL, err := pushURLWithCurrentToken(slot)
+	if err != nil {
+		return command.PushBranchResult{}, fmt.Errorf("auth: %w", err)
+	}
+	if err := runGit(ctx, slot.path, "remote", "set-url", "origin", freshURL); err != nil {
+		return command.PushBranchResult{}, fmt.Errorf("git remote set-url: %w", err)
+	}
+	if err := runGit(ctx, slot.path, "push", "origin", "HEAD"); err != nil {
+		return command.PushBranchResult{}, fmt.Errorf("git push: %w", err)
+	}
+	return command.PushBranchResult{WorkspaceID: cmd.WorkspaceID, Pushed: true}, nil
+}
+
+// pushURLWithCurrentToken rebuilds the push URL from the workspace's
+// remembered repo.CloneURL and its *current* in-memory auth token — never
+// the token embedded in the origin remote's URL at clone time.
+// RefreshWorkspaceAuth (see RefreshAuth above) only updates the in-memory
+// token; this is the seam that guarantees PushBranch always uses the
+// freshest one, so a push run right after a credential rotation can't
+// silently fall back to an expired clone-time token.
+func pushURLWithCurrentToken(slot *realSlot) (string, error) {
+	return injectAuth(slot.repo.CloneURL, protocol.AuthBlock{Kind: slot.authKind, Token: slot.authTok.Value()})
+}
+
 // safeJoin guards against path-escape attacks. The supplied `rel` must
 // not start with `/`, must not contain `..` segments, and must resolve
 // (after Clean) to a subpath of `base`.
@@ -622,29 +683,39 @@ func safeJoin(base, rel string) (string, error) {
 
 // gitClone shells out to the system `git` binary (present in the runtime
 // image — see `apps/agent/Dockerfile`) and produces a working tree at
-// `dest` checked out to `repo.HeadSHA`. The auth token is injected into
-// the clone URL via HTTPS basic auth (`https://x-access-token:<token>@…`)
-// for GitHub installation tokens — that's the supported pattern for
-// short-lived GitHub App installation tokens. Other auth kinds use the
-// same `x-access-token` form; specialised handling lands when
-// non-GitHub plugins arrive.
+// `dest`. The auth token is injected into the clone URL via HTTPS basic
+// auth (`https://x-access-token:<token>@…`) for GitHub installation
+// tokens — that's the supported pattern for short-lived GitHub App
+// installation tokens. Other auth kinds use the same `x-access-token`
+// form; specialised handling lands when non-GitHub plugins arrive.
+//
+// Checkout mode is decided by which of `repo.HeadSHA` / `repo.BranchName`
+// is set — a well-formed backend command sets exactly one:
+//
+//   - `repo.HeadSHA` set (today's behaviour, and the only mode a legacy
+//     caller with no branch_name ever exercises): detach HEAD at that
+//     SHA — fork-safe, works for a PR whose head lives in a fork the
+//     agent has no push access to. If `repo.BranchName` is ALSO set
+//     (legacy shape — a `--branch` clone-speed hint alongside a required
+//     head_sha), it's passed to the initial `git clone --branch` only;
+//     HeadSHA still wins the checkout.
+//   - `repo.HeadSHA` empty, `repo.BranchName` set: check out that branch
+//     as a local work branch (`git checkout -B`), tracking the remote
+//     branch when it already exists (falls back to creating a fresh
+//     local branch off the clone's default-branch HEAD otherwise) — the
+//     mode a pipeline stage that commits + pushes needs.
 //
 // Sequence:
-//  1. `git clone --depth=<history> [--branch=<name>] <url> .`
-//  2. If `head_sha` differs from what HEAD resolves to:
-//     `git fetch --depth=<history+1> origin <head_sha>` then
-//     `git checkout <head_sha>`.
-//  3. If `base_sha` is set on the wire:
-//     `git fetch --depth=1 origin <base_sha>` so the commit becomes a
-//     reachable object locally. The review prompt runs
-//     `git diff <base_sha>..HEAD` (two-dot range — compares the two
-//     trees; no walk of the commit graph between them is needed), so
-//     depth=1 of each endpoint is sufficient.
-//
-// Step 2 covers two cases the supervisor flow exercises: branch-name
-// supplied + HEAD has moved since the webhook fired (the wire's head_sha
-// is authoritative), and branch-name omitted (clone defaults to the
-// repo's default branch — we then pin to head_sha).
+//  1. `git clone --depth=<history> [--branch=<name>] <url> .` — the
+//     `--branch` flag is only added in detached-pin mode (see above);
+//     named-branch mode omits it because the branch may not exist on the
+//     remote yet.
+//  2. Checkout, per the mode above.
+//  3. If `base_sha` is set on the wire: `git fetch --depth=1 origin
+//     <base_sha>` so the commit becomes a reachable object locally. The
+//     review prompt runs `git diff <base_sha>..HEAD` (two-dot range —
+//     compares the two trees; no walk of the commit graph between them
+//     is needed), so depth=1 of each endpoint is sufficient.
 //
 // Output is intentionally captured + discarded; failures surface via
 // exit code + a sanitized error message that never includes the auth
@@ -654,8 +725,8 @@ func gitClone(ctx context.Context, dest string, repo protocol.RepoRef, auth prot
 	if repo.CloneURL == "" {
 		return errors.New("missing clone_url")
 	}
-	if repo.HeadSHA == "" {
-		return errors.New("missing head_sha")
+	if repo.HeadSHA == "" && repo.BranchName == "" {
+		return errors.New("missing head_sha or branch_name")
 	}
 	cloneURL, err := injectAuth(repo.CloneURL, auth)
 	if err != nil {
@@ -665,33 +736,31 @@ func gitClone(ctx context.Context, dest string, repo protocol.RepoRef, auth prot
 	if history > 0 {
 		args = append(args, fmt.Sprintf("--depth=%d", history))
 	}
-	if repo.BranchName != "" {
+	// The --branch clone hint only applies in detached-pin (head_sha) mode
+	// — a same-as-before speed optimization landing the initial clone
+	// close to head_sha before the follow-up fetch-by-SHA. In named-branch
+	// checkout mode the branch may not exist on the remote yet (a fresh
+	// work branch), so passing --branch there would fail the clone
+	// outright; checkoutNamedBranch below handles both cases explicitly.
+	if repo.HeadSHA != "" && repo.BranchName != "" {
 		args = append(args, "--branch", repo.BranchName)
 	}
 	args = append(args, cloneURL, dest)
 	if err := runGit(ctx, "", args...); err != nil {
 		return err
 	}
-	// Pin to head_sha. A `git rev-parse HEAD` would tell us if we already
-	// landed there from the clone, but the fetch+checkout pair is cheap
-	// enough to always run + simpler to reason about.
-	fetchDepth := history + 1
-	if history == 0 {
-		fetchDepth = 1
-	}
-	fetchArgs := []string{"fetch", fmt.Sprintf("--depth=%d", fetchDepth), "origin", repo.HeadSHA}
-	if err := runGit(ctx, dest, fetchArgs...); err != nil {
-		// Some hosts reject fetching by SHA — fall back to a full fetch.
-		// This is rare for GitHub (which allows it via the
-		// `uploadpack.allowReachableSHA1InWant` config that github.com
-		// sets by default) but cheap to defend against.
-		if err2 := runGit(ctx, dest, "fetch", "origin"); err2 != nil {
-			return fmt.Errorf("fetch fallback: %w", err2)
+
+	switch {
+	case repo.HeadSHA != "":
+		if err := checkoutDetachedSHA(ctx, dest, repo.HeadSHA, history); err != nil {
+			return err
+		}
+	case repo.BranchName != "":
+		if err := checkoutNamedBranch(ctx, dest, repo.BranchName, history); err != nil {
+			return err
 		}
 	}
-	if err := runGit(ctx, dest, "checkout", "--detach", repo.HeadSHA); err != nil {
-		return fmt.Errorf("checkout %s: %w", repo.HeadSHA, err)
-	}
+
 	// Fetch base_sha as a reachable object so the review prompt's
 	// `git diff base_sha..HEAD` (two-dot) finds both trees locally. No
 	// checkout — base only needs to be reachable as a revision. Same
@@ -702,6 +771,79 @@ func gitClone(ctx context.Context, dest string, repo protocol.RepoRef, auth prot
 			if err2 := runGit(ctx, dest, "fetch", "origin"); err2 != nil {
 				return fmt.Errorf("fetch base fallback: %w", err2)
 			}
+		}
+	}
+	return nil
+}
+
+// checkoutDetachedSHA pins HEAD to `headSHA`, detached — today's behaviour,
+// fork-safe (works for a PR head living in a fork the agent has no push
+// access to). A `git rev-parse HEAD` would tell us if the initial clone
+// already landed there, but the fetch+checkout pair is cheap enough to
+// always run + simpler to reason about.
+func checkoutDetachedSHA(ctx context.Context, dest, headSHA string, history int) error {
+	fetchDepth := history + 1
+	if history == 0 {
+		fetchDepth = 1
+	}
+	fetchArgs := []string{"fetch", fmt.Sprintf("--depth=%d", fetchDepth), "origin", headSHA}
+	if err := runGit(ctx, dest, fetchArgs...); err != nil {
+		// Some hosts reject fetching by SHA — fall back to a full fetch.
+		// This is rare for GitHub (which allows it via the
+		// `uploadpack.allowReachableSHA1InWant` config that github.com
+		// sets by default) but cheap to defend against.
+		if err2 := runGit(ctx, dest, "fetch", "origin"); err2 != nil {
+			return fmt.Errorf("fetch fallback: %w", err2)
+		}
+	}
+	if err := runGit(ctx, dest, "checkout", "--detach", headSHA); err != nil {
+		return fmt.Errorf("checkout %s: %w", headSHA, err)
+	}
+	return nil
+}
+
+// checkoutNamedBranch checks out `branch` as a local work branch via `git
+// checkout -B`. When the remote already has the branch, the local branch is
+// created from — and tracks — `origin/<branch>` (git's default
+// `branch.autoSetupMerge` behaviour wires the upstream automatically for a
+// `-B <name> <remote-tracking-ref>` checkout). When the remote doesn't have
+// it yet (a fresh work branch for a pipeline stage that will push it for
+// the first time), the local branch is created off whatever ref the
+// initial clone landed on (the repo's default branch) with no upstream.
+func checkoutNamedBranch(ctx context.Context, dest, branch string, history int) error {
+	fetchDepth := history
+	if fetchDepth <= 0 {
+		fetchDepth = 1
+	}
+	fetchArgs := []string{"fetch", fmt.Sprintf("--depth=%d", fetchDepth), "origin", branch}
+	if err := runGit(ctx, dest, fetchArgs...); err == nil {
+		if err := runGit(ctx, dest, "checkout", "-B", branch, "origin/"+branch); err != nil {
+			return fmt.Errorf("checkout tracking %s: %w", branch, err)
+		}
+		return nil
+	}
+	// Remote doesn't have this branch yet — create a fresh local branch off
+	// the clone's current HEAD (the repo's default branch).
+	if err := runGit(ctx, dest, "checkout", "-B", branch); err != nil {
+		return fmt.Errorf("checkout new branch %s: %w", branch, err)
+	}
+	return nil
+}
+
+// configureGitIdentity sets the workspace's local `git config user.name`/
+// `user.email` — the commit identity every skill commit on a named work
+// branch needs. Best-effort no-op when both are empty (older wire payloads
+// / test fixtures that don't set these fields; detached-checkout review
+// flows never commit, so an unset identity there is harmless).
+func configureGitIdentity(ctx context.Context, dir, name, email string) error {
+	if name != "" {
+		if err := runGit(ctx, dir, "config", "user.name", name); err != nil {
+			return fmt.Errorf("git config user.name: %w", err)
+		}
+	}
+	if email != "" {
+		if err := runGit(ctx, dir, "config", "user.email", email); err != nil {
+			return fmt.Errorf("git config user.email: %w", err)
 		}
 	}
 	return nil
