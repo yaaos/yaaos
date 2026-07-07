@@ -18,6 +18,7 @@ from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import create_user, mint_session
 from app.domain.orgs import insert_membership, insert_org
+from app.domain.pipelines import defaults
 from app.domain.pipelines import web as _pipelines_web  # noqa: F401 -- triggers route registration
 
 pytestmark = pytest.mark.service
@@ -338,3 +339,61 @@ async def test_create_and_delete_write_audit_rows(seeded) -> None:
     kinds = [e.kind for e in entries]
     assert "pipeline.created" in kinds
     assert "pipeline.deleted" in kinds
+
+
+@pytest.mark.asyncio
+async def test_list_templates_returns_six_shipped_defaults(seeded) -> None:
+    """`GET /api/pipelines/templates` registers BEFORE `GET /{pipeline_id}`
+    — a UUID-typed path param would otherwise swallow the literal
+    `templates` segment; this only proves the response, not the routing
+    (routing itself is proven by `templates` returning template data at
+    all rather than a 404 `not_found` for an unresolvable pipeline id)."""
+    async with _client() as c:
+        r = await c.get(
+            "/api/pipelines/templates",
+            cookies=_admin_cookies(seeded),
+            headers=_admin_headers(seeded),
+        )
+    assert r.status_code == 200, r.text
+    templates = r.json()["templates"]
+    assert sorted(t["name"] for t in templates) == [
+        "PR review",
+        "comment response",
+        "dev",
+        "implementation",
+        "incremental review",
+        "troubleshoot",
+    ]
+    assert {t["id"] for t in templates} == {str(t.id) for t in defaults.ALL_DEFAULTS}
+
+
+@pytest.mark.asyncio
+async def test_from_template_materializes_pipeline_and_unknown_id_404s(seeded) -> None:
+    async with _client() as c:
+        unknown = await c.post(
+            "/api/pipelines/from-template",
+            json={"template_id": str(uuid4())},
+            cookies=_admin_cookies(seeded),
+            headers=_admin_headers(seeded, mutate=True),
+        )
+        assert unknown.status_code == 404
+        assert unknown.json()["detail"]["error"] == "unknown_template"
+
+        created = await c.post(
+            "/api/pipelines/from-template",
+            json={"template_id": str(defaults.IMPLEMENTATION_ID)},
+            cookies=_admin_cookies(seeded),
+            headers=_admin_headers(seeded, mutate=True),
+        )
+        assert created.status_code == 201, created.text
+        pipeline_id = created.json()["id"]
+
+        got = await c.get(
+            f"/api/pipelines/{pipeline_id}",
+            cookies=_admin_cookies(seeded),
+            headers=_admin_headers(seeded),
+        )
+    assert got.status_code == 200, got.text
+    body = got.json()
+    assert body["id"] != str(defaults.IMPLEMENTATION_ID)  # fresh id, not the pinned template id
+    assert body["name"] == "implementation"

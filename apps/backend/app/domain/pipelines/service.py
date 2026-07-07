@@ -2,20 +2,20 @@
 
 Definition CRUD (`create_pipeline` / `update_pipeline` / `delete_pipeline` /
 `get_pipeline` / `list_pipelines` / `pipeline_referenced_by_call`), the run
-lifecycle (`start_run` / `request_cancel`), and every pause resolution +
+lifecycle (`start_run` / `request_cancel`), every pause resolution +
 re-entry path (`resolve_pause` — approve/instruct/send_back/kill —
-`start_rerun_from_stage`) are real. Run-engine mechanics (promotion, the
+`start_rerun_from_stage`), and the shipped-default template surface
+(`list_templates` / `instantiate_template`, backed by `defaults.py`) are all
+real. Run-engine mechanics (promotion, the
 `ROUTE_RUN`/`START_STAGE`/`HANDLE_AGENT_EVENT` taskiq trio, the send-back
 rewind, terminal bookkeeping) live in `engine.py`; the read models
 (`list_runs_for_ticket`, `get_run_overview`) live in `views.py`.
-`instantiate_template` and `list_templates` stay stubs — bodies raise
-`NotImplementedError`; only the signatures are load-bearing.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid7
 
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -25,12 +25,14 @@ from app.core.audit_log import Actor, audit, audit_for_pipeline
 from app.core.auth import require_org_context
 from app.core.tenancy import get_membership_info
 from app.domain.artifacts import latest_final
-from app.domain.pipelines import engine
+from app.domain.pipelines import defaults, engine
 from app.domain.pipelines.definition import (
     FlattenedDefinition,
+    PipelineCallStage,
     PipelineDefinition,
     ReviewSkillStage,
     SkillStage,
+    Stage,
     flatten,
     validate_definition,
 )
@@ -82,6 +84,10 @@ class StageNotInDefinitionError(LookupError):
 
 class MissingInheritedArtifactError(ValueError):
     """A renamed/removed earlier stage leaves a required input artifact unresolvable."""
+
+
+class TemplateNotFoundError(LookupError):
+    """No shipped default `PipelineDefinition` for the given id."""
 
 
 class InvalidPauseResolutionError(ValueError):
@@ -604,17 +610,71 @@ async def get_run_state_for_pause(pause_id: UUID, *, session: AsyncSession) -> s
     ).scalar_one()
 
 
+_TEMPLATES_BY_ID: dict[UUID, PipelineDefinition] = {t.id: t for t in defaults.ALL_DEFAULTS}
+
+
+async def _materialize_template(
+    template: PipelineDefinition,
+    *,
+    org_id: UUID,
+    org_by_name: dict[str, UUID],
+    memo: dict[UUID, UUID],
+    actor: Actor,
+    session: AsyncSession,
+) -> UUID:
+    """Depth-first: a template's own `PipelineCallStage` targets are resolved
+    (recursively) before the template itself is created, so the fresh copy's
+    call stages can be rewired immediately to a real org pipeline id. A
+    callee already present in the org (matched by name) is reused rather
+    than copied again; `memo` additionally dedupes within one
+    `instantiate_template` call when the same callee is reached more than
+    once. The top-level requested template is always freshly copied — the
+    by-name reuse rule applies only to callees encountered via
+    `PipelineCallStage`."""
+    if template.id in memo:
+        return memo[template.id]
+
+    new_stages: list[Stage] = []
+    for stage in template.stages:
+        if isinstance(stage, PipelineCallStage):
+            callee = _TEMPLATES_BY_ID.get(stage.pipeline_id)
+            assert callee is not None, f"shipped default references unknown template {stage.pipeline_id}"
+            org_pipeline_id = org_by_name.get(callee.name)
+            if org_pipeline_id is None:
+                org_pipeline_id = await _materialize_template(
+                    callee, org_id=org_id, org_by_name=org_by_name, memo=memo, actor=actor, session=session
+                )
+            new_stages.append(stage.model_copy(update={"id": uuid7(), "pipeline_id": org_pipeline_id}))
+        else:
+            new_stages.append(stage.model_copy(update={"id": uuid7()}))
+
+    fresh = template.model_copy(update={"id": uuid7(), "stages": tuple(new_stages)})
+    new_id = await create_pipeline(org_id=org_id, definition=fresh, actor=actor, session=session)
+    memo[template.id] = new_id
+    org_by_name[template.name] = new_id
+    return new_id
+
+
 async def instantiate_template(
     *, org_id: UUID, template_id: UUID, actor: Actor, session: AsyncSession
 ) -> UUID:
     """Deep copy of a shipped default: fresh pipeline + stage ids, call
-    targets rewired depth-first."""
-    raise NotImplementedError
+    targets rewired depth-first (a callee already present in the org by name
+    is reused, otherwise it's copied too, recursively). Raises
+    `TemplateNotFoundError` for an unknown `template_id`."""
+    template = _TEMPLATES_BY_ID.get(template_id)
+    if template is None:
+        raise TemplateNotFoundError(template_id)
+    org_definitions = await _load_org_definitions(org_id, session=session)
+    org_by_name = {defn.name: pid for pid, defn in org_definitions.items()}
+    return await _materialize_template(
+        template, org_id=org_id, org_by_name=org_by_name, memo={}, actor=actor, session=session
+    )
 
 
 def list_templates() -> tuple[PipelineDefinition, ...]:
     """The code-shipped default pipelines (pinned ids)."""
-    raise NotImplementedError
+    return defaults.ALL_DEFAULTS
 
 
 async def has_run_in_flight(ticket_id: UUID, *, session: AsyncSession) -> bool:

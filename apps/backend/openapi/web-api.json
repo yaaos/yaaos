@@ -1251,6 +1251,20 @@
         "title": "FindingStatusEvent",
         "type": "object"
       },
+      "FromTemplateRequest": {
+        "properties": {
+          "template_id": {
+            "format": "uuid",
+            "title": "Template Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template_id"
+        ],
+        "title": "FromTemplateRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1854,6 +1868,22 @@
           "runs"
         ],
         "title": "ListRunsResponse",
+        "type": "object"
+      },
+      "ListTemplatesResponse": {
+        "properties": {
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateResponse"
+            },
+            "title": "Templates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "templates"
+        ],
+        "title": "ListTemplatesResponse",
         "type": "object"
       },
       "MemberView": {
@@ -3283,6 +3313,60 @@
           "activity"
         ],
         "title": "StepActivityResponse",
+        "type": "object"
+      },
+      "TemplateResponse": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "action": "#/components/schemas/ActionStage",
+                  "call": "#/components/schemas/PipelineCallStage",
+                  "review": "#/components/schemas/ReviewSkillStage",
+                  "skill": "#/components/schemas/SkillStage"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ReviewSkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ActionStage"
+                },
+                {
+                  "$ref": "#/components/schemas/PipelineCallStage"
+                }
+              ]
+            },
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "stages"
+        ],
+        "title": "TemplateResponse",
         "type": "object"
       },
       "TriggerBinding": {
@@ -8509,6 +8593,81 @@
         ]
       }
     },
+    "/api/pipelines/from-template": {
+      "post": {
+        "operationId": "from_template_endpoint_api_pipelines_from_template_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FromTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatePipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "From Template Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
     "/api/pipelines/runs": {
       "get": {
         "description": "Registered before `/{pipeline_id}` — that pattern is a bare\nsingle-segment match (route matching happens before FastAPI's own UUID\nparsing) and would otherwise swallow `/runs`.",
@@ -8888,6 +9047,72 @@
           }
         },
         "summary": "Cancel Run Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/templates": {
+      "get": {
+        "description": "Registered BEFORE `/{pipeline_id}` — the latter is a bare\nsingle-segment match (route matching precedes FastAPI's own UUID\nparsing) and would otherwise swallow the literal `templates` segment.",
+        "operationId": "list_templates_endpoint_api_pipelines_templates_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListTemplatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Templates Endpoint",
         "tags": [
           "pipelines"
         ]

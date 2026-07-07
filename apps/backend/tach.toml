@@ -1069,6 +1069,7 @@ expose = [
   "Stage",
   "StageExecution",
   "StageNotInDefinitionError",
+  "TemplateNotFoundError",
   "create_pipeline",
   "delete_pipeline",
   "get_pipeline",

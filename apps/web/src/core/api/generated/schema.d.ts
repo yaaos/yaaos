@@ -1103,6 +1103,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pipelines/from-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** From Template Endpoint */
+        post: operations["from_template_endpoint_api_pipelines_from_template_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pipelines/runs": {
         parameters: {
             query?: never;
@@ -1187,6 +1204,28 @@ export interface paths {
         put?: never;
         /** Cancel Run Endpoint */
         post: operations["cancel_run_endpoint_api_pipelines_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pipelines/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Templates Endpoint
+         * @description Registered BEFORE `/{pipeline_id}` — the latter is a bare
+         *     single-segment match (route matching precedes FastAPI's own UUID
+         *     parsing) and would otherwise swallow the literal `templates` segment.
+         */
+        get: operations["list_templates_endpoint_api_pipelines_templates_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2589,6 +2628,14 @@ export interface components {
              */
             status: "open" | "resolved" | "dismissed";
         };
+        /** FromTemplateRequest */
+        FromTemplateRequest: {
+            /**
+             * Template Id
+             * Format: uuid
+             */
+            template_id: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -2836,6 +2883,11 @@ export interface components {
         ListRunsResponse: {
             /** Runs */
             runs: components["schemas"]["PipelineRun"][];
+        };
+        /** ListTemplatesResponse */
+        ListTemplatesResponse: {
+            /** Templates */
+            templates: components["schemas"]["TemplateResponse"][];
         };
         /** MemberView */
         MemberView: {
@@ -3430,6 +3482,20 @@ export interface components {
          */
         StepActivityResponse: {
             activity: components["schemas"]["ActivityLog"] | null;
+        };
+        /** TemplateResponse */
+        TemplateResponse: {
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Stages */
+            stages: (components["schemas"]["SkillStage"] | components["schemas"]["ReviewSkillStage"] | components["schemas"]["ActionStage"] | components["schemas"]["PipelineCallStage"])[];
         };
         /**
          * TriggerBinding
@@ -5949,6 +6015,43 @@ export interface operations {
             };
         };
     };
+    from_template_endpoint_api_pipelines_from_template_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FromTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_runs_endpoint_api_pipelines_runs_get: {
         parameters: {
             query: {
@@ -6117,6 +6220,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_templates_endpoint_api_pipelines_templates_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListTemplatesResponse"];
                 };
             };
             /** @description Validation Error */

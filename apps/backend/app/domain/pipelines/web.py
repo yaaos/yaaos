@@ -5,6 +5,8 @@ engine's HTTP surface.
 |--------|-----------------------|----------------------|
 | GET    | `/api/pipelines`      | `PIPELINES_MANAGE` — list org pipeline definitions |
 | POST   | `/api/pipelines`      | `PIPELINES_MANAGE` — create |
+| GET    | `/api/pipelines/templates` | `PIPELINES_MANAGE` — list shipped default definitions (registered BEFORE `/{id}`) |
+| POST   | `/api/pipelines/from-template` | `PIPELINES_MANAGE` — materialize a shipped default into an org pipeline |
 | GET    | `/api/pipelines/{id}` | `PIPELINES_MANAGE` — read one |
 | PUT    | `/api/pipelines/{id}` | `PIPELINES_MANAGE` — replace definition (applies to new runs only) |
 | DELETE | `/api/pipelines/{id}` | `PIPELINES_MANAGE` — delete; 409 if referenced |
@@ -47,6 +49,7 @@ from app.domain.pipelines.service import (
     RunAlreadyTerminalError,
     RunNotFoundError,
     StageNotInDefinitionError,
+    TemplateNotFoundError,
 )
 from app.domain.pipelines.types import PauseResolution, Pipeline, PipelineRun, PipelineSummary, RunOverview
 
@@ -140,6 +143,55 @@ async def run_overview_endpoint(ticket_id: UUID) -> RunOverview:
     if overview is None:
         raise _err(404, "not_found")
     return overview
+
+
+class TemplateResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    stages: tuple[Stage, ...]
+
+
+class ListTemplatesResponse(BaseModel):
+    templates: list[TemplateResponse]
+
+
+@router.get("/templates", dependencies=[Depends(require(Action.PIPELINES_MANAGE))])
+async def list_templates_endpoint() -> ListTemplatesResponse:
+    """Registered BEFORE `/{pipeline_id}` — the latter is a bare
+    single-segment match (route matching precedes FastAPI's own UUID
+    parsing) and would otherwise swallow the literal `templates` segment."""
+    return ListTemplatesResponse(
+        templates=[
+            TemplateResponse(id=t.id, name=t.name, description=t.description, stages=t.stages)
+            for t in pipelines.list_templates()
+        ]
+    )
+
+
+class FromTemplateRequest(BaseModel):
+    template_id: UUID
+
+
+@router.post("/from-template", status_code=201, dependencies=[Depends(require(Action.PIPELINES_MANAGE))])
+async def from_template_endpoint(body: FromTemplateRequest) -> CreatePipelineResponse:
+    org_id = org_id_var.get()
+    if org_id is None:
+        raise _err(400, "no_org_context")
+    actor = current_actor()
+    async with db_session() as s:
+        try:
+            pipeline_id = await pipelines.instantiate_template(
+                org_id=org_id, template_id=body.template_id, actor=actor, session=s
+            )
+        except TemplateNotFoundError as exc:
+            raise _err(404, "unknown_template") from exc
+        except PipelineValidationError as exc:
+            raise _err(400, "invalid_definition") from exc
+        except PipelineNameTakenError as exc:
+            raise _err(409, "name_taken") from exc
+        await s.commit()
+    return CreatePipelineResponse(id=pipeline_id)
 
 
 @router.get("/{pipeline_id}", dependencies=[Depends(require(Action.PIPELINES_MANAGE))])
