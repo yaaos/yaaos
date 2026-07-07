@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Actions Endpoint */
+        get: operations["list_actions_endpoint_api_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/api-keys": {
         parameters: {
             query?: never;
@@ -525,6 +542,23 @@ export interface paths {
          *     when the App is installed; an empty list when it isn't.
          */
         get: operations["repositories_api_github_repositories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/intake/points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Intake Points Endpoint */
+        get: operations["list_intake_points_endpoint_api_intake_points_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1173,6 +1207,95 @@ export interface paths {
         post?: never;
         /** Delete Pipeline Endpoint */
         delete: operations["delete_pipeline_endpoint_api_pipelines__pipeline_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Repos Endpoint */
+        get: operations["list_repos_endpoint_api_repos_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Repo Config Endpoint
+         * @description Always 200 — an absent settings row is the model's defaults, and
+         *     `unconfigured` is a state the Repos page renders, not an error.
+         */
+        get: operations["get_repo_config_endpoint_api_repos_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Repo Settings Endpoint */
+        put: operations["put_repo_settings_endpoint_api_repos_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Trigger Endpoint */
+        post: operations["add_trigger_endpoint_api_repos_triggers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/triggers/{binding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Trigger Endpoint */
+        delete: operations["remove_trigger_endpoint_api_repos_triggers__binding_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1874,6 +1997,18 @@ export interface components {
             token: string;
         };
         /**
+         * ActionInfo
+         * @description Registry-listing shape for the "Add an action" picker.
+         */
+        ActionInfo: {
+            /** Action Id */
+            action_id: string;
+            /** Label */
+            label: string;
+            /** Plugin Id */
+            plugin_id: string | null;
+        };
+        /**
          * ActionStage
          * @description A synchronous control-plane action stage. No `name` — actions carry
          *     no artifact identity, send-back key, or re-run inheritance key.
@@ -1992,6 +2127,14 @@ export interface components {
          * @enum {string}
          */
         ActorKind: "github_user" | "agent" | "system" | "user" | "workspace" | "sso";
+        /** AddTriggerResponse */
+        AddTriggerResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
         /** AgentEvent */
         AgentEvent: {
             artifact?: components["schemas"]["Artifact"] | null;
@@ -2571,6 +2714,25 @@ export interface components {
             /** Slug */
             slug?: string | null;
         };
+        /**
+         * IntakePoint
+         * @description Plugin-contributed trigger metadata the Repos-page trigger picker
+         *     lists. `id` is the value `domain/repos` trigger bindings target (e.g.
+         *     `"github:pr_opened"`, `"schedule"`).
+         */
+        IntakePoint: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "webhook" | "schedule";
+            /** Label */
+            label: string;
+            /** Plugin Id */
+            plugin_id: string | null;
+        };
         /** IntegrationStatus */
         IntegrationStatus: {
             /**
@@ -2645,15 +2807,30 @@ export interface components {
              */
             updated_at: string;
         };
+        /** ListActionsResponse */
+        ListActionsResponse: {
+            /** Actions */
+            actions: components["schemas"]["ActionInfo"][];
+        };
         /** ListArtifactsResponse */
         ListArtifactsResponse: {
             /** Artifacts */
             artifacts: components["schemas"]["ArtifactGroup"][];
         };
+        /** ListIntakePointsResponse */
+        ListIntakePointsResponse: {
+            /** Points */
+            points: components["schemas"]["IntakePoint"][];
+        };
         /** ListPipelinesResponse */
         ListPipelinesResponse: {
             /** Pipelines */
             pipelines: components["schemas"]["PipelineSummary"][];
+        };
+        /** ListReposResponse */
+        ListReposResponse: {
+            /** Repos */
+            repos: components["schemas"]["RepoAccordionEntry"][];
         };
         /** ListRunsResponse */
         ListRunsResponse: {
@@ -2871,6 +3048,21 @@ export interface components {
             /** Updated By Login */
             updated_by_login: string | null;
         };
+        /**
+         * ProtectedPathSet
+         * @description Gitignore-style glob set + owners, validated compilable at write.
+         */
+        ProtectedPathSet: {
+            /** Globs */
+            globs: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Owner User Ids */
+            owner_user_ids: string[];
+        };
         /** ProviderStatus */
         ProviderStatus: {
             /** Last Used At */
@@ -2883,6 +3075,66 @@ export interface components {
             status: string;
             /** Updated At */
             updated_at: string | null;
+        };
+        /** RepoAccordionEntry */
+        RepoAccordionEntry: {
+            /** Auto Approve Enabled */
+            auto_approve_enabled: boolean;
+            /** Has Protected Code */
+            has_protected_code: boolean;
+            /** Repo External Id */
+            repo_external_id: string;
+            /** Trigger Count */
+            trigger_count: number;
+        };
+        /** RepoConfigResponse */
+        RepoConfigResponse: {
+            /** Auto Approve Conditions */
+            auto_approve_conditions: {
+                [key: string]: unknown;
+            };
+            /** Auto Approve Enabled */
+            auto_approve_enabled: boolean;
+            /** Bindings */
+            bindings: components["schemas"]["TriggerBinding"][];
+            /**
+             * Protected Mode
+             * @enum {string}
+             */
+            protected_mode: "allow" | "deny";
+            /** Protected Path Sets */
+            protected_path_sets: components["schemas"]["ProtectedPathSet"][];
+            /** Repo External Id */
+            repo_external_id: string;
+        };
+        /**
+         * RepoSettingsSpec
+         * @description `RepoSettings` sans identity — the PUT request body shape.
+         */
+        RepoSettingsSpec: {
+            /**
+             * Auto Approve Conditions
+             * @default {}
+             */
+            auto_approve_conditions: {
+                [key: string]: unknown;
+            };
+            /**
+             * Auto Approve Enabled
+             * @default false
+             */
+            auto_approve_enabled: boolean;
+            /**
+             * Protected Mode
+             * @default deny
+             * @enum {string}
+             */
+            protected_mode: "allow" | "deny";
+            /**
+             * Protected Path Sets
+             * @default []
+             */
+            protected_path_sets: components["schemas"]["ProtectedPathSet"][];
         };
         /**
          * RepoSkillRow
@@ -3027,6 +3279,20 @@ export interface components {
              */
             status: "paused" | "in_flight" | "terminal";
         };
+        /**
+         * Schedule
+         * @description A per-repo cron trigger binding.
+         */
+        Schedule: {
+            /** Cron */
+            cron: string;
+            /** Kickoff Input */
+            kickoff_input?: string | null;
+            /** Name */
+            name: string;
+            /** Notify User Ids */
+            notify_user_ids: string[];
+        };
         /** SetKeyRequest */
         SetKeyRequest: {
             /** Value */
@@ -3164,6 +3430,43 @@ export interface components {
          */
         StepActivityResponse: {
             activity: components["schemas"]["ActivityLog"] | null;
+        };
+        /**
+         * TriggerBinding
+         * @description One repo intake→pipeline binding.
+         */
+        TriggerBinding: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Intake Point Id */
+            intake_point_id: string;
+            /**
+             * Pipeline Id
+             * Format: uuid
+             */
+            pipeline_id: string;
+            /** Pipeline Name */
+            pipeline_name: string;
+            /** Repo External Id */
+            repo_external_id: string;
+            schedule?: components["schemas"]["Schedule"] | null;
+        };
+        /**
+         * TriggerBindingSpec
+         * @description Write input for `add_binding`.
+         */
+        TriggerBindingSpec: {
+            /** Intake Point Id */
+            intake_point_id: string;
+            /**
+             * Pipeline Id
+             * Format: uuid
+             */
+            pipeline_id: string;
+            schedule?: components["schemas"]["Schedule"] | null;
         };
         /** UpdateLessonRequest */
         UpdateLessonRequest: {
@@ -3401,6 +3704,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_actions_endpoint_api_actions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListActionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_providers_api_api_keys_get: {
         parameters: {
             query?: never;
@@ -4360,6 +4696,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_intake_points_endpoint_api_intake_points_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListIntakePointsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5843,6 +6212,187 @@ export interface operations {
             };
             path: {
                 pipeline_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_repos_endpoint_api_repos_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReposResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_repo_config_endpoint_api_repos_config_get: {
+        parameters: {
+            query: {
+                repo: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_repo_settings_endpoint_api_repos_settings_put: {
+        parameters: {
+            query: {
+                repo: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoSettingsSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_trigger_endpoint_api_repos_triggers_post: {
+        parameters: {
+            query: {
+                repo: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerBindingSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddTriggerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_trigger_endpoint_api_repos_triggers__binding_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                binding_id: string;
             };
             cookie?: {
                 yaaos_session?: string | null;

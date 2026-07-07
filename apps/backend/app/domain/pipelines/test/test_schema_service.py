@@ -12,7 +12,7 @@ via their Row classes (intra-module test-dir carve-out — see patterns.md
 for seeding cross-module state without a `*Row` cross-module import
 (patterns.md § Module boundaries in tests; `bin/check_table_access` exempts
 test files from the raw-SQL ownership scan for exactly this reason). None of
-those modules' service functions exist yet this phase (stubs raise
+those modules' service functions exist yet (stubs raise
 `NotImplementedError`), so there is no public API path to drive instead.
 """
 

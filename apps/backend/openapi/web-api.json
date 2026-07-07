@@ -14,6 +14,37 @@
         "title": "AcceptRequest",
         "type": "object"
       },
+      "ActionInfo": {
+        "description": "Registry-listing shape for the \"Add an action\" picker.",
+        "properties": {
+          "action_id": {
+            "title": "Action Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          }
+        },
+        "required": [
+          "action_id",
+          "plugin_id",
+          "label"
+        ],
+        "title": "ActionInfo",
+        "type": "object"
+      },
       "ActionStage": {
         "description": "A synchronous control-plane action stage. No `name` — actions carry\nno artifact identity, send-back key, or re-run inheritance key.",
         "properties": {
@@ -174,6 +205,20 @@
         ],
         "title": "ActorKind",
         "type": "string"
+      },
+      "AddTriggerResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "AddTriggerResponse",
+        "type": "object"
       },
       "AgentEvent": {
         "properties": {
@@ -1482,6 +1527,46 @@
         "title": "InstallationResponse",
         "type": "object"
       },
+      "IntakePoint": {
+        "description": "Plugin-contributed trigger metadata the Repos-page trigger picker\nlists. `id` is the value `domain/repos` trigger bindings target (e.g.\n`\"github:pr_opened\"`, `\"schedule\"`).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "webhook",
+              "schedule"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          }
+        },
+        "required": [
+          "id",
+          "plugin_id",
+          "label",
+          "kind"
+        ],
+        "title": "IntakePoint",
+        "type": "object"
+      },
       "IntegrationStatus": {
         "properties": {
           "allowed_tools": {
@@ -1675,6 +1760,22 @@
         "title": "Lesson",
         "type": "object"
       },
+      "ListActionsResponse": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ActionInfo"
+            },
+            "title": "Actions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "actions"
+        ],
+        "title": "ListActionsResponse",
+        "type": "object"
+      },
       "ListArtifactsResponse": {
         "properties": {
           "artifacts": {
@@ -1691,6 +1792,22 @@
         "title": "ListArtifactsResponse",
         "type": "object"
       },
+      "ListIntakePointsResponse": {
+        "properties": {
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/IntakePoint"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "points"
+        ],
+        "title": "ListIntakePointsResponse",
+        "type": "object"
+      },
       "ListPipelinesResponse": {
         "properties": {
           "pipelines": {
@@ -1705,6 +1822,22 @@
           "pipelines"
         ],
         "title": "ListPipelinesResponse",
+        "type": "object"
+      },
+      "ListReposResponse": {
+        "properties": {
+          "repos": {
+            "items": {
+              "$ref": "#/components/schemas/RepoAccordionEntry"
+            },
+            "title": "Repos",
+            "type": "array"
+          }
+        },
+        "required": [
+          "repos"
+        ],
+        "title": "ListReposResponse",
         "type": "object"
       },
       "ListRunsResponse": {
@@ -2220,6 +2353,38 @@
         "title": "PipelineSummary",
         "type": "object"
       },
+      "ProtectedPathSet": {
+        "description": "Gitignore-style glob set + owners, validated compilable at write.",
+        "properties": {
+          "globs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Globs",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "owner_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Owner User Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "globs",
+          "owner_user_ids"
+        ],
+        "title": "ProtectedPathSet",
+        "type": "object"
+      },
       "ProviderStatus": {
         "properties": {
           "last_used_at": {
@@ -2275,6 +2440,118 @@
           "updated_at"
         ],
         "title": "ProviderStatus",
+        "type": "object"
+      },
+      "RepoAccordionEntry": {
+        "properties": {
+          "auto_approve_enabled": {
+            "title": "Auto Approve Enabled",
+            "type": "boolean"
+          },
+          "has_protected_code": {
+            "title": "Has Protected Code",
+            "type": "boolean"
+          },
+          "repo_external_id": {
+            "title": "Repo External Id",
+            "type": "string"
+          },
+          "trigger_count": {
+            "title": "Trigger Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "repo_external_id",
+          "trigger_count",
+          "has_protected_code",
+          "auto_approve_enabled"
+        ],
+        "title": "RepoAccordionEntry",
+        "type": "object"
+      },
+      "RepoConfigResponse": {
+        "properties": {
+          "auto_approve_conditions": {
+            "additionalProperties": true,
+            "title": "Auto Approve Conditions",
+            "type": "object"
+          },
+          "auto_approve_enabled": {
+            "title": "Auto Approve Enabled",
+            "type": "boolean"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/TriggerBinding"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
+          "protected_mode": {
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "title": "Protected Mode",
+            "type": "string"
+          },
+          "protected_path_sets": {
+            "items": {
+              "$ref": "#/components/schemas/ProtectedPathSet"
+            },
+            "title": "Protected Path Sets",
+            "type": "array"
+          },
+          "repo_external_id": {
+            "title": "Repo External Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_external_id",
+          "protected_mode",
+          "protected_path_sets",
+          "auto_approve_enabled",
+          "auto_approve_conditions",
+          "bindings"
+        ],
+        "title": "RepoConfigResponse",
+        "type": "object"
+      },
+      "RepoSettingsSpec": {
+        "description": "`RepoSettings` sans identity — the PUT request body shape.",
+        "properties": {
+          "auto_approve_conditions": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Auto Approve Conditions",
+            "type": "object"
+          },
+          "auto_approve_enabled": {
+            "default": false,
+            "title": "Auto Approve Enabled",
+            "type": "boolean"
+          },
+          "protected_mode": {
+            "default": "deny",
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "title": "Protected Mode",
+            "type": "string"
+          },
+          "protected_path_sets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProtectedPathSet"
+            },
+            "title": "Protected Path Sets",
+            "type": "array"
+          }
+        },
+        "title": "RepoSettingsSpec",
         "type": "object"
       },
       "RepoSkillRow": {
@@ -2618,6 +2895,45 @@
           "status"
         ],
         "title": "RunOverview",
+        "type": "object"
+      },
+      "Schedule": {
+        "description": "A per-repo cron trigger binding.",
+        "properties": {
+          "cron": {
+            "title": "Cron",
+            "type": "string"
+          },
+          "kickoff_input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kickoff Input"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "notify_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Notify User Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "cron",
+          "notify_user_ids"
+        ],
+        "title": "Schedule",
         "type": "object"
       },
       "SetKeyRequest": {
@@ -2967,6 +3283,82 @@
           "activity"
         ],
         "title": "StepActivityResponse",
+        "type": "object"
+      },
+      "TriggerBinding": {
+        "description": "One repo intake→pipeline binding.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intake_point_id": {
+            "title": "Intake Point Id",
+            "type": "string"
+          },
+          "pipeline_id": {
+            "format": "uuid",
+            "title": "Pipeline Id",
+            "type": "string"
+          },
+          "pipeline_name": {
+            "title": "Pipeline Name",
+            "type": "string"
+          },
+          "repo_external_id": {
+            "title": "Repo External Id",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Schedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "repo_external_id",
+          "intake_point_id",
+          "pipeline_id",
+          "pipeline_name"
+        ],
+        "title": "TriggerBinding",
+        "type": "object"
+      },
+      "TriggerBindingSpec": {
+        "description": "Write input for `add_binding`.",
+        "properties": {
+          "intake_point_id": {
+            "title": "Intake Point Id",
+            "type": "string"
+          },
+          "pipeline_id": {
+            "format": "uuid",
+            "title": "Pipeline Id",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Schedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "intake_point_id",
+          "pipeline_id"
+        ],
+        "title": "TriggerBindingSpec",
         "type": "object"
       },
       "UpdateLessonRequest": {
@@ -3603,6 +3995,71 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/actions": {
+      "get": {
+        "operationId": "list_actions_endpoint_api_actions_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListActionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Actions Endpoint",
+        "tags": [
+          "actions"
+        ]
+      }
+    },
     "/api/api-keys": {
       "get": {
         "operationId": "list_providers_api_api_keys_get",
@@ -5504,6 +5961,71 @@
         "summary": "Repositories",
         "tags": [
           "github"
+        ]
+      }
+    },
+    "/api/intake/points": {
+      "get": {
+        "operationId": "list_intake_points_endpoint_api_intake_points_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntakePointsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Intake Points Endpoint",
+        "tags": [
+          "intake"
         ]
       }
     },
@@ -8597,6 +9119,385 @@
         "summary": "Update Pipeline Endpoint",
         "tags": [
           "pipelines"
+        ]
+      }
+    },
+    "/api/repos": {
+      "get": {
+        "operationId": "list_repos_endpoint_api_repos_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListReposResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Repos Endpoint",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/config": {
+      "get": {
+        "description": "Always 200 — an absent settings row is the model's defaults, and\n`unconfigured` is a state the Repos page renders, not an error.",
+        "operationId": "get_repo_config_endpoint_api_repos_config_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Repo Config Endpoint",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/settings": {
+      "put": {
+        "operationId": "put_repo_settings_endpoint_api_repos_settings_put",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoSettingsSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Repo Settings Endpoint",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/triggers": {
+      "post": {
+        "operationId": "add_trigger_endpoint_api_repos_triggers_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerBindingSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddTriggerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Trigger Endpoint",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/triggers/{binding_id}": {
+      "delete": {
+        "operationId": "remove_trigger_endpoint_api_repos_triggers__binding_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Binding Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Trigger Endpoint",
+        "tags": [
+          "repos"
         ]
       }
     },

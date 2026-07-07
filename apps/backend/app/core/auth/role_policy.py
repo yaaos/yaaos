@@ -69,6 +69,8 @@ _REQUIRED_ROLE: dict[Action, Role] = {
     Action.WORKSPACE_AGENT_SHUTDOWN: Role.ADMIN,
     # Pipeline-definition CRUD. Admin required.
     Action.PIPELINES_MANAGE: Role.ADMIN,
+    # Repo config + trigger bindings. Admin required.
+    Action.REPOS_MANAGE: Role.ADMIN,
 }
 
 

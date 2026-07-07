@@ -7,6 +7,8 @@ Plugins (e.g. `plugins/github`) contribute `Action`s at import time via
 result persists on `stage_executions.action_result`.
 """
 
+# Side-effect import: registers GET /api/actions.
+import app.domain.actions.web  # noqa: F401
 from app.domain.actions.registry import get_action, list_actions, register_action, set_actions_for_tests
 from app.domain.actions.types import (
     Action,

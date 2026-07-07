@@ -7,6 +7,8 @@ module's config rows; no config row means `unconfigured`, a state not an
 error.
 """
 
+# Side-effect import: registers /api/repos/* routes.
+import app.domain.repos.web  # noqa: F401
 from app.domain.repos.service import (
     add_binding,
     evaluate_protected,
@@ -17,10 +19,12 @@ from app.domain.repos.service import (
     match_protected,
     pipeline_referenced_by_binding,
     put_settings,
+    register_pipeline_lookup,
     remove_binding,
 )
 from app.domain.repos.types import (
     DueFire,
+    PipelineRef,
     ProtectedMatch,
     ProtectedPathSet,
     RepoConfigSummary,
@@ -33,6 +37,7 @@ from app.domain.repos.types import (
 
 __all__ = [
     "DueFire",
+    "PipelineRef",
     "ProtectedMatch",
     "ProtectedPathSet",
     "RepoConfigSummary",
@@ -50,5 +55,6 @@ __all__ = [
     "match_protected",
     "pipeline_referenced_by_binding",
     "put_settings",
+    "register_pipeline_lookup",
     "remove_binding",
 ]

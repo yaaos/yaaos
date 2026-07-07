@@ -776,11 +776,27 @@ async def _on_vcs_cleared(org_id: UUID, plugin_id: str, session: Any) -> None:
 
 
 def bootstrap() -> None:
+    from app.core.intake import IntakePoint, register_intake_point  # noqa: PLC0415
     from app.domain.orgs import register_onboarding_contributor, register_vcs_clear_hook  # noqa: PLC0415
 
     register_vcs_plugin(_plugin)
     register_onboarding_contributor("github_app_installed", _onboarding_github_app_installed)
     register_vcs_clear_hook(_on_vcs_cleared)
+
+    # Trigger-binding picker entries — `domain/repos.add_binding` validates
+    # `intake_point_id` against this registry; the webhook rewire in
+    # `intake_type.py` resolves bindings for "github:pr_opened" and
+    # "github:pr_commits". "github:pr_comment" is registered (selectable in
+    # the Repos-page picker) though nothing consumes it yet.
+    register_intake_point(
+        IntakePoint(id="github:pr_opened", plugin_id="github", label="PR opened", kind="webhook")
+    )
+    register_intake_point(
+        IntakePoint(id="github:pr_commits", plugin_id="github", label="PR commits pushed", kind="webhook")
+    )
+    register_intake_point(
+        IntakePoint(id="github:pr_comment", plugin_id="github", label="PR comment", kind="webhook")
+    )
 
 
 def get_plugin() -> GitHubPlugin:

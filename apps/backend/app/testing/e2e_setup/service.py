@@ -131,6 +131,50 @@ async def seed_repo_skill(*, org_slug: str, repo_external_id: str, skill_name: s
         await s.commit()
 
 
+async def seed_pipeline(*, org_id: UUID, name: str, action_id: str = "github:create_pr") -> UUID:
+    """Insert a minimal one-stage pipeline via the public
+    ``domain.pipelines.create_pipeline`` service. ``action_id`` need not be a
+    registered action — this seed only exercises trigger-binding + run
+    creation (`pipelines.start_run` succeeds synchronously regardless of
+    whether a later stage dispatch can resolve the action), not stage
+    execution.
+    """
+    from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.domain.pipelines import ActionStage, PipelineDefinition, create_pipeline  # noqa: PLC0415
+
+    async with db_session() as s:
+        pipeline_id = await create_pipeline(
+            org_id=org_id,
+            definition=PipelineDefinition(
+                name=name, description="", stages=(ActionStage(action_id=action_id),)
+            ),
+            actor=Actor.system(),
+            session=s,
+        )
+        await s.commit()
+    return pipeline_id
+
+
+async def seed_trigger_binding(
+    *, org_id: UUID, repo_external_id: str, intake_point_id: str, pipeline_id: UUID
+) -> UUID:
+    """Insert a repo trigger binding via the public ``domain.repos.add_binding``
+    service. Returns the binding id."""
+    from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.domain.repos import TriggerBindingSpec, add_binding  # noqa: PLC0415
+
+    async with db_session() as s:
+        binding_id = await add_binding(
+            org_id,
+            repo_external_id,
+            spec=TriggerBindingSpec(intake_point_id=intake_point_id, pipeline_id=pipeline_id),
+            actor=Actor.system(),
+            session=s,
+        )
+        await s.commit()
+    return binding_id
+
+
 async def seed_lesson(*, repo_external_id: str, title: str, body: str) -> UUID:
     """Insert a single lesson via the public ``lessons.create`` service.
 
@@ -638,7 +682,9 @@ __all__ = [
     "seed_github_install",
     "seed_lesson",
     "seed_member_for_org",
+    "seed_pipeline",
     "seed_repo_skill",
+    "seed_trigger_binding",
     "seed_user_with_session",
     "seed_workspace",
     "seed_workspace_agent",

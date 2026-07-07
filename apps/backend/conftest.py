@@ -55,6 +55,7 @@ from app.testing.isolation import (  # noqa: E402, F401
     actions_registry_isolation,
     bearer_verify_isolation,
     email_inbox_isolation,
+    intake_registry_isolation,
     plugin_registries_isolation,
     pubsub_isolation,
     scheduler_registry_isolation,

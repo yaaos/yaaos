@@ -15,6 +15,8 @@ Bridges GitHub REST + webhooks to `core/vcs` types. Two distinct GitHub registra
 
 Why two: install lifecycle and login flow live on different GitHub primitives; sharing one conflates two independent failure modes.
 
+`bootstrap()` registers, at import time: the `VCSPlugin` (`register_vcs_plugin`), an onboarding contributor + VCS-clear hook (`domain/orgs`), and three [`core/intake`](core_intake.md) `IntakePoint`s the Repos-page trigger picker lists — `github:pr_opened`, `github:pr_commits` (both consumed by the webhook rewire below), and `github:pr_comment` (registered; nothing consumes it yet).
+
 Env vars: `yaaos_github_app_id`, `yaaos_github_app_slug`, `yaaos_github_app_private_key`, `yaaos_github_app_webhook_secret`, `yaaos_github_oauth_client_id`, `yaaos_github_oauth_client_secret`, `yaaos_github_oauth_token_url` (optional, test stack only). See [docs/setup.md](../../../docs/setup.md).
 
 ### App authentication (server-to-GitHub)
@@ -28,12 +30,16 @@ Env vars: `yaaos_github_app_id`, `yaaos_github_app_slug`, `yaaos_github_app_priv
 
 `GitHubOAuthProvider` implements `core/identity.Provider`. `authorization_url()` builds the GitHub authorize URL, requesting `read:user user:email` — a classic OAuth App grants scopes at authorize time, and `/user/emails` 404s without `user:email`. `exchange_code()` POSTs to the token URL, fetches `/user` + `/user/emails`, returns a `ProviderProfile` with `external_subject = user.id`, verified primary email, and `provider_login = user.login` (persisted to `users.github_username`). `mfa_satisfied=True` — GitHub's own 2FA runs inside the authorize handshake.
 
-### Webhook receiver (`POST /webhook`)
+### Webhook receiver (`POST /api/intake/github`, via `core/intake`)
 
-1. HMAC-verify `X-Hub-Signature-256`. Missing/invalid → 401.
+`GithubIntakeType` (`intake_type.py`) is the actual receiver — registered with [`core/intake`](core_intake.md) as the `github` `IntakeType`; the endpoint is `core/intake`'s single `POST /api/intake/{type}`, not a route this plugin owns directly.
+
+1. HMAC-verify `X-Hub-Signature-256`. Missing/invalid → `bad_signature` (401).
 2. Resolve `org_id` via `github_app_installations` on `payload.installation.id`. `installation.created` falls back to `DEFAULT_ORG_ID`; other unmatched events reject as `bad_request`.
-3. Idempotency on `X-GitHub-Delivery` — duplicate → 200 no-op.
-4. Dispatch on event + action (see event table below). Stamps `webhook_event.processed_at` and returns 200.
+3. Idempotency on `X-GitHub-Delivery` (`github_webhook_events`) — duplicate → `IntakeSideEffect(detail="duplicate")`, 200 no-op.
+4. Dispatch on event + action. `pull_request.opened`/`reopened`/`ready_for_review` (non-draft) resolve the `github:pr_opened` intake point against `domain/repos` trigger bindings: **bound** → ticket created (`branch_name` = the PR's own head branch) → `domain/pipelines.start_run` per binding; **unbound** → the same ticket-creation step, then `core/workflow.start("pr_review_v1", …)` (coexistence fallback, removed once the old engine is deleted). `pull_request.synchronize` refreshes PR metadata and, on a bound repo, also fires `github:pr_commits` on the same ticket. A `PipelineNotFoundError`/`PipelineValidationError` from `start_run` (a stale binding or flatten-time cycle — both config problems, not delivery problems) is recorded as a `ticket.pipeline_start_failed` audit row; the webhook response stays 2xx so GitHub never retries. See [domain_repos.md](domain_repos.md) + [domain_pipelines.md](domain_pipelines.md).
+
+The `payload_parser.parse_webhook` function below (VCSEvent emission) and its event-mapping table describe a separate, currently-uncalled code path — `GithubIntakeType` parses payloads directly via `_parse_pr`, not through `parse_webhook`.
 
 ### Event mapping (`payload_parser.parse_webhook`)
 
@@ -97,6 +103,7 @@ Unit tests in `app/plugins/github/test/`:
 - `test_post_review.py` — `post_finding` (inline vs null-anchor routing) and `post_comment` routing, and `_format_finding_body`.
 - `test_install_binding.py` — install start, install callback, webhook signature scoping.
 - `test_intake_producer_service.py` (`@pytest.mark.service`) — `GithubIntakeType.handle` calls `create_from_pr` + `attach_pr_to_ticket`; ticket row created, `ticket.created` + `ticket.pr_bound` audit rows written, SSE + notifications outbox row enqueued.
+- `test_intake_rewire_service.py` (`@pytest.mark.service`) — bound `pull_request.opened`/`synchronize` route into `pipelines.start_run` (ticket `branch_name` set from the PR's head branch); unbound repos keep the `pr_review_v1` fallback; a `start_run` config-problem exception surfaces as a 2xx outcome plus a `ticket.pipeline_start_failed` audit row.
 - `test_set_github_plugin_for_tests.py` — `set_github_plugin_for_tests` swaps and restores the singleton for the block.
 
 `set_github_plugin_for_tests` (exported from `app.plugins.github`) is the test seam for swapping the singleton `GitHubPlugin` instance. `get_plugin` is module-private (not in `__all__`); tests access the singleton via the context manager's yielded value.

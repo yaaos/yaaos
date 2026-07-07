@@ -31,6 +31,7 @@ from app.core.shutdown_registry import (
 # `@scheduled` consumer (self-exercising; proves the wiring).
 from app.core.tasks import scheduled_runs_prune as _scheduled_runs_prune  # noqa: F401
 from app.core.tasks.broker import get_broker, set_broker_for_tests
+from app.core.tasks.cron import CronExpr
 from app.core.tasks.drain import drain_once
 from app.core.tasks.scheduler import (
     schedule_task,
@@ -50,6 +51,7 @@ from app.core.tasks.service import (
 from app.core.tasks.types import TaskMetadata
 
 __all__ = [
+    "CronExpr",
     "ShutdownHook",
     "TaskMetadata",
     "TaskRef",

@@ -6,34 +6,45 @@ composing `get_settings` + `match_protected`) plus the write path behind
 the Repos-page protected-code + auto-approve config.
 
 `add_binding`/`remove_binding`/`find_bindings`/`list_repo_configs`/
-`list_due_schedule_bindings` stay stubs — bodies raise `NotImplementedError`;
-trigger bindings land with the intake-rewire phase. Exception:
-`pipeline_referenced_by_binding` always returns `False` — no `TriggerBinding`
-can reference a pipeline before repo trigger bindings are writable, so
-`domain/pipelines.delete_pipeline` can call it safely today.
+`pipeline_referenced_by_binding` are real — trigger bindings are writable.
+`list_due_schedule_bindings` is a stub (body raises `NotImplementedError`);
+nothing fires schedule bindings yet.
+
+`add_binding`'s pipeline-org-ownership check can't import `domain/pipelines`
+directly (`pipelines` already depends on `repos` for
+`pipeline_referenced_by_binding`; the reverse edge would cycle). Instead
+`domain/pipelines` registers a lookup callable at import time via
+`register_pipeline_lookup`, mirroring `core/byok.register_validator`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
 import pathspec
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit_log import Actor, audit_for_repo_settings
+from app.core.audit_log import Actor, audit, audit_for_repo_settings
+from app.core.auth import require_org_context
+from app.core.intake import list_intake_points
+from app.core.tasks import CronExpr
+from app.core.tenancy import list_active_member_ids
 from app.domain.findings import AutoApproveConditions
-from app.domain.repos.models import RepoSettingsRow
+from app.domain.repos.models import RepoSettingsRow, RepoTriggerBindingRow
 from app.domain.repos.types import (
     DueFire,
+    PipelineRef,
     ProtectedMatch,
     ProtectedPathSet,
     RepoConfigSummary,
     RepoSettings,
     RepoSettingsSpec,
+    Schedule,
     TriggerBinding,
     TriggerBindingSpec,
 )
@@ -43,11 +54,60 @@ class InvalidProtectedGlobError(ValueError):
     """A `ProtectedPathSet.globs` entry doesn't compile as a gitignore-style pattern."""
 
 
+class UnknownIntakePointError(ValueError):
+    """`TriggerBindingSpec.intake_point_id` isn't registered."""
+
+
+class InvalidScheduleError(ValueError):
+    """`Schedule` is missing/present for the wrong intake-point kind, carries
+    no `notify_user_ids`, or names a `notify_user_ids` entry outside the
+    org's active membership."""
+
+
+class InvalidCronError(ValueError):
+    """`Schedule.cron` doesn't parse as a 5-field cron expression."""
+
+
+class DuplicateBindingError(ValueError):
+    """A non-schedule binding already exists for `(org, repo, intake_point)`."""
+
+
+class UnknownPipelineError(ValueError):
+    """`TriggerBindingSpec.pipeline_id` doesn't belong to the calling org."""
+
+
+class BindingNotFoundError(LookupError):
+    """No `repo_trigger_bindings` row for the given id in the current org."""
+
+
+# Registered by `domain/pipelines` at import time — see module docstring.
+_PipelineLookup = Callable[[UUID, AsyncSession], Awaitable[PipelineRef | None]]
+_pipeline_lookup: _PipelineLookup | None = None
+
+
+def register_pipeline_lookup(fn: _PipelineLookup) -> None:
+    """Registered once, at `domain/pipelines` import time. Re-registering
+    overwrites (mirrors `core/byok.register_validator`'s reload tolerance)."""
+    global _pipeline_lookup
+    _pipeline_lookup = fn
+
+
 class _RepoSettingsUpdatedPayload(BaseModel):
     repo_external_id: str
     protected_mode: str
     protected_path_set_count: int
     auto_approve_enabled: bool
+
+
+class _TriggerAddedPayload(BaseModel):
+    repo_external_id: str
+    intake_point_id: str
+    pipeline_id: UUID
+
+
+class _TriggerRemovedPayload(BaseModel):
+    repo_external_id: str
+    intake_point_id: str
 
 
 async def get_settings(org_id: UUID, repo_external_id: str, *, session: AsyncSession) -> RepoSettings:
@@ -111,7 +171,56 @@ async def put_settings(
 async def list_repo_configs(org_id: UUID, *, session: AsyncSession) -> list[RepoConfigSummary]:
     """Config rows only — the web handler joins `vcs.list_installation_repos`
     for the full accordion."""
-    raise NotImplementedError
+    settings_rows = (
+        (await session.execute(select(RepoSettingsRow).where(RepoSettingsRow.org_id == org_id)))
+        .scalars()
+        .all()
+    )
+    counts = dict(
+        (
+            await session.execute(
+                select(RepoTriggerBindingRow.repo_external_id, func.count(RepoTriggerBindingRow.id))
+                .where(RepoTriggerBindingRow.org_id == org_id)
+                .group_by(RepoTriggerBindingRow.repo_external_id)
+            )
+        ).all()
+    )
+    settings_by_repo = {row.repo_external_id: row for row in settings_rows}
+    repo_ids = set(counts) | set(settings_by_repo)
+
+    out: list[RepoConfigSummary] = []
+    for repo_external_id in sorted(repo_ids):
+        row = settings_by_repo.get(repo_external_id)
+        has_protected_code = row is not None and (
+            row.protected_mode == "allow" or bool(row.protected_path_sets)
+        )
+        out.append(
+            RepoConfigSummary(
+                repo_external_id=repo_external_id,
+                configured=row is not None,
+                trigger_count=counts.get(repo_external_id, 0),
+                has_protected_code=has_protected_code,
+                auto_approve_enabled=bool(row and row.auto_approve_enabled),
+            )
+        )
+    return out
+
+
+def _validate_schedule(point_kind: str, schedule: Schedule | None, *, member_ids: set[UUID]) -> None:
+    if point_kind == "schedule":
+        if schedule is None:
+            raise InvalidScheduleError("schedule is required for a schedule-kind intake point")
+        if not schedule.notify_user_ids:
+            raise InvalidScheduleError("schedule requires at least one notify_user_id")
+        unknown = [uid for uid in schedule.notify_user_ids if uid not in member_ids]
+        if unknown:
+            raise InvalidScheduleError(f"notify_user_ids not in org membership: {unknown}")
+        try:
+            CronExpr.parse(schedule.cron)
+        except ValueError as exc:
+            raise InvalidCronError(str(exc)) from exc
+    elif schedule is not None:
+        raise InvalidScheduleError("schedule is only valid for a schedule-kind intake point")
 
 
 async def add_binding(
@@ -122,17 +231,113 @@ async def add_binding(
     actor: Actor,
     session: AsyncSession,
 ) -> UUID:
-    raise NotImplementedError
+    """Validates: `intake_point_id` registered · schedule present iff the
+    point's kind is `schedule` (cron parses, `notify_user_ids` non-empty and
+    ⊆ org membership) · `pipeline_id` belongs to this org (FK alone can't
+    check org — see module docstring). Audits `repo.trigger_added`."""
+    points = {point.id: point for point in list_intake_points()}
+    point = points.get(spec.intake_point_id)
+    if point is None:
+        raise UnknownIntakePointError(spec.intake_point_id)
+
+    member_ids = set(await list_active_member_ids(session, org_id)) if point.kind == "schedule" else set()
+    _validate_schedule(point.kind, spec.schedule, member_ids=member_ids)
+
+    if _pipeline_lookup is None:
+        raise RuntimeError("pipeline lookup not registered — domain.pipelines must be imported")
+    pipeline_ref = await _pipeline_lookup(spec.pipeline_id, session)
+    if pipeline_ref is None or pipeline_ref.org_id != org_id:
+        raise UnknownPipelineError(spec.pipeline_id)
+
+    if point.kind != "schedule":
+        existing = (
+            await session.execute(
+                select(RepoTriggerBindingRow.id).where(
+                    RepoTriggerBindingRow.org_id == org_id,
+                    RepoTriggerBindingRow.repo_external_id == repo_external_id,
+                    RepoTriggerBindingRow.intake_point_id == spec.intake_point_id,
+                    RepoTriggerBindingRow.schedule.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise DuplicateBindingError(spec.intake_point_id)
+
+    row = RepoTriggerBindingRow(
+        org_id=org_id,
+        repo_external_id=repo_external_id,
+        intake_point_id=spec.intake_point_id,
+        pipeline_id=spec.pipeline_id,
+        schedule=spec.schedule.model_dump(mode="json") if spec.schedule is not None else None,
+    )
+    session.add(row)
+    await session.flush()
+    await audit(
+        "repo_trigger_binding",
+        row.id,
+        "repo.trigger_added",
+        _TriggerAddedPayload(
+            repo_external_id=repo_external_id,
+            intake_point_id=spec.intake_point_id,
+            pipeline_id=spec.pipeline_id,
+        ),
+        actor=actor,
+        org_id=org_id,
+        session=session,
+    )
+    return row.id
 
 
 async def remove_binding(binding_id: UUID, *, actor: Actor, session: AsyncSession) -> None:
-    raise NotImplementedError
+    """Fetch + assert org via context; audits `repo.trigger_removed`."""
+    org_id = require_org_context()
+    row = await session.get(RepoTriggerBindingRow, binding_id)
+    if row is None or row.org_id != org_id:
+        raise BindingNotFoundError(binding_id)
+    repo_external_id = row.repo_external_id
+    intake_point_id = row.intake_point_id
+    await session.delete(row)
+    await session.flush()
+    await audit(
+        "repo_trigger_binding",
+        binding_id,
+        "repo.trigger_removed",
+        _TriggerRemovedPayload(repo_external_id=repo_external_id, intake_point_id=intake_point_id),
+        actor=actor,
+        org_id=org_id,
+        session=session,
+    )
+
+
+async def _to_trigger_binding(row: RepoTriggerBindingRow, *, session: AsyncSession) -> TriggerBinding:
+    pipeline_ref = _pipeline_lookup and await _pipeline_lookup(row.pipeline_id, session)
+    return TriggerBinding(
+        id=row.id,
+        repo_external_id=row.repo_external_id,
+        intake_point_id=row.intake_point_id,
+        pipeline_id=row.pipeline_id,
+        pipeline_name=pipeline_ref.name if pipeline_ref is not None else "",
+        schedule=Schedule.model_validate(row.schedule) if row.schedule is not None else None,
+    )
 
 
 async def find_bindings(
     org_id: UUID, repo_external_id: str, intake_point_id: str, *, session: AsyncSession
 ) -> list[TriggerBinding]:
-    raise NotImplementedError
+    rows = (
+        (
+            await session.execute(
+                select(RepoTriggerBindingRow).where(
+                    RepoTriggerBindingRow.org_id == org_id,
+                    RepoTriggerBindingRow.repo_external_id == repo_external_id,
+                    RepoTriggerBindingRow.intake_point_id == intake_point_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [await _to_trigger_binding(row, session=session) for row in rows]
 
 
 async def evaluate_protected(
@@ -173,10 +378,16 @@ def match_protected(
 
 
 async def pipeline_referenced_by_binding(pipeline_id: UUID, *, session: AsyncSession) -> bool:
-    """Always False until repo trigger bindings exist — no `TriggerBinding`
-    can reference a pipeline before the bindings themselves are writable."""
-    del pipeline_id, session
-    return False
+    """True iff any `repo_trigger_bindings` row targets `pipeline_id` — in
+    any org (a pipeline's own org already scopes which bindings could
+    reference it; the caller, `domain.pipelines.delete_pipeline`, has
+    already asserted org ownership of `pipeline_id` itself)."""
+    existing = (
+        await session.execute(
+            select(RepoTriggerBindingRow.id).where(RepoTriggerBindingRow.pipeline_id == pipeline_id).limit(1)
+        )
+    ).scalar_one_or_none()
+    return existing is not None
 
 
 async def list_due_schedule_bindings(*, now: datetime, session: AsyncSession) -> list[DueFire]:

@@ -1,5 +1,7 @@
 """HTTP wiring for `core/intake` — `POST /api/intake/{type}` is the only
-entry point for external signals.
+entry point for external signals; `GET /api/intake/points` is a read-only
+picker mirror listing every registered `IntakePoint` for the Repos-page
+trigger picker.
 
 For each registered `IntakeType`, the endpoint:
 
@@ -16,20 +18,33 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from app.core.auth import public_route
+from app.core.auth import Action, public_route
 from app.core.database import session as db_session
 from app.core.intake.registry import (
+    IntakePoint,
     IntakeRejectedError,
     IntakeSideEffect,
     IntakeType,
     get_intake_type,
+    list_intake_points,
 )
+from app.core.sessions import require
 from app.core.webserver import RouteSpec, register_routes
 
 log = structlog.get_logger("intake.web")
 
 router = APIRouter()
+
+
+class ListIntakePointsResponse(BaseModel):
+    points: tuple[IntakePoint, ...]
+
+
+@router.get("/points", dependencies=[Depends(require(Action.REPOS_MANAGE))])
+async def list_intake_points_endpoint() -> ListIntakePointsResponse:
+    return ListIntakePointsResponse(points=list_intake_points())
 
 
 _REJECTION_STATUS = {

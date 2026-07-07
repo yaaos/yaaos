@@ -39,7 +39,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.core.intake"
-depends_on = ["app.core.auth", "app.core.database", "app.core.webserver"]
+depends_on = ["app.core.auth", "app.core.database", "app.core.sessions", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.llm"
@@ -103,7 +103,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.actions"
-depends_on = ["app.domain.findings"]
+depends_on = ["app.core.auth", "app.core.sessions", "app.core.webserver", "app.domain.findings"]
 
 [[modules]]
 path = "app.domain.artifacts"
@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pipelines"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.identity", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.actions", "app.domain.artifacts", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.identity", "app.core.intake", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.actions", "app.domain.artifacts", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.pr_review"
@@ -139,7 +139,7 @@ depends_on = ["app.core.database"]
 
 [[modules]]
 path = "app.domain.repos"
-depends_on = ["app.core.audit_log", "app.core.database", "app.domain.findings"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.intake", "app.core.sessions", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.domain.findings"]
 
 [[modules]]
 path = "app.domain.reviewer"
@@ -155,7 +155,7 @@ depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.co
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.orgs", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.orgs", "app.domain.pipelines", "app.domain.repos", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.linear"
@@ -175,7 +175,7 @@ depends_on = ["app.core.config", "app.domain.orgs"]
 
 [[modules]]
 path = "app.testing.e2e_setup"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.sse", "app.core.tenancy", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.sse", "app.core.tenancy", "app.domain.integrations", "app.domain.lessons", "app.domain.orgs", "app.domain.pipelines", "app.domain.repos", "app.plugins.claude_code", "app.plugins.github", "app.plugins.oauth_test", "app.plugins.saml_test"]
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
@@ -483,16 +483,20 @@ from = ["app.core.identity"]
 expose = [
   "IntakeError",
   "IntakeOutcome",
+  "IntakePoint",
   "IntakeRejectedError",
   "IntakeSideEffect",
   "IntakeType",
   "get_intake_type",
   "is_mid_band_confirm",
   "is_skippable_path",
+  "list_intake_points",
   "parse_rereview",
   "parse_yaaos_command",
+  "register_intake_point",
   "register_intake_type",
   "registered_intake_types",
+  "set_intake_for_tests",
 ]
 from = ["app.core.intake"]
 
@@ -619,6 +623,7 @@ from = ["app.core.sse"]
 
 [[interfaces]]
 expose = [
+  "CronExpr",
   "ShutdownHook",
   "TaskMetadata",
   "TaskRef",
@@ -1094,6 +1099,7 @@ from = ["app.domain.pr_review"]
 [[interfaces]]
 expose = [
   "DueFire",
+  "PipelineRef",
   "ProtectedMatch",
   "ProtectedPathSet",
   "RepoConfigSummary",
@@ -1111,6 +1117,7 @@ expose = [
   "match_protected",
   "pipeline_referenced_by_binding",
   "put_settings",
+  "register_pipeline_lookup",
   "remove_binding",
 ]
 from = ["app.domain.repos"]

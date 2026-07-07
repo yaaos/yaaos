@@ -76,7 +76,12 @@ class RepoTriggerBindingRow(Base):
     pipeline_id: Mapped[UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("pipelines.id", ondelete="RESTRICT"), nullable=False
     )
-    schedule: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # `none_as_null=True` — otherwise SQLAlchemy's JSON types persist a
+    # Python `None` as the JSON literal `null` (a non-NULL value), which
+    # would silently defeat both `ux_bindings_point`'s `WHERE schedule IS
+    # NULL` partial predicate and `add_binding`'s own duplicate-binding
+    # pre-check (both need genuine SQL NULL on a non-schedule binding).
+    schedule: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

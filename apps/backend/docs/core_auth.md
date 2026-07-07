@@ -48,6 +48,8 @@
 
 **`POST /api/orgs` is `USER_SCOPED`, not `ORG_SCOPED`** — org-create must work before the SPA has selected an org. Lives in `USER_SCOPED_METHOD_EXACT`.
 
+**`GET /api/intake/points` is `ORG_SCOPED`, not unclassified** — the `/api/intake` prefix itself stays unclassified (`POST /api/intake/{type}`, the GitHub webhook, must never gain an `X-Yaaos-Org-Slug`/CSRF requirement). One method+path pair overrides the fall-through via `ORG_SCOPED_METHOD_EXACT`, the same tier `USER_SCOPED_METHOD_EXACT` uses.
+
 **`org_context(org_id, actor_kind, actor_id)`** — async context manager for background jobs. Sets the four identity vars + `route_security_resolved = "background"` + OTel attrs on the current span + structlog `bind_contextvars`. Resets on exit. Does NOT set `workflow_execution_id_var` or `command_id_var` — those are set by workflow task bodies.
 
 **`workflow_execution_id_var` + `command_id_var`** — workflow-scope contextvars. None outside an active workflow task body. Set/reset by `core/workflow` task bodies (`start_step`, `handle_agent_event`, `route_workflow`) so every span and log record in scope carries `yaaos.workflow_id` and `yaaos.command_id` via the span processor and `_YaaosLogDimsFilter`. Not set in background work or HTTP requests.

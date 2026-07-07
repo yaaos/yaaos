@@ -2,7 +2,7 @@
 one `record_agent_event` call reaches both the old engine's and this
 engine's registered `HANDLE_AGENT_EVENT`; each ignores a `workflow_execution_id`
 it doesn't own; the old engine's flow still resumes through the shared
-registry (the coexistence bridge this phase's riskiest edit introduces).
+registry (the coexistence bridge between the two engines).
 
 Drives two independent parked flows in parallel — an old-engine `Workflow`
 (cloned from `core/workflow/test/test_workspace_dispatch_service.py`'s

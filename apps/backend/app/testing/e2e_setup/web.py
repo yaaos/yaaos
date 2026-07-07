@@ -73,6 +73,40 @@ async def seed_repo_skill(req: _RepoSkillRequest) -> dict[str, str]:
     return {"status": "seeded"}
 
 
+class _SeedPipelineRequest(BaseModel):
+    org_id: UUID
+    name: str = Field(..., min_length=1)
+    action_id: str = Field(default="github:create_pr", min_length=1)
+
+
+@router.post("/seed/pipeline")
+async def seed_pipeline_endpoint(req: _SeedPipelineRequest) -> dict[str, str]:
+    """Seed a minimal one-stage pipeline definition. Returns ``{"id": "<uuid>"}``."""
+    _guard_dev()
+    pipeline_id = await service.seed_pipeline(org_id=req.org_id, name=req.name, action_id=req.action_id)
+    return {"id": str(pipeline_id)}
+
+
+class _SeedTriggerBindingRequest(BaseModel):
+    org_id: UUID
+    repo_external_id: str = Field(..., min_length=1)
+    intake_point_id: str = Field(..., min_length=1)
+    pipeline_id: UUID
+
+
+@router.post("/seed/trigger_binding")
+async def seed_trigger_binding_endpoint(req: _SeedTriggerBindingRequest) -> dict[str, str]:
+    """Seed a repo trigger binding. Returns ``{"id": "<uuid>"}``."""
+    _guard_dev()
+    binding_id = await service.seed_trigger_binding(
+        org_id=req.org_id,
+        repo_external_id=req.repo_external_id,
+        intake_point_id=req.intake_point_id,
+        pipeline_id=req.pipeline_id,
+    )
+    return {"id": str(binding_id)}
+
+
 class _LessonRequest(BaseModel):
     repo_external_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)

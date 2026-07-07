@@ -37,6 +37,7 @@ from app.domain.pipelines.definition import (
 from app.domain.pipelines.escalation import is_pause_responder
 from app.domain.pipelines.models import PipelineRow, PipelineRunRow, RunPauseRow, StageExecutionRow
 from app.domain.pipelines.types import Kickoff, PauseResolution, Pipeline, PipelineSummary, RevisionContext
+from app.domain.repos import PipelineRef
 from app.domain.repos import pipeline_referenced_by_binding as _repo_pipeline_referenced_by_binding
 from app.domain.tickets import get as get_ticket
 
@@ -130,6 +131,17 @@ async def _get_row(pipeline_id: UUID, *, org_id: UUID, session: AsyncSession) ->
             select(PipelineRow).where(PipelineRow.id == pipeline_id, PipelineRow.org_id == org_id)
         )
     ).scalar_one_or_none()
+
+
+async def _lookup_pipeline_ref(pipeline_id: UUID, session: AsyncSession) -> PipelineRef | None:
+    """Registered with `domain/repos.register_pipeline_lookup` at import
+    time (see `apps/backend/app/domain/pipelines/__init__.py`) — the org +
+    name a `TriggerBindingSpec`'s `pipeline_id` resolves to, without
+    `domain/repos` importing this module directly (would cycle)."""
+    row = await session.get(PipelineRow, pipeline_id)
+    if row is None:
+        return None
+    return PipelineRef(org_id=row.org_id, name=row.name)
 
 
 class _PipelineCreatedPayload(BaseModel):

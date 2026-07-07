@@ -40,7 +40,7 @@ class _StubAction:
 def _empty_registry():
     """Every test in this module starts from a known-empty registry —
     independent of whatever the outer `actions_registry_isolation` autouse
-    fixture copied in (empty at this phase, but explicit beats implicit)."""
+    fixture copied in (currently empty, but explicit beats implicit)."""
     with set_actions_for_tests(scenario="empty"):
         yield
 

@@ -161,6 +161,7 @@ async def _insert_ticket_atomic(
     status: str,
     conflict_target: tuple[str, ...],
     session: AsyncSession,
+    branch_name: str | None = None,
 ) -> tuple[UUID, bool]:
     """Race-safe ticket INSERT.
 
@@ -185,6 +186,7 @@ async def _insert_ticket_atomic(
             idempotency_key=idempotency_key,
             payload=payload,
             current_workflow_execution_id=None,
+            branch_name=branch_name,
         )
         .on_conflict_do_nothing(index_elements=list(conflict_target))
         .returning(TicketRow.id)
@@ -227,14 +229,20 @@ async def create_from_pr(
     idempotency_key: str,
     payload: dict,
     session: AsyncSession,
+    branch_name: str | None = None,
 ) -> tuple[UUID, bool]:
     """Race-safe ticket INSERT for a GitHub PR-opened-style event.
 
     Establishes the `create_from_<source>` convention for intake-source
-    ticket constructors. On `created=True` writes the `ticket.created` audit
-    row and fires `notify_ticket_status_change`. On conflict (race loser)
-    returns `(winner_id, False)` — the caller should exit without doing
-    further work. Caller commits; never commits here.
+    ticket constructors. `branch_name` is intake-supplied when the caller
+    already knows the work branch (a PR ticket's own head branch); when
+    omitted, a fresh ticket mints one deterministically via
+    `mint_branch_name(title, ticket_id)` — the ticket id is only known after
+    insert, so minting happens post-insert on the winning row only (a race
+    loser's branch_name was already set by the winner). On `created=True`
+    writes the `ticket.created` audit row and fires `notify_ticket_status_change`.
+    On conflict (race loser) returns `(winner_id, False)` — the caller should
+    exit without doing further work. Caller commits; never commits here.
     """
     ticket_id, created = await _insert_ticket_atomic(
         org_id=org_id,
@@ -250,8 +258,14 @@ async def create_from_pr(
         status="pending",
         conflict_target=("org_id", "source", "source_external_id"),
         session=session,
+        branch_name=branch_name,
     )
     if created:
+        if branch_name is None:
+            minted_branch_name = mint_branch_name(title, ticket_id)
+            await session.execute(
+                update(TicketRow).where(TicketRow.id == ticket_id).values(branch_name=minted_branch_name)
+            )
         await audit_for_ticket(
             ticket_id,
             "ticket.created",

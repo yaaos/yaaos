@@ -8,7 +8,7 @@ Owns the `Action` Protocol and its ContextVar-bound registry — mirroring `Codi
 
 ## Public interface
 
-`Action` (Protocol), `ActionContext`, `StageVerdict`, `ActionInfo` (value objects), `ActionError` / `ActionNotFoundError`, and the registry functions `register_action`, `get_action`, `list_actions`, `set_actions_for_tests`. No HTTP routes yet.
+`Action` (Protocol), `ActionContext`, `StageVerdict`, `ActionInfo` (value objects), `ActionError` / `ActionNotFoundError`, and the registry functions `register_action`, `get_action`, `list_actions`, `set_actions_for_tests`. HTTP: `GET /api/actions` (`Action.PIPELINES_MANAGE`) — read-only picker mirror returning `{actions: [{action_id, plugin_id, label}]}`, the Pipelines-page "Add an action" data source.
 
 ## Module architecture
 

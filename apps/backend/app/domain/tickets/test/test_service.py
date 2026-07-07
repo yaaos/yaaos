@@ -16,6 +16,7 @@ from app.domain.tickets import (
     create_from_pr,
     list_running_older_than,
     list_tickets,
+    mint_branch_name,
     set_workflow_execution,
     update_findings_summary,
 )
@@ -88,6 +89,57 @@ async def test_create_from_pr_idempotent(db_session) -> None:  # type: ignore[no
     assert created2 is False
     assert ticket_id2 is not None
     assert ticket_id2 == _ticket_id
+
+
+@pytest.mark.service
+async def test_create_from_pr_uses_supplied_branch_name(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Intake-supplied `branch_name` (a PR ticket's own head branch) rides
+    straight into the row — no minting."""
+    org_id = uuid4()
+
+    ticket_id, created = await create_from_pr(
+        org_id=org_id,
+        source_external_id=f"myorg/repo#{uuid4().hex[:6]}",
+        title="My PR title",
+        description=None,
+        repo_external_id="myorg/repo",
+        plugin_id="github",
+        idempotency_key=f"delivery-{uuid4().hex}",
+        payload={},
+        branch_name="feature/already-exists",
+        session=db_session,
+    )
+    await db_session.commit()
+
+    assert created is True
+    ticket = await get(ticket_id, org_id=org_id)
+    assert ticket.branch_name == "feature/already-exists"
+
+
+@pytest.mark.service
+async def test_create_from_pr_mints_branch_name_when_omitted(db_session) -> None:  # type: ignore[no-untyped-def]
+    """No `branch_name` supplied → `mint_branch_name(title, ticket_id)` fills
+    it in deterministically after insert."""
+    org_id = uuid4()
+
+    ticket_id, created = await create_from_pr(
+        org_id=org_id,
+        source_external_id=f"myorg/repo#{uuid4().hex[:6]}",
+        title="Add the frobnicator",
+        description=None,
+        repo_external_id="myorg/repo",
+        plugin_id="github",
+        idempotency_key=f"delivery-{uuid4().hex}",
+        payload={},
+        session=db_session,
+    )
+    await db_session.commit()
+
+    assert created is True
+    ticket = await get(ticket_id, org_id=org_id)
+    assert ticket.branch_name is not None
+    assert ticket.branch_name == mint_branch_name("Add the frobnicator", ticket_id)
+    assert ticket.branch_name.startswith("yaaos/add-the-frobnicator-")
 
 
 @pytest.mark.service
