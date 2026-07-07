@@ -16,10 +16,12 @@ import { getCurrentOrgSlug } from "./org-context";
 /** Lesson from backend schema. */
 export type Lesson = components["schemas"]["Lesson"];
 
-/** One workflow execution for a ticket, with its ordered step list. */
-export type WorkflowRunView = components["schemas"]["WorkflowRunView"];
-/** `GET /api/tickets/{id}/activity/...` — persisted step activity blob. */
-export type StepActivityResponse = components["schemas"]["StepActivityResponse"];
+/** `GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity` —
+ *  persisted coding-agent activity blob for one stage execution. Name is
+ *  FastAPI's collision-disambiguated schema name (a same-named response
+ *  model also lives on the legacy `domain/tickets` workflow-activity route). */
+export type StageActivityResponse =
+  components["schemas"]["app__domain__pipelines__web__StepActivityResponse"];
 
 // ── Activity event — shared by live stream + persisted step blob ──────────
 
@@ -27,8 +29,8 @@ export type StepActivityResponse = components["schemas"]["StepActivityResponse"]
  * Pre-rendered activity event captured from the coding-agent stream.
  *
  * `message` is rendered by the backend; `detail` carries kind-specific
- * extras for expanded views. Shared by `ActivityEventRow` and the live
- * `useWorkflowActivityStream` hook.
+ * extras for expanded views. `ActivityEventRow` maps the Runs tab's
+ * persisted stage-activity events onto this shape at the call site.
  */
 export type ReviewJobActivityEvent = {
   ts: string;

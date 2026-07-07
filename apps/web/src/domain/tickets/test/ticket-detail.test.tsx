@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import type React from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -7,23 +8,14 @@ import { server } from "../../../test/msw/server";
 import { TicketDetailPage } from "../public/TicketDetailPage";
 
 /**
- * Smoke tests for TicketDetailPage. Uses MSW to intercept all ticket/reviewer
- * endpoints; asserts that the header, stage indicator, and tab strip render
- * against a representative ticket.
- *
- * StageIndicator is sourced from the dedicated workflow-runs endpoint rather
- * than `ticket.stages` (removed). The Re-run button and cost-estimate modal
- * are gone — only Cancel remains for non-terminal tickets.
+ * Component tests for the reworked TicketDetailPage: header + tab strip,
+ * and the Overview tab's three `RunOverview.status` branches (paused /
+ * in_flight / terminal) plus the disabled-actions "Waiting on {names}."
+ * state when the server reports `can_respond: false`.
  */
 
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ ticketId: "t1" }),
-}));
-
-// SSE workflow stream — not relevant for these tests; live step pane only
-// renders when a step is in state "running" which none of our fixtures use.
-vi.mock("@core/sse/public/workflow_activity", () => ({
-  useWorkflowActivityStream: () => [],
 }));
 
 const TICKET = {
@@ -33,7 +25,7 @@ const TICKET = {
   source_external_id: "x/y#1",
   title: "Add /metrics endpoint",
   description: null,
-  status: "running",
+  status: "hitl",
   plugin_id: "github",
   repo_external_id: "x/y",
   pr_id: "p1",
@@ -43,100 +35,169 @@ const TICKET = {
   is_draft: false,
   created_at: "2026-05-23T00:00:00Z",
   updated_at: "2026-05-23T00:00:00Z",
-  current_stage: "pr_review_v1",
+  current_stage: null,
   findings_count: 0,
   max_severity: null,
-  builder_kind: "user",
+  builder_kind: "user" as const,
   builder_display_name: "alice",
-  builder: { kind: "user", display_name: "alice" },
+  builder: { kind: "user" as const, display_name: "alice" },
 };
 
-const WORKFLOW_RUNS = [
-  {
-    id: "wfx-1",
-    workflow_name: "pr_review_v1",
-    workflow_version: 1,
-    state: "running",
-    current_step_id: "step-check",
-    failure_reason: null,
-    created_at: "2026-05-23T00:00:00Z",
-    updated_at: "2026-05-23T00:00:00Z",
-    steps: [
-      {
-        step_id: "step-check",
-        command_kind: "CheckShouldReview",
-        state: "done",
-        started_at: "2026-05-23T00:00:00Z",
-        completed_at: "2026-05-23T00:01:00Z",
-      },
-    ],
+const PAUSED_OVERVIEW = {
+  status: "paused",
+  pause: {
+    pause_id: "pause-1",
+    stage_name: "write-spec",
+    tripped: { always_hitl: true },
+    artifact_id: null,
+    residuals: [],
+    escalation_logins: ["alice"],
+    can_respond: true,
   },
-];
+};
+
+const RUN = {
+  id: "run-1",
+  pipeline_name: "dev",
+  state: "paused",
+  kickoff: { intake_point_id: "test", actor_kind: "user", actor_login: "alice", input_text: null },
+  created_at: "2026-05-23T00:00:00Z",
+  completed_at: null,
+  failure_reason: null,
+  stages: [
+    {
+      id: "se-1",
+      stage_index: 0,
+      kind: "skill",
+      stage_name: "write-spec",
+      status: "completed",
+      confidence: "high",
+      review_iterations: 0,
+      boundary_outcome: "paused",
+      artifact_ids: [],
+      action_result: null,
+      decisions: [],
+      failure_reason: null,
+      started_at: "2026-05-23T00:00:00Z",
+      completed_at: "2026-05-23T00:01:00Z",
+    },
+  ],
+};
 
 function wrap(node: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
 }
 
-function withHandlers() {
+function withBaseHandlers() {
   server.use(
     http.get("/api/tickets/t1", () => HttpResponse.json(TICKET)),
-    http.get("/api/tickets/t1/workflow-runs", () => HttpResponse.json(WORKFLOW_RUNS)),
-    http.get("/api/reviewer/findings/by-ticket/t1", () => HttpResponse.json([])),
-    http.get("/api/tickets/t1/hitl/history", () => HttpResponse.json([])),
+    http.get("/api/tickets/t1/audit", () => HttpResponse.json([])),
+    http.get("/api/pipelines/runs", () => HttpResponse.json({ runs: [RUN] })),
+    http.get("/api/artifacts", () => HttpResponse.json({ artifacts: [] })),
   );
 }
 
 describe("TicketDetailPage (MSW)", () => {
-  it("renders the title + status pill", async () => {
-    withHandlers();
+  it("renders the title, status pill, and tab strip", async () => {
+    withBaseHandlers();
+    server.use(http.get("/api/pipelines/runs/overview", () => HttpResponse.json(PAUSED_OVERVIEW)));
     render(wrap(<TicketDetailPage />));
     await waitFor(() => expect(screen.getByTestId("ticket-detail")).toBeInTheDocument());
     expect(screen.getByText("Add /metrics endpoint")).toBeInTheDocument();
-    expect(screen.getByTestId("ticket-status-running")).toBeInTheDocument();
+    expect(screen.getByTestId("ticket-status-hitl")).toBeInTheDocument();
+    expect(screen.getByTestId("ticket-tab-overview")).toBeInTheDocument();
+    expect(screen.getByTestId("ticket-tab-runs")).toBeInTheDocument();
+    expect(screen.getByTestId("ticket-tab-artifacts")).toBeInTheDocument();
   });
 
-  it("renders stage indicator sourced from workflow-runs endpoint", async () => {
-    withHandlers();
+  it("paused: renders the attention block with actions enabled when can_respond is true", async () => {
+    withBaseHandlers();
+    server.use(http.get("/api/pipelines/runs/overview", () => HttpResponse.json(PAUSED_OVERVIEW)));
     render(wrap(<TicketDetailPage />));
-    await waitFor(() => expect(screen.getByTestId("stage-indicator")).toBeInTheDocument());
-    expect(screen.getByTestId("stage-pr_review_v1")).toBeInTheDocument();
+    const block = await screen.findByTestId("attention-block");
+    expect(block).toHaveAttribute("data-state", "paused");
+    expect(screen.getByTestId("approve-run")).not.toBeDisabled();
+    expect(screen.getByTestId("kill-run")).not.toBeDisabled();
+    expect(screen.queryByTestId("pause-waiting-on")).not.toBeInTheDocument();
   });
 
-  it("renders all 3 tabs in the tab strip", async () => {
-    withHandlers();
-    render(wrap(<TicketDetailPage />));
-    await waitFor(() => expect(screen.getByTestId("ticket-tab-findings")).toBeInTheDocument());
-    expect(screen.getByTestId("ticket-tab-activity")).toBeInTheDocument();
-    expect(screen.getByTestId("ticket-tab-hitl")).toBeInTheDocument();
-  });
-
-  it("exposes Cancel button when ticket is non-terminal, no Re-run button", async () => {
-    withHandlers();
-    render(wrap(<TicketDetailPage />));
-    await waitFor(() => expect(screen.getByTestId("ticket-cancel-button")).toBeInTheDocument());
-    expect(screen.queryByTestId("ticket-rerun-button")).toBeNull();
-  });
-
-  it("no Cancel button when ticket is done", async () => {
+  it("paused: disables actions and shows 'Waiting on {names}.' when can_respond is false", async () => {
+    withBaseHandlers();
     server.use(
-      http.get("/api/tickets/t1", () => HttpResponse.json({ ...TICKET, status: "done" })),
-      http.get("/api/tickets/t1/workflow-runs", () => HttpResponse.json(WORKFLOW_RUNS)),
-      http.get("/api/reviewer/findings/by-ticket/t1", () => HttpResponse.json([])),
-      http.get("/api/tickets/t1/hitl/history", () => HttpResponse.json([])),
+      http.get("/api/pipelines/runs/overview", () =>
+        HttpResponse.json({
+          ...PAUSED_OVERVIEW,
+          pause: { ...PAUSED_OVERVIEW.pause, can_respond: false, escalation_logins: ["bob"] },
+        }),
+      ),
     );
     render(wrap(<TicketDetailPage />));
-    await waitFor(() => expect(screen.getByTestId("ticket-detail")).toBeInTheDocument());
-    expect(screen.queryByTestId("ticket-cancel-button")).toBeNull();
+    await screen.findByTestId("attention-block");
+    expect(screen.getByText("Waiting on bob.")).toBeInTheDocument();
+    expect(screen.getByTestId("approve-run")).toBeDisabled();
+    expect(screen.getByTestId("kill-run")).toBeDisabled();
   });
 
-  it("shows step label rows in activity tab", async () => {
-    withHandlers();
+  it("in_flight: renders the live card with a Cancel action", async () => {
+    withBaseHandlers();
+    server.use(
+      http.get("/api/pipelines/runs/overview", () =>
+        HttpResponse.json({ status: "in_flight", run: RUN }),
+      ),
+    );
     render(wrap(<TicketDetailPage />));
-    await waitFor(() => expect(screen.getByTestId("ticket-detail")).toBeInTheDocument());
-    const activityTab = screen.getByTestId("ticket-tab-activity");
-    activityTab.click();
-    await waitFor(() => expect(screen.getByTestId("step-tree")).toBeInTheDocument());
-    expect(screen.getByTestId("step-row-step-check")).toBeInTheDocument();
+    const block = await screen.findByTestId("attention-block");
+    expect(block).toHaveAttribute("data-state", "in_flight");
+    expect(screen.getByText("dev")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
+  it("terminal: renders the outcome card with a PR link on success", async () => {
+    withBaseHandlers();
+    server.use(
+      http.get("/api/pipelines/runs/overview", () =>
+        HttpResponse.json({
+          status: "terminal",
+          outcome: { state: "completed", pr_url: "https://x/y/pull/42", failure_reason: null },
+        }),
+      ),
+    );
+    render(wrap(<TicketDetailPage />));
+    const block = await screen.findByTestId("attention-block");
+    expect(block).toHaveAttribute("data-state", "completed");
+    expect(screen.getByRole("link", { name: /View PR/ })).toHaveAttribute(
+      "href",
+      "https://x/y/pull/42",
+    );
+  });
+
+  it("terminal: renders the mono failure_reason on a failed run", async () => {
+    withBaseHandlers();
+    server.use(
+      http.get("/api/pipelines/runs/overview", () =>
+        HttpResponse.json({
+          status: "terminal",
+          outcome: {
+            state: "failed",
+            pr_url: null,
+            failure_reason: "SkillReturn schema violation",
+          },
+        }),
+      ),
+    );
+    render(wrap(<TicketDetailPage />));
+    await screen.findByTestId("attention-block");
+    expect(screen.getByText("SkillReturn schema violation")).toBeInTheDocument();
+  });
+
+  it("switches to the Runs tab and renders a run card", async () => {
+    withBaseHandlers();
+    server.use(http.get("/api/pipelines/runs/overview", () => HttpResponse.json(PAUSED_OVERVIEW)));
+    render(wrap(<TicketDetailPage />));
+    await screen.findByTestId("attention-block");
+    await userEvent.click(screen.getByTestId("ticket-tab-runs"));
+    expect(await screen.findByTestId("run-card-run-1")).toBeInTheDocument();
+    expect(screen.getByTestId("stage-row-write-spec")).toBeInTheDocument();
   });
 });

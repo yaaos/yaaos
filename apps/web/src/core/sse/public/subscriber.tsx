@@ -37,8 +37,10 @@ import type { ServerEvent } from "./types";
  * Translation table (`kind` → which query prefixes to invalidate):
  * - `ticket_status_changed` → ["tickets"], ["tickets", ticket_id],
  *   ["tickets", ticket_id, "audit"], ["reviewer", "metrics"]
- * - `workflow_state_changed` → ["workflow", "runs", ticket_id],
+ * - `run_state_changed` → ["runs", ticket_id], ["runs", "overview", ticket_id],
  *   ["tickets", ticket_id] (status pill re-read)
+ * - `stage_state_changed` → ["runs", ticket_id]
+ * - `artifact_stored` → ["artifacts", ticket_id]
  * - `review_requested` | `review_started` | `review_completed` |
  *   `review_failed` | `review_superseded` → ["tickets"], ["tickets", "dashboard"]
  * - `finding_raised` | `finding_re_observed` | `finding_anchor_updated` |
@@ -154,17 +156,22 @@ function _handleEvent(evt: ServerEvent): void {
       }
       _scheduleInvalidate(["reviewer", "metrics"]);
       break;
-    case "workflow_state_changed":
-      // Invalidate the workflow-run query for the specific ticket so the
-      // Activity tab step tree and stage band refresh on every transition.
-      // Also invalidate the ticket query so the status pill stays current.
+    case "run_state_changed":
+      // Invalidate the Runs timeline + Overview payload for the ticket so
+      // the attention block / live card / outcome card refresh on every
+      // run-state transition. Also invalidate the ticket query so the
+      // status pill stays current.
       if (tid) {
-        _scheduleInvalidate(["workflow", "runs", tid]);
+        _scheduleInvalidate(["runs", tid]);
+        _scheduleInvalidate(["runs", "overview", tid]);
         _scheduleInvalidate(["tickets", tid]);
-        // Findings land as a workflow step completes; nothing else
-        // invalidates this key, so refresh it on every transition.
-        _scheduleInvalidate(["reviewer", "findings", tid]);
       }
+      break;
+    case "stage_state_changed":
+      if (tid) _scheduleInvalidate(["runs", tid]);
+      break;
+    case "artifact_stored":
+      if (tid) _scheduleInvalidate(["artifacts", tid]);
       break;
     case "review_requested":
     case "review_started":

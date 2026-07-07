@@ -7,15 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { components } from "../generated/schema";
-import {
-  type Lesson,
-  type StepActivityResponse,
-  type Ticket,
-  type WorkflowRunView,
-  apiFetch,
-} from "./client";
-
-export type { WorkflowRunView } from "./client";
+import { type Lesson, type StageActivityResponse, type Ticket, apiFetch } from "./client";
 
 // ── Auth / session ────────────────────────────────────────────────────────────
 
@@ -374,122 +366,135 @@ export function useTicket(ticket_id: string) {
   });
 }
 
-// ── Workflow runs (step tree for the Activity tab) ───────────────────────────
+// ── Pipeline runs (Overview / Runs tabs) ─────────────────────────────────────
 
-/**
- * All workflow runs for the ticket, oldest-first, with their step lists.
- * `staleTime` is explicit because freshness is driven by `workflow_state_changed`
- * SSE events, not focus-driven refetches.
- */
-export function useWorkflowRuns(ticket_id: string) {
-  return useSuspenseQuery<WorkflowRunView[]>({
-    queryKey: ["workflow", "runs", ticket_id],
-    queryFn: () => apiFetch<WorkflowRunView[]>(`/api/tickets/${ticket_id}/workflow-runs`),
-    staleTime: 60_000,
+export type PipelineRunView = components["schemas"]["PipelineRun"];
+export type StageExecutionView = components["schemas"]["StageExecution"];
+export type RunOverviewView = components["schemas"]["RunOverview"];
+export type PauseDetailView = components["schemas"]["PauseDetail"];
+export type RunOutcomeView = components["schemas"]["RunOutcome"];
+
+export interface PauseResolutionBody {
+  action: "approve" | "instruct" | "send_back" | "kill";
+  instruction?: string | null;
+  send_back_to_stage?: string | null;
+}
+
+/** All runs for the ticket, newest-first, with their stage-execution lists. */
+export function useRuns(ticket_id: string) {
+  return useSuspenseQuery<PipelineRunView[]>({
+    queryKey: ["runs", ticket_id],
+    queryFn: async () => {
+      const resp = await apiFetch<{ runs: PipelineRunView[] }>(
+        `/api/pipelines/runs?ticket_id=${ticket_id}`,
+      );
+      return resp.runs;
+    },
   });
 }
 
 /**
- * Fetches the persisted activity blob for one workflow step. Only called
- * for a terminal `InvokeClaudeCode` step where both ids are available.
+ * Server-computed Overview-tab payload for the ticket's current run.
+ * `null` on 404 — the ticket has no run yet, a legitimate empty state (not
+ * an error to throw across a Suspense boundary).
  */
-export function useStepActivity(ticket_id: string, execution_id: string, step_id: string) {
-  return useSuspenseQuery<StepActivityResponse>({
-    queryKey: ["workflow", "activity", execution_id, step_id],
+export function useRunOverview(ticket_id: string) {
+  return useQuery<RunOverviewView | null>({
+    queryKey: ["runs", "overview", ticket_id],
+    queryFn: async () => {
+      try {
+        return await apiFetch<RunOverviewView>(
+          `/api/pipelines/runs/overview?ticket_id=${ticket_id}`,
+        );
+      } catch (err) {
+        if ((err as Error)?.message?.startsWith("404")) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** Fetches the persisted coding-agent activity blob for one stage execution. */
+export function useStageActivity(run_id: string, stage_execution_id: string) {
+  return useSuspenseQuery<StageActivityResponse>({
+    queryKey: ["runs", "stage-activity", run_id, stage_execution_id],
     queryFn: () =>
-      apiFetch<StepActivityResponse>(
-        `/api/tickets/${ticket_id}/activity/${execution_id}/${step_id}`,
+      apiFetch<StageActivityResponse>(
+        `/api/pipelines/runs/${run_id}/stages/${stage_execution_id}/activity`,
       ),
   });
 }
 
-/**
- * Canonical finding in the new schema.
- * No `state` field — findings are non-interactive (ack/push-back removed).
- */
-export interface FindingRow {
-  id: string;
-  finding_display_id: number;
-  category: string;
-  severity: "blocker" | "should_fix" | "nit";
-  confidence: "verified" | "plausible" | "speculative";
-  rationale: string;
-  rule_violated: string;
-  rule_source: string;
-  suggested_fix: string;
-  file: string | null;
-  line: number | null;
-  review_id: string;
+function _invalidateRun(qc: ReturnType<typeof useQueryClient>, ticket_id: string): void {
+  qc.invalidateQueries({ queryKey: ["runs", ticket_id] });
+  qc.invalidateQueries({ queryKey: ["runs", "overview", ticket_id] });
+  qc.invalidateQueries({ queryKey: ["tickets", ticket_id] });
 }
 
-/**
- * @param ticket_id must be non-empty; enforced by the required route URL param.
- */
-export function useFindingsForTicket(ticket_id: string, includeTerminal = false) {
-  return useSuspenseQuery<FindingRow[]>({
-    queryKey: ["reviewer", "findings", ticket_id, includeTerminal],
-    queryFn: () =>
-      apiFetch<FindingRow[]>(
-        `/api/reviewer/findings/by-ticket/${ticket_id}${
-          includeTerminal ? "?include_terminal=true" : ""
-        }`,
-      ),
-    // SSE `workflow_state_changed` is the primary freshness driver; this slow
-    // poll is a fallback for flaky SSE connections.
-    refetchInterval: 30_000,
-  });
-}
-
-/** : past HITL exchanges on a ticket — prompt + resolution + timestamps. */
-export interface HitlHistoryEntry {
-  id: string;
-  workflow_execution_id: string;
-  question_payload: Record<string, unknown>;
-  resolution_payload: Record<string, unknown> | null;
-  resolved_at: string | null;
-  created_at: string;
-}
-
-/**
- * @param ticket_id must be non-empty; enforced by the required route URL param.
- */
-export function useHitlHistory(ticket_id: string) {
-  return useSuspenseQuery<HitlHistoryEntry[]>({
-    queryKey: ["tickets", ticket_id, "hitl-history"],
-    queryFn: () => apiFetch<HitlHistoryEntry[]>(`/api/tickets/${ticket_id}/hitl/history`),
-  });
-}
-
-/** : submit a HITL response. The body shape is prompt-discriminated;
- *  callers pass the dict the HITL renderer produced. */
-export function useHitlRespond(ticket_id: string) {
+/** Cancel an in-flight (`running`) run — deferred to the next safe checkpoint. */
+export function useCancelRun(ticket_id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (response: Record<string, unknown>) =>
-      apiFetch<{ stage: string; next_state: string }>(`/api/tickets/${ticket_id}/hitl/respond`, {
+    mutationFn: (run_id: string) =>
+      apiFetch(`/api/pipelines/runs/${run_id}/cancel`, { method: "POST" }),
+    onSuccess: () => _invalidateRun(qc, ticket_id),
+  });
+}
+
+/** Resolve a HITL pause: approve / instruct / send back / kill. */
+export function useRespondPause(ticket_id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { pauseId: string; resolution: PauseResolutionBody }) =>
+      apiFetch<{ run_state: string }>(`/api/pipelines/runs/pauses/${vars.pauseId}/respond`, {
         method: "POST",
-        body: JSON.stringify(response),
+        body: JSON.stringify(vars.resolution),
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id] });
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id, "hitl-history"] });
+    onSuccess: () => _invalidateRun(qc, ticket_id),
+  });
+}
+
+/** Instruct & re-run from an earlier stage on a fresh run. */
+export function useRerunFromStage(ticket_id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { fromStage: string; instruction: string }) =>
+      apiFetch<{ run_id: string }>("/api/pipelines/runs/rerun", {
+        method: "POST",
+        body: JSON.stringify({
+          ticket_id,
+          from_stage: vars.fromStage,
+          instruction: vars.instruction,
+        }),
+      }),
+    onSuccess: () => _invalidateRun(qc, ticket_id),
+  });
+}
+
+// ── Artifacts (Artifacts tab) ────────────────────────────────────────────────
+
+export type ArtifactGroupView = components["schemas"]["ArtifactGroup"];
+export type ArtifactDetailView = components["schemas"]["ArtifactDetailResponse"];
+
+/** Every artifact lineage for the ticket, grouped by stage name. */
+export function useArtifacts(ticket_id: string) {
+  return useSuspenseQuery<ArtifactGroupView[]>({
+    queryKey: ["artifacts", ticket_id],
+    queryFn: async () => {
+      const resp = await apiFetch<{ artifacts: ArtifactGroupView[] }>(
+        `/api/artifacts?ticket_id=${ticket_id}`,
+      );
+      return resp.artifacts;
     },
   });
 }
 
-export function useCancelReviewerJobs() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (ticket_id: string) =>
-      apiFetch<{ cancelled_count: number }>(
-        `/api/reviewer/cancel?ticket_id=${encodeURIComponent(ticket_id)}`,
-        { method: "POST" },
-      ),
-    onSuccess: (_, ticket_id) => {
-      qc.invalidateQueries({ queryKey: ["workflow", "runs", ticket_id] });
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id] });
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id, "audit"] });
-    },
+/** One artifact version, body included. `null` while no version is selected. */
+export function useArtifactVersion(artifact_id: string | null) {
+  return useQuery<ArtifactDetailView | null>({
+    queryKey: ["artifacts", "version", artifact_id],
+    queryFn: () => apiFetch<ArtifactDetailView>(`/api/artifacts/${artifact_id}`),
+    enabled: artifact_id !== null,
   });
 }
 

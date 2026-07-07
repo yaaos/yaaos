@@ -43,6 +43,8 @@
     "react-dom": "^19.2.7",
     "react-error-boundary": "^6.1.2",
     "react-hook-form": "^7.76.0",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "^6.0.0",
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.5.4",
     "zod": "^3.25.76"

@@ -7,14 +7,14 @@
 | Layer | Location | What lives here |
 |---|---|---|
 | **Vendor / primitive** | `src/shared/components/ui/` | Vendored shadcn/Radix primitives. No domain logic, no restyling inside a primitive — wrap in a composite instead. |
-| **Composite** | `src/shared/components/public/{layout,chrome}/` | Presentational, cross-feature composites (`PageHeader`, `EmptyState`, `ErrorBanner`, `OrgSwitcher`, …). No feature-specific data fetching. |
+| **Composite** | `src/shared/components/public/{layout,chrome}/` + `public/` root | Presentational, cross-feature composites (`PageHeader`, `EmptyState`, `ErrorBanner`, `OrgSwitcher`, `Markdown`, …). No feature-specific data fetching. |
 | **Feature** | `src/domain/<module>/` | Domain-specific components that colocate with their module. Graduate to composite on the 2nd/3rd consumer (rule-of-three). |
 
 **Rule-of-three graduation:** a feature component moves to `shared/components/` once it has real consumers in two or more unrelated domain modules. Don't pre-graduate — leave it in `domain/<m>/` until it earns its place.
 
 **Vendor-layer carve-out:** shadcn/Radix primitives in `ui/` may hand-roll ARIA patterns and focus management internally — that's the vendor's job, not ours. Don't add domain logic or hardcoded copy inside those files.
 
-`src/shared/components/`: `ui/` (shadcn/Radix primitives), `public/layout/` (page header, empty state, error banner). All live in-repo — modify freely. The chrome components (`OrgSwitcher`, `NotificationsBell`) and the org-gate banner (`NotConfiguredBanner`) moved to `core/sidebar/` and `core/layout/public/` respectively — they use `@core/api` hooks and so cannot live in `shared/`.
+`src/shared/components/`: `ui/` (shadcn/Radix primitives), `public/layout/` (page header, empty state, error banner), `public/` root (content composites — `markdown.tsx`). All live in-repo — modify freely. The chrome components (`OrgSwitcher`, `NotificationsBell`) and the org-gate banner (`NotConfiguredBanner`) moved to `core/sidebar/` and `core/layout/public/` respectively — they use `@core/api` hooks and so cannot live in `shared/`.
 
 ## Primitives (`src/shared/components/ui/`)
 
@@ -36,6 +36,7 @@
 |---|---|
 | `alert-dialog.tsx` | Destructive or high-stakes confirmation modal (Radix `AlertDialog`). No close X — use `AlertDialogCancel` / `AlertDialogAction` buttons. Used by `ShutdownDialog` and `CancelShutdownDialog`. |
 | `dialog.tsx` | General-purpose modal dialog. Composed by ConfirmModal. |
+| `sheet.tsx` | Right-anchored slide-in panel (built on `@radix-ui/react-dialog`, no separate package). Used by the ticket Runs tab's per-stage artifact viewer. |
 | `popover.tsx` | Anchored floating panel. Used by Org switcher, Notifications. |
 
 ### Display
@@ -62,6 +63,12 @@ Public surface of the `shared/components` module. Import directly via `@shared/c
 | `empty-state.tsx` | `EmptyState` | Icon + headline + body + optional action; the C2 empty-list pattern. |
 | `error-banner.tsx` | `ErrorBanner` | In-page error with optional Retry. Voice rule (D3): blames the system, not the user. |
 | `confirm-modal.tsx` | `ConfirmModal`, `ConfirmTone` | Destructive + cost-protective variants share the shell; copy differs (D3). |
+
+## Content composites (`src/shared/components/public/`)
+
+| File | Export | Purpose |
+|---|---|---|
+| `markdown.tsx` | `Markdown` | Renders a model-generated body (pipeline artifacts, run failure text) via `react-markdown` + `rehype-sanitize` — sanitization always runs, no opt-out. No typography plugin installed; block-element styling is hand-rolled via Tailwind arbitrary-child selectors. |
 
 ## Adding a primitive
 

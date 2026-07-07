@@ -15,6 +15,7 @@ engine's HTTP surface.
 | POST   | `/api/pipelines/runs/{run_id}/cancel` | `REVIEWER_WRITE` — cancel a run; running cancels at the next boundary, queued cancels immediately, terminal 409s |
 | POST   | `/api/pipelines/runs/pauses/{pause_id}/respond` | `REVIEWER_WRITE` — resolve a HITL pause; responders = the pause's escalation set union org admins (`403 not_escalation_target` otherwise) |
 | POST   | `/api/pipelines/runs/rerun` | `REVIEWER_WRITE` — instruct & re-run from an earlier stage on a fresh run (queues if one's in flight) |
+| GET    | `/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity` | `REVIEWER_READ` — persisted coding-agent activity blob for one stage execution |
 
 Request bodies for create/update are the `PipelineDefinition` model itself:
 `id` (top-level and per-stage) defaults to a fresh uuid7 at parse time, so a
@@ -31,12 +32,14 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.core.auth import Action, org_id_var
+from app.core.coding_agent import ActivityLog, get_step_activity
 from app.core.database import session as db_session
 from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.pipelines import service as pipelines
 from app.domain.pipelines import views
 from app.domain.pipelines.definition import PipelineDefinition, PipelineValidationError, Stage
+from app.domain.pipelines.models import PipelineRunRow
 from app.domain.pipelines.service import (
     InvalidPauseResolutionError,
     MissingInheritedArtifactError,
@@ -308,6 +311,38 @@ async def rerun_endpoint(body: RerunRequest) -> RerunResponse:
             raise _err(409, "missing_inherited_artifact") from exc
         await s.commit()
     return RerunResponse(run_id=run_id)
+
+
+class StepActivityResponse(BaseModel):
+    """Persisted coding-agent activity blob for one stage execution.
+
+    `activity` is null when the stage ran no coding-agent invocation (an
+    `action`/`system` stage) or the weekly partition holding its row has
+    aged out (4-week TTL).
+    """
+
+    activity: ActivityLog | None
+
+
+@router.get(
+    "/runs/{run_id}/stages/{stage_execution_id}/activity",
+    dependencies=[Depends(require(Action.REVIEWER_READ))],
+)
+async def stage_activity_endpoint(run_id: UUID, stage_execution_id: UUID) -> StepActivityResponse:
+    """Reuses `core/coding_agent.get_step_activity`, keyed on
+    `(coding_agent_runs.workflow_execution_id, step_id)` — the pipelines
+    engine stamps `workflow_execution_id=<run_id>` and
+    `step_id=str(stage_execution_id)` (TEXT column, pre-rename) at dispatch
+    time. 404s when the run doesn't belong to the caller's org."""
+    org_id = org_id_var.get()
+    if org_id is None:
+        raise _err(400, "no_org_context")
+    async with db_session() as s:
+        run = await s.get(PipelineRunRow, run_id)
+        if run is None or run.org_id != org_id:
+            raise _err(404, "not_found")
+        activity = await get_step_activity(run_id, str(stage_execution_id), session=s)
+    return StepActivityResponse(activity=activity)
 
 
 register_routes(

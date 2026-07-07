@@ -3154,7 +3154,7 @@
         "type": "object"
       },
       "StageExecution": {
-        "description": "One stage-execution attempt, read-model shape for the Runs tab.",
+        "description": "One stage-execution attempt, read-model shape for the Runs tab.\n\n`id` is the `stage_executions` row id — the SPA's Runs tab needs it to\ncall the per-stage activity endpoint\n(`GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity`).",
         "properties": {
           "action_result": {
             "anyOf": [
@@ -3238,6 +3238,11 @@
             ],
             "title": "Failure Reason"
           },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
           "kind": {
             "enum": [
               "skill",
@@ -3278,6 +3283,7 @@
           }
         },
         "required": [
+          "id",
           "stage_index",
           "kind",
           "stage_name",
@@ -3293,26 +3299,6 @@
           "completed_at"
         ],
         "title": "StageExecution",
-        "type": "object"
-      },
-      "StepActivityResponse": {
-        "description": "Persisted coding-agent activity blob for one workflow step.\n\n`activity` is null when the step ran no coding-agent invocation or the\nweekly partition holding its row has aged out.",
-        "properties": {
-          "activity": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ActivityLog"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "activity"
-        ],
-        "title": "StepActivityResponse",
         "type": "object"
       },
       "TemplateResponse": {
@@ -4069,6 +4055,46 @@
           "memberships"
         ],
         "title": "_UserMeResponse",
+        "type": "object"
+      },
+      "app__domain__pipelines__web__StepActivityResponse": {
+        "description": "Persisted coding-agent activity blob for one stage execution.\n\n`activity` is null when the stage ran no coding-agent invocation (an\n`action`/`system` stage) or the weekly partition holding its row has\naged out (4-week TTL).",
+        "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActivityLog"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "activity"
+        ],
+        "title": "StepActivityResponse",
+        "type": "object"
+      },
+      "app__domain__tickets__web__StepActivityResponse": {
+        "description": "Persisted coding-agent activity blob for one workflow step.\n\n`activity` is null when the step ran no coding-agent invocation or the\nweekly partition holding its row has aged out.",
+        "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActivityLog"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "activity"
+        ],
+        "title": "StepActivityResponse",
         "type": "object"
       }
     }
@@ -9052,6 +9078,92 @@
         ]
       }
     },
+    "/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity": {
+      "get": {
+        "description": "Reuses `core/coding_agent.get_step_activity`, keyed on\n`(coding_agent_runs.workflow_execution_id, step_id)` — the pipelines\nengine stamps `workflow_execution_id=<run_id>` and\n`step_id=str(stage_execution_id)` (TEXT column, pre-rename) at dispatch\ntime. 404s when the run doesn't belong to the caller's org.",
+        "operationId": "stage_activity_endpoint_api_pipelines_runs__run_id__stages__stage_execution_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "stage_execution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Stage Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__domain__pipelines__web__StepActivityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stage Activity Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
     "/api/pipelines/templates": {
       "get": {
         "description": "Registered BEFORE `/{pipeline_id}` — the latter is a bare\nsingle-segment match (route matching precedes FastAPI's own UUID\nparsing) and would otherwise swallow the literal `templates` segment.",
@@ -10932,7 +11044,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StepActivityResponse"
+                  "$ref": "#/components/schemas/app__domain__tickets__web__StepActivityResponse"
                 }
               }
             },

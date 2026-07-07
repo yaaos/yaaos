@@ -107,6 +107,23 @@ async def seed_trigger_binding_endpoint(req: _SeedTriggerBindingRequest) -> dict
     return {"id": str(binding_id)}
 
 
+class _SeedPausedRunRequest(BaseModel):
+    org_slug: str = Field(..., min_length=1)
+    ticket_title: str = Field(..., min_length=1)
+    stage_name: str = Field(default="write-spec", min_length=1)
+
+
+@router.post("/seed/paused_run")
+async def seed_paused_run_endpoint(req: _SeedPausedRunRequest) -> dict[str, str]:
+    """Seed a `paused` pipeline run + open `run_pauses` row for e2e specs
+    exercising the ticket page's Overview attention block. See
+    `service.seed_paused_run` for what's constructed and why."""
+    _guard_dev()
+    return await service.seed_paused_run(
+        org_slug=req.org_slug, ticket_title=req.ticket_title, stage_name=req.stage_name
+    )
+
+
 class _LessonRequest(BaseModel):
     repo_external_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)

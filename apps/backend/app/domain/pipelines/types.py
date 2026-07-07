@@ -165,8 +165,14 @@ class Decision(BaseModel, frozen=True):
 
 
 class StageExecution(BaseModel, frozen=True):
-    """One stage-execution attempt, read-model shape for the Runs tab."""
+    """One stage-execution attempt, read-model shape for the Runs tab.
 
+    `id` is the `stage_executions` row id — the SPA's Runs tab needs it to
+    call the per-stage activity endpoint
+    (`GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity`).
+    """
+
+    id: UUID
     stage_index: int | None
     kind: StageKind
     stage_name: str

@@ -96,6 +96,7 @@ async def _build_pipeline_run(run: PipelineRunRow, *, session: AsyncSession) -> 
 
     stages = tuple(
         StageExecution(
+            id=row.id,
             stage_index=row.stage_index,
             kind=row.kind,  # type: ignore[arg-type]
             stage_name=row.stage_name,

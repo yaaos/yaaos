@@ -1210,6 +1210,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stage Activity Endpoint
+         * @description Reuses `core/coding_agent.get_step_activity`, keyed on
+         *     `(coding_agent_runs.workflow_execution_id, step_id)` — the pipelines
+         *     engine stamps `workflow_execution_id=<run_id>` and
+         *     `step_id=str(stage_execution_id)` (TEXT column, pre-rename) at dispatch
+         *     time. 404s when the run doesn't belong to the caller's org.
+         */
+        get: operations["stage_activity_endpoint_api_pipelines_runs__run_id__stages__stage_execution_id__activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pipelines/templates": {
         parameters: {
             query?: never;
@@ -3436,6 +3460,10 @@ export interface components {
         /**
          * StageExecution
          * @description One stage-execution attempt, read-model shape for the Runs tab.
+         *
+         *     `id` is the `stage_executions` row id — the SPA's Runs tab needs it to
+         *     call the per-stage activity endpoint
+         *     (`GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity`).
          */
         StageExecution: {
             /** Action Result */
@@ -3455,6 +3483,11 @@ export interface components {
             /** Failure Reason */
             failure_reason: string | null;
             /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
              * Kind
              * @enum {string}
              */
@@ -3472,16 +3505,6 @@ export interface components {
             started_at: string;
             /** Status */
             status: string;
-        };
-        /**
-         * StepActivityResponse
-         * @description Persisted coding-agent activity blob for one workflow step.
-         *
-         *     `activity` is null when the step ran no coding-agent invocation or the
-         *     weekly partition holding its row has aged out.
-         */
-        StepActivityResponse: {
-            activity: components["schemas"]["ActivityLog"] | null;
         };
         /** TemplateResponse */
         TemplateResponse: {
@@ -3760,6 +3783,27 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
+        };
+        /**
+         * StepActivityResponse
+         * @description Persisted coding-agent activity blob for one stage execution.
+         *
+         *     `activity` is null when the stage ran no coding-agent invocation (an
+         *     `action`/`system` stage) or the weekly partition holding its row has
+         *     aged out (4-week TTL).
+         */
+        app__domain__pipelines__web__StepActivityResponse: {
+            activity: components["schemas"]["ActivityLog"] | null;
+        };
+        /**
+         * StepActivityResponse
+         * @description Persisted coding-agent activity blob for one workflow step.
+         *
+         *     `activity` is null when the step ran no coding-agent invocation or the
+         *     weekly partition holding its row has aged out.
+         */
+        app__domain__tickets__web__StepActivityResponse: {
+            activity: components["schemas"]["ActivityLog"] | null;
         };
     };
     responses: never;
@@ -6233,6 +6277,42 @@ export interface operations {
             };
         };
     };
+    stage_activity_endpoint_api_pipelines_runs__run_id__stages__stage_execution_id__activity_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                run_id: string;
+                stage_execution_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__domain__pipelines__web__StepActivityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_templates_endpoint_api_pipelines_templates_get: {
         parameters: {
             query?: never;
@@ -7117,7 +7197,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StepActivityResponse"];
+                    "application/json": components["schemas"]["app__domain__tickets__web__StepActivityResponse"];
                 };
             };
             /** @description Validation Error */

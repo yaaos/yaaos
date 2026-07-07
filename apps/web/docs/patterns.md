@@ -54,13 +54,14 @@ Use `vi.useFakeTimers({ toFake: ["Date"] })` (not full fake timers) when tests n
 ## testid conventions
 
 - Page container: `<page>-<state>` (e.g. `workspaces-page`, `ticket-detail`).
-- List containers: `<entity>-list` (`tickets-list`, `findings-list`, `lessons-list`, `audit-log`).
+- List containers: `<entity>-list` (`tickets-list`, `lessons-list`, `audit-log`).
 - List rows: `<entity>-row-<id>`.
 - Actions: `<action>-<entity>` (`cancel-jobs-button`, `lesson-save`, `teach-yaaos`).
 - Status badges: `<entity>-status` (`github-status`, `apikey-status`).
 - Form fields: `<form>-<field>` (`gh-app-id`, `anthropic-key`, `teach-title`).
 - Review cards carry `data-state="<status>"` — query via `[data-testid^="agent-card-"][data-state="posted"]`.
 - Workspaces page prefix: `workspaces-*`. Sections: `workspaces-section-active`, `workspaces-section-draining`, `workspaces-section-unconfigured`, `workspaces-section-inactive`. Cards: `workspaces-agent-card-${instance_id}`, `workspaces-agent-card-${instance_id}-status`. Empty state: `workspaces-empty`. See [domain_workspaces.md](domain_workspaces.md).
+- Ticket page tabs: `ticket-tab-<overview|runs|artifacts>`; tab bodies: `ticket-overview`, `ticket-runs`, `ticket-artifacts`. Overview's state card is always `attention-block` with `data-state="<paused|in_flight|<terminal-state>>"`, regardless of which branch rendered it. Pause actions: `approve-run`, `instruct-run`, `send-back-run`, `kill-run`. Runs tab: `run-card-${run_id}` (`data-state="<run.state>"`), `stage-row-${stage_name}`, `rerun-from-stage`. Artifacts tab: `artifact-lineage-${stage_name}`. See [domain_tickets.md](domain_tickets.md).
 
 ## Accessibility (WCAG 2.2 AA)
 
@@ -143,10 +144,13 @@ If a FE change could alter stored/posted/counted state without a corresponding A
 
 Module-scoped arrays. Canonical keys:
 
-- `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["tickets", id, "hitl-history"]`
-- `["workflow", "runs", ticket_id]` — workflow run step tree for one ticket (invalidated by `workflow_state_changed` SSE)
-- `["workflow", "activity", execution_id, step_id]` — persisted activity blob for one terminal step (lazy-loaded in the accordion)
-- `["reviewer", "metrics"]`, `["reviewer", "agents"]`, `["reviewer", "findings", ticket_id, includeTerminal]`
+- `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`
+- `["runs", ticket_id]` — every pipeline run for a ticket, newest first, with stage-execution lists (Runs tab; invalidated by `run_state_changed`/`stage_state_changed` SSE)
+- `["runs", "overview", ticket_id]` — server-computed Overview-tab payload, tagged `paused | in_flight | terminal` (invalidated by `run_state_changed` SSE)
+- `["runs", "stage-activity", run_id, stage_execution_id]` — persisted coding-agent activity blob for one stage execution (lazy-loaded in the Runs tab's per-row accordion)
+- `["artifacts", ticket_id]` — every artifact lineage for a ticket, grouped by stage name (Artifacts tab; invalidated by `artifact_stored` SSE)
+- `["artifacts", "version", artifact_id]` — one artifact version, body included
+- `["reviewer", "metrics"]`, `["reviewer", "agents"]`
 - `["agents", orgSlug]` — slug-scoped so different orgs don't share the entry
 - `["lessons", repos, q, created_by, sort]` — each field is the filter value or `"all"` / `""` as default
 - `["github", "installation"]`, `["github", "repositories"]`

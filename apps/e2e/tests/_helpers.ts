@@ -60,6 +60,42 @@ export async function seedGithubInstall(
   });
 }
 
+/**
+ * Seed a `paused` pipeline run — a completed always-HITL skill stage with a
+ * stored final artifact and an open `run_pauses` row — bypassing the run
+ * engine's coding-agent dispatch entirely (no real agent invocation, no
+ * workspace). Lets specs exercise the ticket page's Overview attention
+ * block and pause-respond flow without depending on a real skill
+ * invocation completing (`ClaudeCodePlugin.compile_invocation` only
+ * supports the legacy `pr_review` skill today).
+ *
+ * Returns the seeded ticket/run/pause/stage-execution ids.
+ */
+export async function seedPausedRun(opts: {
+  orgSlug: string;
+  ticketTitle: string;
+  stageName?: string;
+}): Promise<{ ticket_id: string; run_id: string; pause_id: string; stage_execution_id: string }> {
+  const r = await fetch(`${YAAOS_URL}/api/testing/seed/paused_run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      org_slug: opts.orgSlug,
+      ticket_title: opts.ticketTitle,
+      stage_name: opts.stageName ?? "write-spec",
+    }),
+  });
+  if (!r.ok) {
+    throw new Error(`seedPausedRun → ${r.status}: ${await r.text()}`);
+  }
+  return (await r.json()) as {
+    ticket_id: string;
+    run_id: string;
+    pause_id: string;
+    stage_execution_id: string;
+  };
+}
+
 /** Seed the `skill_name` for a connected repo. Used by e2e specs that render
  *  the Code Connect settings page and expect a non-null skill_name. The seed
  *  exists for SPA read-back assertions — the reviewer dispatch flow hardcodes
