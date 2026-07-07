@@ -9,19 +9,32 @@ enqueue, SAVEPOINT-wrapped command execution, exception→failure mapping,
 dispatch a real coding-agent invocation via `core/coding_agent.dispatch_invocation`
 (engine-minted `command_id`, `StageInvocationContext` as `Invocation.context`)
 and park on `pending_agent_command_id`; `HANDLE_AGENT_EVENT` resumes when the
-terminal event arrives via `core/agent_gateway`'s consumer registry.  `review`
-stages (`kind='review'`) aren't dispatched yet — a run that reaches one fails
-loudly with a named reason rather than hanging; the review loop lands with
-durable findings.
+terminal event arrives via `core/agent_gateway`'s consumer registry.
+
+A `SkillStage` with `review` configured runs a `main -> (review -> fix)* ->
+boundary` loop within ONE `stage_executions` row (`phase` + `iteration`
+track progress; no new row per pass — only stage *re-entry*, e.g. a future
+send-back, creates a new row). Every reported finding materializes
+immediately as a durable `domain/findings` row; the engine applies the
+verdict matrix mechanically (`fixed -> resolve`; `still_present` -> `reflag`
+when open, `reopen` when resolved; `user_overrode -> dismiss`). The loop
+stops (and always proceeds — boundary evaluation is still a labeled
+always-proceed stub) once no residuals remain or `review.max_iterations` is
+reached. A standalone `ReviewSkillStage` (`kind='review'`) dispatches one
+review invocation — no artifact, no loop.
 
 Workspace provision/cleanup are engine-dispatched `kind='system'`
 `stage_executions` rows (`stage_index NULL`). Before every skill/review-stage
 dispatch `_workspace_is_live` checks liveness via `core/workspace.get_workspace_info`;
 a dead or absent workspace triggers `_dispatch_provision_stage` (re-provision),
 which overwrites `run.workspace_id` with a freshly minted id. An auth_expired
-failure on a skill stage inserts a `refresh-auth` system row, dispatches
-`dispatch_auth_refresh`, and on success retries the skill invocation exactly
-once (cap tracked in `run.sendback_counts` per stage name). An action-only
+failure on a skill stage's `main` phase inserts a `refresh-auth` system row,
+dispatches `dispatch_auth_refresh`, and on success retries the skill
+invocation exactly once (cap tracked in `run.sendback_counts` per stage
+name); an auth_expired failure during `review`/`fix` (or on a standalone
+review stage) is treated as a plain infra failure — the retry-resume only
+knows how to restart at `main`, and restarting the whole stage mid-loop
+would lose loop state (see `_handle_skill_stage_event`). An action-only
 pipeline never provisions and never runs cleanup.
 
 Every run in `queued` is promoted to `running` by `attempt_promotion`,
@@ -33,6 +46,7 @@ the run stays `queued`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid7
@@ -60,13 +74,31 @@ from app.core.workspace import (
     get_workspace_info,
 )
 from app.domain.actions import ActionContext, ActionError, get_action
+from app.domain.artifacts import get as get_artifact
 from app.domain.artifacts import latest_final, mark_final
 from app.domain.artifacts import store as store_artifact
-from app.domain.pipelines.contracts import SkillReturn, bucket_confidence
-from app.domain.pipelines.definition import ActionStage, FlattenedDefinition, SkillStage
+from app.domain.findings import (
+    Finding,
+    FindingSpec,
+    FindingStatusEvent,
+    dismiss,
+    list_for_stage_execution,
+    list_open_for_ticket,
+    record_findings,
+    reflag,
+    reopen,
+    resolve,
+)
+from app.domain.pipelines.contracts import (
+    PriorFindingVerdict,
+    SkillReturn,
+    SkillReviewReturn,
+    bucket_confidence,
+)
+from app.domain.pipelines.definition import ActionStage, FlattenedDefinition, ReviewSkillStage, SkillStage
 from app.domain.pipelines.escalation import resolve_escalation_targets
 from app.domain.pipelines.models import PipelineRunRow, StageExecutionRow
-from app.domain.pipelines.types import Kickoff, StageInvocationContext
+from app.domain.pipelines.types import Kickoff, PriorFindingRef, RevisionContext, StageInvocationContext
 from app.domain.tickets import (
     get as get_ticket,
 )
@@ -491,31 +523,8 @@ async def _start_stage_impl(*, run_id: UUID, stage_index: int, session: AsyncSes
         await _dispatch_skill_stage(run, stage, stage_index=stage_index, kickoff=kickoff, session=session)
         return
 
-    # ReviewSkillStage dispatch needs the review-loop wiring — not built
-    # here. Fail the run loudly with a stage_executions row rather than
-    # hang forever awaiting an agent command that will never be sent.
-    stage_exec = StageExecutionRow(
-        org_id=run.org_id,
-        run_id=run.id,
-        stage_index=stage_index,
-        kind=stage.kind,
-        stage_name=stage.name,
-        skill_name=stage.skill_name,
-        status="failed",
-        failure_reason="review stage dispatch is not implemented in this engine yet",
-        completed_at=datetime.now(UTC),
-    )
-    session.add(stage_exec)
-    await enqueue(
-        ROUTE_RUN,
-        args={
-            "run_id": str(run.id),
-            "completed_stage_index": stage_index,
-            "outcome_label": "failure",
-            "failure_reason": stage_exec.failure_reason,
-        },
-        session=session,
-    )
+    assert isinstance(stage, ReviewSkillStage)
+    await _dispatch_review_only_stage(run, stage, stage_index=stage_index, kickoff=kickoff, session=session)
 
 
 async def _dispatch_provision_stage(run: PipelineRunRow, *, kickoff: Kickoff, session: AsyncSession) -> None:
@@ -566,7 +575,7 @@ async def _resolve_stage_input(
 ) -> str:
     """First stage: the kickoff's input text. Else the nearest upstream
     artifact-producing stage's final body, walking back and skipping stages
-    that don't produce one (action stages; review stages once they exist);
+    that don't produce one (action stages; `ReviewSkillStage` — no artifact);
     falls back to the kickoff input when none is found."""
     if stage_index == 0:
         return kickoff.input_text or ""
@@ -623,6 +632,308 @@ async def _dispatch_skill_stage(
         context={
             **invocation_ctx.model_dump(mode="json"),
             "output_schema": SkillReturn.model_json_schema(),
+        },
+        wallclock_seconds=stage.wallclock_seconds,
+    )
+    cmd_ctx = _system_command_context(run, stage_exec)
+    await dispatch_invocation(
+        invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
+    )
+    run.pending_agent_command_id = command_id
+
+
+# ---------------------------------------------------------------------------
+# Review loop — findings, verdicts, review/fix dispatch
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_prior_findings(
+    run: PipelineRunRow, stage_exec: StageExecutionRow, *, session: AsyncSession
+) -> tuple[PriorFindingRef, ...]:
+    """Unified rule: this stage execution's own findings (any status) union
+    the ticket's open durable findings elsewhere. A comment-response run's
+    disputed-regardless-of-status findings arrive with the comment-response
+    machinery — not built here."""
+    loop_findings = await list_for_stage_execution(stage_exec.id, session=session)
+    ticket_open = await list_open_for_ticket(run.org_id, run.ticket_id, session=session)
+    by_id: dict[UUID, Finding] = {f.id: f for f in loop_findings}
+    for finding in ticket_open:
+        by_id.setdefault(finding.id, finding)
+    return tuple(
+        PriorFindingRef(
+            finding_id=finding.id,
+            severity=finding.severity,
+            body=finding.body,
+            code_file=finding.code_file,
+            code_line=finding.code_line,
+            artifact_section=finding.artifact_section,
+        )
+        for finding in by_id.values()
+    )
+
+
+def _render_findings_for_fix(findings: Sequence[Finding]) -> str:
+    """Markdown-render residual findings as the fix invocation's revision
+    text — handle, severity, location, and the finding's own body."""
+    lines: list[str] = []
+    for finding in findings:
+        location = ""
+        if finding.code_file and finding.code_line is not None:
+            location = f" ({finding.code_file}:{finding.code_line})"
+        elif finding.code_file:
+            location = f" ({finding.code_file})"
+        lines.append(f"- **{finding.handle}** [{finding.severity}]{location}: {finding.body}")
+    return "\n".join(lines)
+
+
+def _last_artifact_id(stage_exec: StageExecutionRow) -> UUID:
+    """The most recently produced artifact id for this stage execution
+    (main or fix pass) — read back from `loop_state`."""
+    for entry in reversed(stage_exec.loop_state):
+        artifact_id = entry.get("artifact_id")
+        if artifact_id is not None:
+            return UUID(artifact_id)
+    raise AssertionError(f"stage execution {stage_exec.id} has no recorded artifact")
+
+
+async def _apply_verdicts(
+    run: PipelineRunRow,
+    stage_exec: StageExecutionRow,
+    verdicts: Sequence[PriorFindingVerdict],
+    own_status_by_id: dict[UUID, str],
+    *,
+    session: AsyncSession,
+) -> None:
+    """Mechanical verdict matrix, for any review stage: `fixed -> resolve`;
+    `still_present -> reflag` when the finding is open, `reopen` when it's
+    resolved; `user_overrode -> dismiss`. `status=None` (reply-only, no
+    assertion) applies no transition."""
+    now = datetime.now(UTC)
+    for verdict in verdicts:
+        if verdict.status is None:
+            continue
+        if verdict.status == "fixed":
+            event = FindingStatusEvent(
+                status="resolved",
+                method="review_verdict",
+                actor=Actor.system(),
+                run_id=run.id,
+                stage_execution_id=stage_exec.id,
+                at=now,
+            )
+            await resolve(verdict.finding_id, event=event, session=session)
+        elif verdict.status == "still_present":
+            current_status = own_status_by_id.get(verdict.finding_id, "open")
+            event = FindingStatusEvent(
+                status="open",
+                method="review_verdict",
+                actor=Actor.system(),
+                run_id=run.id,
+                stage_execution_id=stage_exec.id,
+                at=now,
+            )
+            if current_status == "resolved":
+                await reopen(verdict.finding_id, event=event, session=session)
+            else:
+                await reflag(verdict.finding_id, event=event, session=session)
+        elif verdict.status == "user_overrode":
+            event = FindingStatusEvent(
+                status="dismissed",
+                method="user_overrode",
+                actor=Actor.system(),
+                run_id=run.id,
+                stage_execution_id=stage_exec.id,
+                at=now,
+            )
+            await dismiss(verdict.finding_id, event=event, session=session)
+
+
+async def _record_and_apply_review(
+    run: PipelineRunRow,
+    stage_exec: StageExecutionRow,
+    review_return: SkillReviewReturn,
+    *,
+    display_prefix: str,
+    iteration: int,
+    session: AsyncSession,
+) -> list[Finding]:
+    """Materialize every reported finding, then apply the verdict matrix to
+    the findings the skill asserted a status for. Shared by the SkillStage
+    review-loop pass and the standalone ReviewSkillStage."""
+    specs = [
+        FindingSpec(
+            id=uuid7(),
+            severity=f.severity,
+            body=f.body,
+            code_file=f.code_file,
+            code_line=f.code_line,
+            artifact_section=f.artifact_section,
+            defect_in_artifact=f.defect_in_artifact,
+            display_prefix=display_prefix,
+        )
+        for f in review_return.new_findings
+    ]
+    recorded = await record_findings(
+        org_id=run.org_id,
+        ticket_id=run.ticket_id,
+        run_id=run.id,
+        stage_name=stage_exec.stage_name,
+        stage_execution_id=stage_exec.id,
+        iteration=iteration,
+        findings=specs,
+        session=session,
+    )
+
+    own_findings = await list_for_stage_execution(stage_exec.id, session=session)
+    own_status_by_id = {f.id: f.status for f in own_findings}
+    await _apply_verdicts(
+        run, stage_exec, review_return.prior_finding_verdicts, own_status_by_id, session=session
+    )
+    return recorded
+
+
+async def _dispatch_review_invocation(
+    run: PipelineRunRow,
+    stage: SkillStage,
+    stage_exec: StageExecutionRow,
+    *,
+    artifact_body: str,
+    session: AsyncSession,
+) -> None:
+    """Dispatch the review skill over the artifact just produced (main or
+    fix pass). Bumps `stage_exec.iteration` — the review-pass counter."""
+    assert stage.review is not None
+    stage_exec.iteration += 1
+    command_id = uuid7()
+    ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
+    prior_findings = await _resolve_prior_findings(run, stage_exec, session=session)
+
+    invocation_ctx = StageInvocationContext(
+        ticket_id=run.ticket_id,
+        stage_name=stage.name,
+        branch_name=ticket.branch_name or "",
+        input=artifact_body,
+        prior_findings=prior_findings,
+        artifact_path=f"$TMPDIR/{command_id}.md",
+    )
+    plugin = get_plugin(stage.coding_agent_plugin_id)
+    assert run.workspace_id is not None
+    invocation = Invocation(
+        workspace_id=run.workspace_id,
+        skill=stage.review.skill_name,
+        model=stage.model,
+        effort=stage.effort,
+        context={
+            **invocation_ctx.model_dump(mode="json"),
+            "output_schema": SkillReviewReturn.model_json_schema(),
+        },
+        wallclock_seconds=stage.wallclock_seconds,
+    )
+    cmd_ctx = _system_command_context(run, stage_exec)
+    await dispatch_invocation(
+        invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
+    )
+    stage_exec.phase = "review"
+    run.pending_agent_command_id = command_id
+
+
+async def _dispatch_fix_invocation(
+    run: PipelineRunRow,
+    stage: SkillStage,
+    stage_exec: StageExecutionRow,
+    *,
+    stage_index: int,
+    kickoff: Kickoff,
+    prior_artifact_body: str,
+    residuals: Sequence[Finding],
+    session: AsyncSession,
+) -> None:
+    """Dispatch the main skill fresh with the residual findings rendered as
+    `revision(source="fix")` — the same `input` resolution as the original
+    main dispatch (upstream artifacts don't change mid-run), plus the fix
+    text and the stage's own prior artifact body."""
+    command_id = uuid7()
+    ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
+    input_text = await _resolve_stage_input(run, stage_index, kickoff=kickoff, session=session)
+    revision = RevisionContext(
+        source="fix", text=_render_findings_for_fix(residuals), prior_artifact=prior_artifact_body
+    )
+
+    invocation_ctx = StageInvocationContext(
+        ticket_id=run.ticket_id,
+        stage_name=stage.name,
+        branch_name=ticket.branch_name or "",
+        input=input_text,
+        revision=revision,
+        artifact_path=f"$TMPDIR/{command_id}.md",
+    )
+    plugin = get_plugin(stage.coding_agent_plugin_id)
+    assert run.workspace_id is not None
+    invocation = Invocation(
+        workspace_id=run.workspace_id,
+        skill=stage.skill_name,
+        model=stage.model,
+        effort=stage.effort,
+        context={
+            **invocation_ctx.model_dump(mode="json"),
+            "output_schema": SkillReturn.model_json_schema(),
+        },
+        wallclock_seconds=stage.wallclock_seconds,
+    )
+    cmd_ctx = _system_command_context(run, stage_exec)
+    await dispatch_invocation(
+        invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
+    )
+    # Durable record of what the fix invocation was asked to revise —
+    # independent of the wire payload, so a caller (and tests) can observe
+    # "the fix received these findings" straight off the row.
+    stage_exec.revision = revision.model_dump(mode="json")
+    stage_exec.phase = "fix"
+    run.pending_agent_command_id = command_id
+
+
+async def _dispatch_review_only_stage(
+    run: PipelineRunRow, stage: ReviewSkillStage, *, stage_index: int, kickoff: Kickoff, session: AsyncSession
+) -> None:
+    """`kind='review'`: one invocation speaking `SkillReviewReturn` — no
+    artifact, structurally cannot carry a review loop."""
+    stage_exec = StageExecutionRow(
+        org_id=run.org_id,
+        run_id=run.id,
+        stage_index=stage_index,
+        kind="review",
+        stage_name=stage.name,
+        skill_name=stage.skill_name,
+        status="running",
+        phase="review",
+        iteration=1,
+    )
+    session.add(stage_exec)
+    await session.flush()
+
+    command_id = uuid7()
+    ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
+    input_text = await _resolve_stage_input(run, stage_index, kickoff=kickoff, session=session)
+    prior_findings = await _resolve_prior_findings(run, stage_exec, session=session)
+
+    invocation_ctx = StageInvocationContext(
+        ticket_id=run.ticket_id,
+        stage_name=stage.name,
+        branch_name=ticket.branch_name or "",
+        input=input_text,
+        prior_findings=prior_findings,
+        artifact_path=f"$TMPDIR/{command_id}.md",
+    )
+    plugin = get_plugin(stage.coding_agent_plugin_id)
+    assert run.workspace_id is not None
+    invocation = Invocation(
+        workspace_id=run.workspace_id,
+        skill=stage.skill_name,
+        model=stage.model,
+        effort=stage.effort,
+        context={
+            **invocation_ctx.model_dump(mode="json"),
+            "output_schema": SkillReviewReturn.model_json_schema(),
         },
         wallclock_seconds=stage.wallclock_seconds,
     )
@@ -785,8 +1096,13 @@ async def _handle_agent_event_impl(
         )
         return
 
-    # Only `kind='skill'` reaches here today — `review` isn't dispatched yet
-    # (see `_start_stage_impl`) and `action` never parks (synchronous).
+    if stage_exec.kind == "review":
+        await _handle_review_stage_event(
+            run, stage_exec, outcome_label=outcome_label, outputs=outputs, session=session
+        )
+        return
+
+    # Only `kind='skill'` reaches here — `action` never parks (synchronous).
     await _handle_skill_stage_event(
         run, stage_exec, outcome_label=outcome_label, outputs=outputs, session=session
     )
@@ -872,8 +1188,13 @@ async def _handle_skill_stage_event(
         # Auth-expired recovery: dispatch refresh-auth + retry exactly once.
         # The one-retry cap is tracked in `run.sendback_counts` under a
         # per-stage key so it survives task restarts (the counts map is
-        # already used for sendback tracking).
-        if _is_auth_expired(failure_reason):
+        # already used for sendback tracking). Restricted to `phase=='main'`
+        # — the resume below always restarts the stage fresh at `main`
+        # (`_dispatch_skill_stage`), which would silently discard loop_state
+        # and the iteration count if the failure happened mid-loop
+        # (`review`/`fix`). A `review`/`fix`-phase auth_expired falls
+        # through to the generic infra-failure path below instead.
+        if _is_auth_expired(failure_reason) and stage_exec.phase == "main":
             retry_key = f"auth_retry:{stage_exec.stage_name}"
             counts = dict(run.sendback_counts)
             if counts.get(retry_key, 0) < 1:
@@ -904,6 +1225,38 @@ async def _handle_skill_stage_event(
         )
         return
 
+    flattened = FlattenedDefinition.from_snapshot(run.definition_snapshot)
+    stage = flattened.stages[stage_index]
+    assert isinstance(stage, SkillStage)
+    kickoff = Kickoff.model_validate(run.kickoff)
+
+    if stage_exec.phase == "review":
+        await _handle_review_return(
+            run, stage, stage_exec, stage_index=stage_index, kickoff=kickoff, outputs=outputs, session=session
+        )
+        return
+    if stage_exec.phase == "fix":
+        await _handle_fix_return(run, stage, stage_exec, outputs=outputs, session=session)
+        return
+    await _handle_main_return(run, stage, stage_exec, outputs=outputs, session=session)
+
+
+async def _validate_skill_return_and_artifact(
+    run: PipelineRunRow,
+    stage_exec: StageExecutionRow,
+    *,
+    stage_index: int,
+    outputs: dict[str, Any],
+    session: AsyncSession,
+) -> tuple[SkillReturn, UUID, str] | None:
+    """Validate `outputs` against `SkillReturn` and require an artifact iff
+    `outcome == "completed"`. Fails the stage (and the run) and returns
+    `None` on any contract violation; otherwise stores + finalizes the
+    artifact and returns `(skill_return, artifact_id, artifact_body)`.
+
+    Shared by the `main` and `fix` phases — both dispatch the main skill and
+    speak the same `SkillReturn` contract.
+    """
     try:
         skill_return = SkillReturn.model_validate_json(outputs.get("output", ""))
     except ValidationError as exc:
@@ -914,14 +1267,14 @@ async def _handle_skill_stage_event(
             failure_reason=f"SkillReturn schema violation: {exc}",
             session=session,
         )
-        return
+        return None
 
     if skill_return.outcome != "completed":
         # `send_back`/`cannot_complete` are run-failure placeholders until
         # the boundary/send-back machinery exists.
         reason = skill_return.outcome_reason or f"stage returned outcome={skill_return.outcome!r}"
         await _fail_stage(run, stage_exec, stage_index=stage_index, failure_reason=reason, session=session)
-        return
+        return None
 
     artifact_body: str | None = None
     artifact_payload = outputs.get("artifact")
@@ -933,7 +1286,7 @@ async def _handle_skill_stage_event(
             outputs.get("artifact_error") or "outcome=completed requires an artifact but none was provided"
         )
         await _fail_stage(run, stage_exec, stage_index=stage_index, failure_reason=reason, session=session)
-        return
+        return None
 
     artifact_id = await store_artifact(
         org_id=run.org_id,
@@ -947,20 +1300,227 @@ async def _handle_skill_stage_event(
     )
     # Boundary evaluation is a labeled stub that always proceeds this phase
     # — mark the artifact final immediately rather than waiting on a pause
-    # that will never trip. Real boundary evaluation lands with pauses.
+    # that will never trip. Nothing reads a mid-loop artifact downstream
+    # (the run engine only proceeds to the next stage once this one's whole
+    # loop finishes), so marking every produced version final is harmless.
     await mark_final(artifact_id, session=session)
+    return skill_return, artifact_id, artifact_body
+
+
+async def _handle_main_return(
+    run: PipelineRunRow,
+    stage: SkillStage,
+    stage_exec: StageExecutionRow,
+    *,
+    outputs: dict[str, Any],
+    session: AsyncSession,
+) -> None:
+    stage_index = stage_exec.stage_index
+    result = await _validate_skill_return_and_artifact(
+        run, stage_exec, stage_index=stage_index, outputs=outputs, session=session
+    )
+    if result is None:
+        return
+    skill_return, artifact_id, artifact_body = result
 
     stage_exec.loop_state = [
         *stage_exec.loop_state,
         {"phase": "main", "artifact_id": str(artifact_id), "confidence": skill_return.confidence},
     ]
     stage_exec.confidence = bucket_confidence(skill_return.confidence)
+    _publish_artifact_stored(session, run)
+
+    if stage.review is None:
+        stage_exec.boundary_outcome = "proceeded"
+        stage_exec.status = "completed"
+        stage_exec.completed_at = datetime.now(UTC)
+        _publish_stage_state(session, run)
+        await enqueue(
+            ROUTE_RUN,
+            args={
+                "run_id": str(run.id),
+                "completed_stage_index": stage_index,
+                "outcome_label": "success",
+                "failure_reason": None,
+            },
+            session=session,
+        )
+        return
+
+    await _dispatch_review_invocation(run, stage, stage_exec, artifact_body=artifact_body, session=session)
+
+
+async def _handle_fix_return(
+    run: PipelineRunRow,
+    stage: SkillStage,
+    stage_exec: StageExecutionRow,
+    *,
+    outputs: dict[str, Any],
+    session: AsyncSession,
+) -> None:
+    stage_index = stage_exec.stage_index
+    result = await _validate_skill_return_and_artifact(
+        run, stage_exec, stage_index=stage_index, outputs=outputs, session=session
+    )
+    if result is None:
+        return
+    skill_return, artifact_id, artifact_body = result
+
+    stage_exec.loop_state = [
+        *stage_exec.loop_state,
+        {"phase": "fix", "artifact_id": str(artifact_id), "confidence": skill_return.confidence},
+    ]
+    stage_exec.confidence = bucket_confidence(skill_return.confidence)
+    _publish_artifact_stored(session, run)
+
+    await _dispatch_review_invocation(run, stage, stage_exec, artifact_body=artifact_body, session=session)
+
+
+async def _handle_review_return(
+    run: PipelineRunRow,
+    stage: SkillStage,
+    stage_exec: StageExecutionRow,
+    *,
+    stage_index: int,
+    kickoff: Kickoff,
+    outputs: dict[str, Any],
+    session: AsyncSession,
+) -> None:
+    """One review pass of a SkillStage's attached loop: record findings,
+    apply verdicts, then either dispatch a fix (residuals remain and the
+    iteration cap isn't hit) or stop the loop and let the stage complete."""
+    assert stage.review is not None
+    try:
+        review_return = SkillReviewReturn.model_validate_json(outputs.get("output", ""))
+    except ValidationError as exc:
+        await _fail_stage(
+            run,
+            stage_exec,
+            stage_index=stage_index,
+            failure_reason=f"SkillReviewReturn schema violation: {exc}",
+            session=session,
+        )
+        return
+
+    recorded = await _record_and_apply_review(
+        run,
+        stage_exec,
+        review_return,
+        display_prefix=stage.review.finding_prefix or stage.name,
+        iteration=stage_exec.iteration,
+        session=session,
+    )
+
+    residuals = [
+        f for f in await list_for_stage_execution(stage_exec.id, session=session) if f.status == "open"
+    ]
+    stage_exec.loop_state = [
+        *stage_exec.loop_state,
+        {
+            "phase": "review",
+            "iteration": stage_exec.iteration,
+            "confidence": review_return.confidence,
+            "new_finding_ids": [str(f.id) for f in recorded],
+            "residual_finding_ids": [str(f.id) for f in residuals],
+        },
+    ]
+    _publish_stage_state(session, run)
+
+    if residuals and stage_exec.iteration < stage.review.max_iterations:
+        artifact = await get_artifact(_last_artifact_id(stage_exec), session=session)
+        await _dispatch_fix_invocation(
+            run,
+            stage,
+            stage_exec,
+            stage_index=stage_index,
+            kickoff=kickoff,
+            prior_artifact_body=artifact.body,
+            residuals=residuals,
+            session=session,
+        )
+        return
+
+    # Loop stops here — either no residuals or the iteration cap is hit.
+    # Boundary evaluation is a labeled stub that always proceeds.
+    stage_exec.boundary_outcome = "proceeded"
+    stage_exec.status = "completed"
+    stage_exec.completed_at = datetime.now(UTC)
+    await enqueue(
+        ROUTE_RUN,
+        args={
+            "run_id": str(run.id),
+            "completed_stage_index": stage_index,
+            "outcome_label": "success",
+            "failure_reason": None,
+        },
+        session=session,
+    )
+
+
+async def _handle_review_stage_event(
+    run: PipelineRunRow,
+    stage_exec: StageExecutionRow,
+    *,
+    outcome_label: str,
+    outputs: dict[str, Any],
+    session: AsyncSession,
+) -> None:
+    """Terminal event for a standalone `kind='review'` stage (`ReviewSkillStage`)
+    — one invocation, no artifact, no loop, no auth-retry recovery (see
+    `_handle_skill_stage_event` for why the auth-retry resume is narrowed to
+    `main`-phase `SkillStage` rows)."""
+    stage_index = stage_exec.stage_index
+
+    if outcome_label != "success":
+        failure_reason = outputs.get("error_message") or outcome_label
+        await _fail_stage(
+            run, stage_exec, stage_index=stage_index, failure_reason=failure_reason, session=session
+        )
+        return
+
+    flattened = FlattenedDefinition.from_snapshot(run.definition_snapshot)
+    stage = flattened.stages[stage_index]
+    assert isinstance(stage, ReviewSkillStage)
+
+    try:
+        review_return = SkillReviewReturn.model_validate_json(outputs.get("output", ""))
+    except ValidationError as exc:
+        await _fail_stage(
+            run,
+            stage_exec,
+            stage_index=stage_index,
+            failure_reason=f"SkillReviewReturn schema violation: {exc}",
+            session=session,
+        )
+        return
+
+    recorded = await _record_and_apply_review(
+        run,
+        stage_exec,
+        review_return,
+        display_prefix=stage.finding_prefix or stage.name,
+        iteration=1,
+        session=session,
+    )
+
+    residuals = [
+        f for f in await list_for_stage_execution(stage_exec.id, session=session) if f.status == "open"
+    ]
+    stage_exec.loop_state = [
+        *stage_exec.loop_state,
+        {
+            "phase": "review",
+            "iteration": 1,
+            "confidence": review_return.confidence,
+            "new_finding_ids": [str(f.id) for f in recorded],
+            "residual_finding_ids": [str(f.id) for f in residuals],
+        },
+    ]
+    stage_exec.confidence = bucket_confidence(review_return.confidence)
     stage_exec.boundary_outcome = "proceeded"
     stage_exec.status = "completed"
     stage_exec.completed_at = datetime.now(UTC)
     _publish_stage_state(session, run)
-    _publish_artifact_stored(session, run)
-
     await enqueue(
         ROUTE_RUN,
         args={
