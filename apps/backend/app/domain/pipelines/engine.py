@@ -30,14 +30,26 @@ ticket `hitl`, extends the workspace's expiry by
 `PAUSED_RUN_WORKSPACE_GRACE_SECONDS`, and notifies the resolved escalation
 set (`domain/pipelines.escalation` targets, unioned with protected-path
 owners when that condition fired). `resolve_pause` (in `service.py`) drives
-`approve` (resume at the next boundary) and `kill` (terminal `killed`)
-through `resume_from_pause`/`kill_run` below; `instruct`/`send_back`
-resolutions aren't implemented yet — `service.resolve_pause` raises a
-labeled `NotImplementedError` for those two actions until the re-entry
-machinery that resumes a stage with an instruction, or rewinds to an
-earlier stage, exists. `request_cancel` on a `paused` run cancels
-immediately via `cancel_paused`, closing the open pause without a
-resolution.
+all four resolutions through the functions below: `approve` (resume at the
+next boundary, `resume_from_pause`), `instruct` (fresh stage execution at
+the SAME index with the human's text as `revision(source="instruction")`,
+`resume_with_instruction`), `send_back` (human-sourced rewind to an earlier
+stage, `resume_with_send_back` — same loop-protected machinery as the
+automatic send-back below), and `kill` (terminal `killed`, `kill_run`).
+`request_cancel` on a `paused` run cancels immediately via `cancel_paused`,
+closing the open pause without a resolution.
+
+A main/fix invocation's own `SkillReturn.outcome == "send_back"`, or any
+finding still open at boundary time carrying `defect_in_artifact`, triggers
+an automatic send-back (`_send_back_to_stage`): validated against an
+earlier `SkillStage` in the flattened definition (skill stages are the only
+artifact-producing kind a send-back can target); an unresolvable target on
+the skill's OWN `send_back_to_stage` is a loud stage failure (a send-back
+that can't resolve must not proceed), while an unresolvable
+`defect_in_artifact` on a finding degrades to a plain residual (best-effort
+attribution, not a contract violation). A target already sent back to once
+THIS run pauses instead of rewinding a second time
+(`run.sendback_counts[target_stage_name]`, `tripped="sendback_loop"`).
 
 Workspace provision/cleanup are engine-dispatched `kind='system'`
 `stage_executions` rows (`stage_index NULL`). Before every skill/review-stage
@@ -116,7 +128,12 @@ from app.domain.pipelines.contracts import (
 from app.domain.pipelines.definition import ActionStage, FlattenedDefinition, ReviewSkillStage, SkillStage
 from app.domain.pipelines.escalation import resolve_escalation_targets
 from app.domain.pipelines.models import PipelineRunRow, RunPauseRow, StageExecutionRow
-from app.domain.pipelines.types import Kickoff, PriorFindingRef, RevisionContext, StageInvocationContext
+from app.domain.pipelines.types import (
+    Kickoff,
+    PriorFindingRef,
+    RevisionContext,
+    StageInvocationContext,
+)
 from app.domain.tickets import (
     get as get_ticket,
 )
@@ -387,6 +404,64 @@ async def resume_from_pause(pause: RunPauseRow, run: PipelineRunRow, *, session:
     )
 
 
+async def resume_with_instruction(
+    pause: RunPauseRow, run: PipelineRunRow, *, instruction: str, session: AsyncSession
+) -> None:
+    """`instruct`: a fresh `stage_executions` row at the SAME `stage_index`
+    as the paused one, with the human's text as `revision(source=
+    "instruction")` and the stage's own latest final artifact (if any) as
+    `prior_artifact` — same shape as a fix pass, human-sourced. Same run
+    continues (not a new run)."""
+    stage_exec = await session.get(StageExecutionRow, pause.stage_execution_id)
+    assert stage_exec is not None
+    assert stage_exec.stage_index is not None
+    flattened = FlattenedDefinition.from_snapshot(run.definition_snapshot)
+    stage = flattened.stages[stage_exec.stage_index]
+    assert isinstance(stage, SkillStage | ReviewSkillStage)
+    kickoff = Kickoff.model_validate(run.kickoff)
+
+    prior = await latest_final(
+        org_id=run.org_id, ticket_id=run.ticket_id, stage_name=stage.name, session=session
+    )
+    revision = RevisionContext(
+        source="instruction", text=instruction, prior_artifact=prior.body if prior is not None else ""
+    )
+    run.kickoff = kickoff.model_copy(update={"revision": revision}).model_dump(mode="json")
+    run.current_stage_index = stage_exec.stage_index
+    run.state = "running"
+    await transition_ticket_on_run_resumed(run.ticket_id, org_id=run.org_id, run_id=run.id, session=session)
+    _publish_run_state(session, run)
+    await _start_stage_impl(run_id=run.id, stage_index=stage_exec.stage_index, session=session)
+
+
+async def resume_with_send_back(
+    pause: RunPauseRow,
+    run: PipelineRunRow,
+    *,
+    stage_exec: StageExecutionRow,
+    target_index: int,
+    target_stage: SkillStage,
+    session: AsyncSession,
+) -> None:
+    """`send_back`: human-sourced rewind — same loop-protected machinery as
+    the automatic path (`_send_back_to_stage`). Caller (`service.py`) has
+    already resolved + validated `target_index`/`target_stage` against the
+    paused stage's own flattened definition."""
+    kickoff = Kickoff.model_validate(run.kickoff)
+    run.state = "running"
+    await transition_ticket_on_run_resumed(run.ticket_id, org_id=run.org_id, run_id=run.id, session=session)
+    _publish_run_state(session, run)
+    await _send_back_to_stage(
+        run,
+        stage_exec,
+        target_index=target_index,
+        target_stage=target_stage,
+        gap_text="",
+        kickoff=kickoff,
+        session=session,
+    )
+
+
 async def kill_run(run: PipelineRunRow, *, session: AsyncSession) -> None:
     """`kill`: run terminal `killed` — same cleanup-first routing as any
     other decided run outcome. Flips `state` back to `running` first (the
@@ -490,7 +565,11 @@ async def _route_run_impl(
 
     if completed_stage_index is None:
         # Bootstrap call from `attempt_promotion` — kick off the first stage.
-        await _dispatch_stage(run, stage_index=0, session=session)
+        # `run.current_stage_index` is `None` for a normal `start_run` (index
+        # 0), but `start_rerun_from_stage` pins it to `from_stage`'s index at
+        # row creation so a rerun's bootstrap jumps straight there.
+        start_index = run.current_stage_index if run.current_stage_index is not None else 0
+        await _dispatch_stage(run, stage_index=start_index, session=session)
         return
 
     if outcome_label == "failure":
@@ -688,12 +767,26 @@ async def _start_stage_impl(*, run_id: UUID, stage_index: int, session: AsyncSes
         await _dispatch_provision_stage(run, kickoff=kickoff, session=session)
         return
 
+    # Single-use revision carried on `kickoff` by a re-entry that needed a
+    # provision hop first (`start_rerun_from_stage`'s brand-new run, or a
+    # mid-stage re-provision triggered by `resume_with_instruction`/
+    # `_send_back_to_stage`): thread it onto THIS dispatch, then clear it so
+    # a later stage or a later re-provision of a DIFFERENT stage never
+    # replays it.
+    revision = kickoff.revision
+    if revision is not None:
+        run.kickoff = kickoff.model_copy(update={"revision": None}).model_dump(mode="json")
+
     if isinstance(stage, SkillStage):
-        await _dispatch_skill_stage(run, stage, stage_index=stage_index, kickoff=kickoff, session=session)
+        await _dispatch_skill_stage(
+            run, stage, stage_index=stage_index, kickoff=kickoff, session=session, revision=revision
+        )
         return
 
     assert isinstance(stage, ReviewSkillStage)
-    await _dispatch_review_only_stage(run, stage, stage_index=stage_index, kickoff=kickoff, session=session)
+    await _dispatch_review_only_stage(
+        run, stage, stage_index=stage_index, kickoff=kickoff, session=session, revision=revision
+    )
 
 
 async def _dispatch_provision_stage(run: PipelineRunRow, *, kickoff: Kickoff, session: AsyncSession) -> None:
@@ -762,11 +855,19 @@ async def _resolve_stage_input(
 
 
 async def _dispatch_skill_stage(
-    run: PipelineRunRow, stage: SkillStage, *, stage_index: int, kickoff: Kickoff, session: AsyncSession
+    run: PipelineRunRow,
+    stage: SkillStage,
+    *,
+    stage_index: int,
+    kickoff: Kickoff,
+    session: AsyncSession,
+    revision: RevisionContext | None = None,
 ) -> None:
     """Mint `command_id` first (needed for `artifact_path`), build the
     `StageInvocationContext`, dispatch the invocation, and park on
-    `pending_agent_command_id`."""
+    `pending_agent_command_id`. `revision` rides re-entries (instruct,
+    send-back, rerun-from-stage) onto the fresh invocation; `None` for a
+    normal forward dispatch."""
     stage_exec = StageExecutionRow(
         org_id=run.org_id,
         run_id=run.id,
@@ -776,6 +877,10 @@ async def _dispatch_skill_stage(
         skill_name=stage.skill_name,
         status="running",
         phase="main",
+        # Durable record of a re-entry's revision, independent of the wire
+        # payload — same idiom as `_dispatch_fix_invocation`'s own
+        # `stage_exec.revision` stamp.
+        revision=revision.model_dump(mode="json") if revision is not None else None,
     )
     session.add(stage_exec)
     await session.flush()
@@ -789,6 +894,7 @@ async def _dispatch_skill_stage(
         stage_name=stage.name,
         branch_name=ticket.branch_name or "",
         input=input_text,
+        revision=revision,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
     plugin = get_plugin(stage.coding_agent_plugin_id)
@@ -1075,10 +1181,17 @@ async def _dispatch_fix_invocation(
 
 
 async def _dispatch_review_only_stage(
-    run: PipelineRunRow, stage: ReviewSkillStage, *, stage_index: int, kickoff: Kickoff, session: AsyncSession
+    run: PipelineRunRow,
+    stage: ReviewSkillStage,
+    *,
+    stage_index: int,
+    kickoff: Kickoff,
+    session: AsyncSession,
+    revision: RevisionContext | None = None,
 ) -> None:
     """`kind='review'`: one invocation speaking `SkillReviewReturn` — no
-    artifact, structurally cannot carry a review loop."""
+    artifact, structurally cannot carry a review loop. `revision` rides an
+    `instruct` re-entry onto a standalone review stage's re-dispatch."""
     stage_exec = StageExecutionRow(
         org_id=run.org_id,
         run_id=run.id,
@@ -1088,6 +1201,7 @@ async def _dispatch_review_only_stage(
         skill_name=stage.skill_name,
         status="running",
         phase="review",
+        revision=revision.model_dump(mode="json") if revision is not None else None,
         iteration=1,
     )
     session.add(stage_exec)
@@ -1103,6 +1217,7 @@ async def _dispatch_review_only_stage(
         stage_name=stage.name,
         branch_name=ticket.branch_name or "",
         input=input_text,
+        revision=revision,
         prior_findings=prior_findings,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
@@ -1418,23 +1533,125 @@ async def _handle_skill_stage_event(
         )
         return
     if stage_exec.phase == "fix":
-        await _handle_fix_return(run, stage, stage_exec, outputs=outputs, session=session)
+        await _handle_fix_return(run, stage, stage_exec, kickoff=kickoff, outputs=outputs, session=session)
         return
     await _handle_main_return(run, stage, stage_exec, kickoff=kickoff, outputs=outputs, session=session)
 
 
-async def _validate_skill_return_and_artifact(
+def resolve_send_back_target(
+    flattened: FlattenedDefinition,
+    *,
+    stage: SkillStage | ReviewSkillStage,
+    before_index: int,
+    target_name: str,
+) -> tuple[int, SkillStage] | None:
+    """The upstream `SkillStage` named `target_name`, if valid: an earlier
+    stage (index < `before_index`) in the flattened definition — skill
+    stages are the only artifact-producing kind a send-back can target —
+    respecting `stage.context_stages` when it restricts which upstream
+    stages are shown (`None` = all upstream stages visible). Intra-module
+    helper — `service.py` reuses it to validate a human-sourced `send_back`
+    resolution before calling `resume_with_send_back`."""
+    context_stages = stage.context_stages
+    for idx, candidate in enumerate(flattened.stages[:before_index]):
+        if isinstance(candidate, SkillStage) and candidate.name == target_name:
+            if context_stages is not None and target_name not in context_stages:
+                return None
+            return idx, candidate
+    return None
+
+
+def _resolve_residual_send_back(
+    flattened: FlattenedDefinition,
+    *,
+    stage: SkillStage | ReviewSkillStage,
+    residuals: Sequence[Finding],
+    before_index: int,
+    run_id: UUID,
+) -> tuple[int, SkillStage, str] | None:
+    """The first open residual carrying a `defect_in_artifact` that resolves
+    to a valid upstream `SkillStage`, if any. An unresolvable name degrades
+    to a plain residual — logged, never a contract violation (best-effort
+    attribution by the skill, unlike a main skill's own self-reported
+    `send_back_to_stage`)."""
+    for finding in residuals:
+        if not finding.defect_in_artifact:
+            continue
+        resolved = resolve_send_back_target(
+            flattened, stage=stage, before_index=before_index, target_name=finding.defect_in_artifact
+        )
+        if resolved is None:
+            log.info(
+                "pipelines.residual_defect_in_artifact.unresolvable",
+                run_id=str(run_id),
+                target=finding.defect_in_artifact,
+            )
+            continue
+        target_index, target_stage = resolved
+        return target_index, target_stage, finding.body
+    return None
+
+
+async def _send_back_to_stage(
     run: PipelineRunRow,
     stage_exec: StageExecutionRow,
     *,
+    target_index: int,
+    target_stage: SkillStage,
+    gap_text: str,
+    kickoff: Kickoff,
+    session: AsyncSession,
+) -> None:
+    """Loop-protected rewind to `target_stage`. Caller has already flipped
+    `stage_exec` to its terminal `status`/`completed_at` — this only decides
+    pause-vs-rewind and (on rewind) dispatches the target fresh via
+    `_start_stage_impl` (workspace-liveness-checked, re-provisioning if
+    needed — same safety net every forward dispatch gets).
+
+    `run.sendback_counts` is keyed by the TARGET stage name (bare — distinct
+    from the `auth_retry:{stage}` keys the auth-expired retry uses under its
+    own namespace, and stage names can never contain a colon).
+    """
+    counts = dict(run.sendback_counts)
+    if counts.get(target_stage.name, 0) >= 1:
+        decision = BoundaryDecision(outcome="pause", tripped={"sendback_loop": target_stage.name})
+        await _enter_pause(run, stage_exec, decision, kickoff=kickoff, session=session)
+        return
+
+    counts[target_stage.name] = 1
+    run.sendback_counts = counts
+    stage_exec.boundary_outcome = "sent_back"
+    _publish_stage_state(session, run)
+
+    prior = await latest_final(
+        org_id=run.org_id, ticket_id=run.ticket_id, stage_name=target_stage.name, session=session
+    )
+    revision = RevisionContext(
+        source="send_back", text=gap_text, prior_artifact=prior.body if prior is not None else ""
+    )
+    run.kickoff = kickoff.model_copy(update={"revision": revision}).model_dump(mode="json")
+    run.current_stage_index = target_index
+    await _start_stage_impl(run_id=run.id, stage_index=target_index, session=session)
+
+
+async def _validate_skill_return_and_artifact(
+    run: PipelineRunRow,
+    stage: SkillStage,
+    stage_exec: StageExecutionRow,
+    *,
     stage_index: int,
+    kickoff: Kickoff,
     outputs: dict[str, Any],
     session: AsyncSession,
 ) -> tuple[SkillReturn, UUID, str] | None:
-    """Validate `outputs` against `SkillReturn` and require an artifact iff
-    `outcome == "completed"`. Fails the stage (and the run) and returns
-    `None` on any contract violation; otherwise stores + finalizes the
-    artifact and returns `(skill_return, artifact_id, artifact_body)`.
+    """Validate `outputs` against `SkillReturn`. `cannot_complete` fails the
+    stage (and the run). `send_back` — validated against an earlier
+    `SkillStage` in the flattened definition, else a loud stage failure —
+    routes through `_send_back_to_stage` instead of producing an artifact.
+    `completed` requires an artifact; fails the stage if missing. Returns
+    `None` for every outcome except a validated `completed` (which stores +
+    finalizes the artifact and returns `(skill_return, artifact_id,
+    artifact_body)`).
 
     Shared by the `main` and `fix` phases — both dispatch the main skill and
     speak the same `SkillReturn` contract.
@@ -1451,11 +1668,42 @@ async def _validate_skill_return_and_artifact(
         )
         return None
 
-    if skill_return.outcome != "completed":
-        # `send_back`/`cannot_complete` are run-failure placeholders until
-        # the boundary/send-back machinery exists.
-        reason = skill_return.outcome_reason or f"stage returned outcome={skill_return.outcome!r}"
+    if skill_return.outcome == "cannot_complete":
+        reason = skill_return.outcome_reason or "stage reported cannot_complete"
         await _fail_stage(run, stage_exec, stage_index=stage_index, failure_reason=reason, session=session)
+        return None
+
+    if skill_return.outcome == "send_back":
+        target_name = skill_return.send_back_to_stage
+        flattened = FlattenedDefinition.from_snapshot(run.definition_snapshot)
+        resolved = (
+            resolve_send_back_target(
+                flattened, stage=stage, before_index=stage_index, target_name=target_name
+            )
+            if target_name
+            else None
+        )
+        if resolved is None:
+            await _fail_stage(
+                run,
+                stage_exec,
+                stage_index=stage_index,
+                failure_reason=f"send_back_to_stage {target_name!r} is not a valid upstream stage",
+                session=session,
+            )
+            return None
+        target_index, target_stage = resolved
+        stage_exec.status = "completed"
+        stage_exec.completed_at = datetime.now(UTC)
+        await _send_back_to_stage(
+            run,
+            stage_exec,
+            target_index=target_index,
+            target_stage=target_stage,
+            gap_text=skill_return.outcome_reason or "",
+            kickoff=kickoff,
+            session=session,
+        )
         return None
 
     artifact_body: str | None = None
@@ -1500,12 +1748,35 @@ async def _settle_stage_boundary(
 ) -> None:
     """Shared boundary-evaluation tail for every stage kind that carries a
     `BoundaryControl` (`SkillStage`, `ReviewSkillStage`) once its own
-    main/review work has settled — `cannot_complete`/`send_back` outcomes
-    never reach here (see `_validate_skill_return_and_artifact`), so the
-    stage's work has always "completed" by this point."""
+    main/review work has settled — a main/fix `cannot_complete`/`send_back`
+    outcome never reaches here (see `_validate_skill_return_and_artifact`),
+    so the stage's own work has always "completed" by this point. A residual
+    finding carrying a resolvable `defect_in_artifact` sends back before
+    mode/conditions are ever evaluated (boundary order per architecture:
+    send-back first, then conditions)."""
     residuals = [
         f for f in await list_for_stage_execution(stage_exec.id, session=session) if f.status == "open"
     ]
+
+    flattened = FlattenedDefinition.from_snapshot(run.definition_snapshot)
+    send_back = _resolve_residual_send_back(
+        flattened, stage=stage, residuals=residuals, before_index=stage_index, run_id=run.id
+    )
+    if send_back is not None:
+        target_index, target_stage, gap_text = send_back
+        stage_exec.status = "completed"
+        stage_exec.completed_at = datetime.now(UTC)
+        await _send_back_to_stage(
+            run,
+            stage_exec,
+            target_index=target_index,
+            target_stage=target_stage,
+            gap_text=gap_text,
+            kickoff=kickoff,
+            session=session,
+        )
+        return
+
     ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
     assert stage_exec.confidence is not None
     decision = await evaluate_boundary(
@@ -1550,7 +1821,7 @@ async def _handle_main_return(
 ) -> None:
     stage_index = stage_exec.stage_index
     result = await _validate_skill_return_and_artifact(
-        run, stage_exec, stage_index=stage_index, outputs=outputs, session=session
+        run, stage, stage_exec, stage_index=stage_index, kickoff=kickoff, outputs=outputs, session=session
     )
     if result is None:
         return
@@ -1588,12 +1859,13 @@ async def _handle_fix_return(
     stage: SkillStage,
     stage_exec: StageExecutionRow,
     *,
+    kickoff: Kickoff,
     outputs: dict[str, Any],
     session: AsyncSession,
 ) -> None:
     stage_index = stage_exec.stage_index
     result = await _validate_skill_return_and_artifact(
-        run, stage_exec, stage_index=stage_index, outputs=outputs, session=session
+        run, stage, stage_exec, stage_index=stage_index, kickoff=kickoff, outputs=outputs, session=session
     )
     if result is None:
         return

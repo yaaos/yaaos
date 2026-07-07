@@ -47,6 +47,15 @@ class PipelineSummary(BaseModel, frozen=True):
     referenced: bool
 
 
+class RevisionContext(BaseModel, frozen=True):
+    """Carries a re-entry's instruction/gap/fix text plus the stage's own
+    prior artifact body."""
+
+    source: Literal["instruction", "send_back", "fix"]
+    text: str
+    prior_artifact: str
+
+
 class Kickoff(BaseModel, frozen=True):
     """The intake+actor+input that started a run. The ticket (with title)
     exists before the run — intake creates/targets it."""
@@ -57,6 +66,12 @@ class Kickoff(BaseModel, frozen=True):
     pr_base_sha: str | None = None
     pr_head_sha: str | None = None
     notify_user_ids: tuple[UUID, ...] = ()
+    # Single-use carrier for a re-entry's revision text across an async
+    # provision hop: `start_rerun_from_stage` stashes it here at run
+    # creation so the provision-terminal handler (`engine._start_stage_impl`)
+    # can thread it onto the starting stage's FIRST dispatch, then clears it
+    # (rewrites `run.kickoff`) so later stages/re-provisions never see it.
+    revision: RevisionContext | None = None
 
 
 class PauseResolution(BaseModel, frozen=True):
@@ -94,17 +109,6 @@ class PRContext(BaseModel, frozen=True):
     head_sha: str
     base_sha: str
     prev_reviewed_head_sha: str | None = None
-
-
-class RevisionContext(BaseModel, frozen=True):
-    """Carries a re-entry's instruction/gap/fix text plus the stage's own
-    prior artifact body. Not populated until re-entry machinery (instruct,
-    send-back, fix loop) exists — always `None` on `StageInvocationContext`
-    until then."""
-
-    source: Literal["instruction", "send_back", "fix"]
-    text: str
-    prior_artifact: str
 
 
 class PriorFindingRef(BaseModel, frozen=True):

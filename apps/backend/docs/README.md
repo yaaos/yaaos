@@ -43,11 +43,11 @@ Modules are organized in four layers — **core · domain · plugins · testing*
 | [domain_tickets](domain_tickets.md) | Ticket lifecycle + PR mirror (`pull_requests` table). |
 | [domain_reviewer](domain_reviewer.md) | Review workflow orchestrator + canonical findings + `publish_findings`. |
 | [domain_orgs](domain_orgs.md) | Orgs, memberships, roles, invitations, SSO config, onboarding-status aggregator (). |
-| [domain_pipelines](domain_pipelines.md) | Run engine: data-defined pipelines, run + stage lifecycle, HITL pauses (table shells this phase). |
-| [domain_artifacts](domain_artifacts.md) | Produced-document storage; one row per artifact version (table shell this phase). |
-| [domain_findings](domain_findings.md) | Durable ticket-level findings, `open → resolved / dismissed` lifecycle (table shell this phase). |
-| [domain_repos](domain_repos.md) | Per-repo protected-code + auto-approve config, intake→pipeline trigger bindings (table shells this phase). |
-| [domain_pr_review](domain_pr_review.md) | Inbound PR comment classification + batching (table shell this phase). |
+| [domain_pipelines](domain_pipelines.md) | Run engine: data-defined pipelines, run + stage lifecycle, HITL pauses, send-back/instruct/rerun re-entry. |
+| [domain_artifacts](domain_artifacts.md) | Produced-document storage; one row per artifact version. |
+| [domain_findings](domain_findings.md) | Durable ticket-level findings, `open → resolved / dismissed` lifecycle. |
+| [domain_repos](domain_repos.md) | Per-repo protected-code + auto-approve config, intake→pipeline trigger bindings. |
+| [domain_pr_review](domain_pr_review.md) | Inbound PR comment classification + batching. |
 | [domain_actions](domain_actions.md) | Synchronous control-plane stage executors + registry. |
 
 ### Plugins — vendor-specific implementations

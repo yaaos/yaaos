@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns the `artifacts` table — the only place a pipeline stage's produced document lives. There is no separate lineage/descriptor entity: the lineage ("the ticket's requirements document") is the `(ticket_id, stage_name)` group, a composite key, not a row. Read-only for humans; revisions arrive only via instruct/re-run once that engine machinery exists. Written by `domain/pipelines`' skill-stage dispatch (`engine._handle_skill_stage_event`) on every `completed`-outcome terminal event.
+Owns the `artifacts` table — the only place a pipeline stage's produced document lives. There is no separate lineage/descriptor entity: the lineage ("the ticket's requirements document") is the `(ticket_id, stage_name)` group, a composite key, not a row. Read-only for humans; revisions arrive only via instruct (same stage, same run), send-back (an earlier stage, same run), or `start_rerun_from_stage` (a new run) — all `domain/pipelines` engine re-entry paths. Written by `domain/pipelines`' skill-stage dispatch (`engine._handle_skill_stage_event`) on every `completed`-outcome terminal event.
 
 ## Public interface
 

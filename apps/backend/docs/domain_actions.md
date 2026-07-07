@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns the `Action` Protocol and its ContextVar-bound registry — the real substance shipped this phase, mirroring `CodingAgentRegistry` (`apps/backend/app/core/coding_agent/service.py:27`). Plugins (e.g. `plugins/github`) contribute `Action`s at import time via `register_action`; `ActionStage.action_id` (owned by `domain/pipelines`) keys into this registry. Lives in `domain`, not `core`, because `ActionContext` carries findings/verdicts (domain types) and core→domain edges are forbidden. No tables — an action's result persists on `stage_executions.action_result`, owned by `domain/pipelines`.
+Owns the `Action` Protocol and its ContextVar-bound registry — mirroring `CodingAgentRegistry` (`apps/backend/app/core/coding_agent/service.py:27`). Plugins (e.g. `plugins/github`) contribute `Action`s at import time via `register_action`; `ActionStage.action_id` (owned by `domain/pipelines`) keys into this registry. Lives in `domain`, not `core`, because `ActionContext` carries findings/verdicts (domain types) and core→domain edges are forbidden. No tables — an action's result persists on `stage_executions.action_result`, owned by `domain/pipelines`.
 
 ## Public interface
 

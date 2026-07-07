@@ -23,6 +23,7 @@ from app.domain.pipelines.definition import (
 )
 from app.domain.pipelines.engine import HANDLE_AGENT_EVENT as _HANDLE_AGENT_EVENT
 from app.domain.pipelines.service import (
+    InvalidPauseResolutionError,
     MissingInheritedArtifactError,
     NotEscalationTargetError,
     PauseAlreadyResolvedError,
@@ -36,11 +37,9 @@ from app.domain.pipelines.service import (
     create_pipeline,
     delete_pipeline,
     get_pipeline,
-    get_run_overview,
     has_run_in_flight,
     instantiate_template,
     list_pipelines,
-    list_runs_for_ticket,
     list_templates,
     pipeline_referenced_by_call,
     request_cancel,
@@ -58,10 +57,12 @@ from app.domain.pipelines.types import (
     RunOverview,
     StageExecution,
 )
+from app.domain.pipelines.views import get_run_overview, list_runs_for_ticket
 
 __all__ = [
     "ActionStage",
     "BoundaryControl",
+    "InvalidPauseResolutionError",
     "Kickoff",
     "MissingInheritedArtifactError",
     "NotEscalationTargetError",

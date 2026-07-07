@@ -1,12 +1,14 @@
 """Service surface for `domain/pipelines`.
 
 Definition CRUD (`create_pipeline` / `update_pipeline` / `delete_pipeline` /
-`get_pipeline` / `list_pipelines` / `pipeline_referenced_by_call`) is real.
-`start_run` and `request_cancel` are real, delegating the run-lifecycle
-mechanics (promotion, the `ROUTE_RUN`/`START_STAGE`/`HANDLE_AGENT_EVENT`
-taskiq trio, terminal bookkeeping) to `engine.py`. `start_rerun_from_stage`, `resolve_pause`,
-`instantiate_template`, `list_templates`, `list_runs_for_ticket`,
-`get_run_overview`, and `has_run_in_flight` stay stubs — bodies raise
+`get_pipeline` / `list_pipelines` / `pipeline_referenced_by_call`), the run
+lifecycle (`start_run` / `request_cancel`), and every pause resolution +
+re-entry path (`resolve_pause` — approve/instruct/send_back/kill —
+`start_rerun_from_stage`) are real. Run-engine mechanics (promotion, the
+`ROUTE_RUN`/`START_STAGE`/`HANDLE_AGENT_EVENT` taskiq trio, the send-back
+rewind, terminal bookkeeping) live in `engine.py`; the read models
+(`list_runs_for_ticket`, `get_run_overview`) live in `views.py`.
+`instantiate_template` and `list_templates` stay stubs — bodies raise
 `NotImplementedError`; only the signatures are load-bearing.
 """
 
@@ -22,19 +24,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import Actor, audit, audit_for_pipeline
 from app.core.auth import require_org_context
 from app.core.tenancy import get_membership_info
+from app.domain.artifacts import latest_final
 from app.domain.pipelines import engine
-from app.domain.pipelines.definition import PipelineDefinition, flatten, validate_definition
-from app.domain.pipelines.escalation import is_pause_responder
-from app.domain.pipelines.models import PipelineRow, PipelineRunRow, RunPauseRow
-from app.domain.pipelines.types import (
-    Kickoff,
-    PauseResolution,
-    Pipeline,
-    PipelineRun,
-    PipelineSummary,
-    RunOverview,
+from app.domain.pipelines.definition import (
+    FlattenedDefinition,
+    PipelineDefinition,
+    ReviewSkillStage,
+    SkillStage,
+    flatten,
+    validate_definition,
 )
+from app.domain.pipelines.escalation import is_pause_responder
+from app.domain.pipelines.models import PipelineRow, PipelineRunRow, RunPauseRow, StageExecutionRow
+from app.domain.pipelines.types import Kickoff, PauseResolution, Pipeline, PipelineSummary, RevisionContext
 from app.domain.repos import pipeline_referenced_by_binding as _repo_pipeline_referenced_by_binding
+from app.domain.tickets import get as get_ticket
 
 _TERMINAL_RUN_STATES = frozenset({"completed", "failed", "killed", "cancelled"})
 
@@ -77,6 +81,13 @@ class StageNotInDefinitionError(LookupError):
 
 class MissingInheritedArtifactError(ValueError):
     """A renamed/removed earlier stage leaves a required input artifact unresolvable."""
+
+
+class InvalidPauseResolutionError(ValueError):
+    """`resolve_pause` called with a resolution invalid for its own `action`:
+    `instruct` without `instruction`, `send_back` without
+    `send_back_to_stage`, or a `send_back_to_stage` that doesn't resolve to
+    an upstream `SkillStage` in the paused stage's own flattened definition."""
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +349,29 @@ async def start_run(
     return row.id
 
 
+async def _nearest_upstream_skill_stage_resolvable(
+    flattened: FlattenedDefinition, *, org_id: UUID, ticket_id: UUID, from_index: int, session: AsyncSession
+) -> None:
+    """Mirrors `engine._resolve_stage_input`'s backward walk exactly: the
+    nearest upstream `SkillStage` whose `latest_final` resolves wins; if
+    NONE of the upstream skill stages resolve (a renamed/removed stage under
+    current names), raise loudly rather than let the rerun silently fall
+    back to the kickoff's (here, empty) input text. No upstream skill stage
+    at all is not an error — `from_stage` is then effectively a first stage.
+    """
+    nearest_name: str | None = None
+    for prior in reversed(flattened.stages[:from_index]):
+        if not isinstance(prior, SkillStage):
+            continue
+        if nearest_name is None:
+            nearest_name = prior.name
+        final = await latest_final(org_id=org_id, ticket_id=ticket_id, stage_name=prior.name, session=session)
+        if final is not None:
+            return
+    if nearest_name is not None:
+        raise MissingInheritedArtifactError(nearest_name)
+
+
 async def start_rerun_from_stage(
     *,
     org_id: UUID,
@@ -347,8 +381,74 @@ async def start_rerun_from_stage(
     actor: Actor,
     session: AsyncSession,
 ) -> UUID:
-    """New run on the CURRENT definition, starting at `from_stage`'s index."""
-    raise NotImplementedError
+    """New run on the CURRENT definition, starting at `from_stage`'s index.
+    Earlier stages' artifacts are read through (`latest_final` per stage
+    name, no copy) — the ticket's most recent run's pipeline is re-flattened
+    fresh against the org's CURRENT definitions (not that run's pinned
+    snapshot), so a since-edited pipeline is what actually executes.
+
+    Raises `RunNotFoundError` when the ticket has no prior run to rerun
+    (nothing to derive a pipeline from); `StageNotInDefinitionError` when
+    `from_stage` (or the prior run's pipeline itself) isn't in the current
+    definition; `MissingInheritedArtifactError` when a renamed/removed
+    earlier stage leaves a required input artifact unresolvable under
+    current names.
+    """
+    ticket = await get_ticket(ticket_id, org_id=org_id)
+    if ticket.current_run_id is None:
+        raise RunNotFoundError(ticket_id)
+    prior_run = await session.get(PipelineRunRow, ticket.current_run_id)
+    if prior_run is None:
+        raise RunNotFoundError(ticket.current_run_id)
+
+    org_definitions = await _load_org_definitions(org_id, session=session)
+    definition = org_definitions.get(prior_run.pipeline_id) if prior_run.pipeline_id is not None else None
+    if definition is None:
+        raise StageNotInDefinitionError(from_stage)
+    flattened = flatten(definition, org_definitions=org_definitions)
+
+    from_index = next(
+        (
+            i
+            for i, s in enumerate(flattened.stages)
+            if isinstance(s, SkillStage | ReviewSkillStage) and s.name == from_stage
+        ),
+        None,
+    )
+    if from_index is None:
+        raise StageNotInDefinitionError(from_stage)
+
+    await _nearest_upstream_skill_stage_resolvable(
+        flattened, org_id=org_id, ticket_id=ticket_id, from_index=from_index, session=session
+    )
+
+    own_prior = await latest_final(org_id=org_id, ticket_id=ticket_id, stage_name=from_stage, session=session)
+    kickoff = Kickoff(
+        intake_point_id="rerun",
+        actor=actor,
+        input_text=None,
+        revision=RevisionContext(
+            source="instruction",
+            text=instruction,
+            prior_artifact=own_prior.body if own_prior is not None else "",
+        ),
+    )
+
+    row = PipelineRunRow(
+        org_id=org_id,
+        ticket_id=ticket_id,
+        pipeline_id=prior_run.pipeline_id,
+        pipeline_name=definition.name,
+        definition_snapshot={"stages": [stage.model_dump(mode="json") for stage in flattened.stages]},
+        state="queued",
+        phase="stages",
+        current_stage_index=from_index,
+        kickoff=kickoff.model_dump(mode="json"),
+    )
+    session.add(row)
+    await session.flush()
+    await engine.attempt_promotion(row, session=session)
+    return row.id
 
 
 async def request_cancel(run_id: UUID, *, actor: Actor, session: AsyncSession) -> None:
@@ -390,10 +490,16 @@ async def resolve_pause(
     session: AsyncSession,
 ) -> None:
     """The single HITL resolution entry. `approve` resumes at the next
-    boundary; `kill` terminates the run. `instruct`/`send_back` raise a
-    labeled `NotImplementedError` — the machinery that resumes a stage with
-    an instruction, or rewinds to an earlier stage, doesn't exist yet; it
-    lands with the send-back/instruct re-entry machinery."""
+    boundary; `instruct` re-runs the paused stage fresh with the human's
+    text as revision; `send_back` rewinds to an earlier stage (validated
+    here, same loop-protected machinery as an automatic send-back); `kill`
+    terminates the run.
+
+    Raises `InvalidPauseResolutionError` for a resolution missing its
+    required field (`instruct` without `instruction`, `send_back` without
+    `send_back_to_stage`) or a `send_back_to_stage` that isn't an upstream
+    `SkillStage` in the paused stage's own flattened definition.
+    """
     org_id = require_org_context()
     pause = await session.get(RunPauseRow, pause_id)
     if pause is None or pause.org_id != org_id:
@@ -405,10 +511,32 @@ async def resolve_pause(
     if pause.resolved_at is not None:
         raise PauseAlreadyResolvedError(pause_id)
 
-    if resolution.action in ("instruct", "send_back"):
-        raise NotImplementedError(
-            f"{resolution.action!r} resolution lands with the send-back/instruct re-entry machinery"
+    if resolution.action == "instruct" and not resolution.instruction:
+        raise InvalidPauseResolutionError("instruct requires a non-empty instruction")
+
+    send_back_target: tuple[int, SkillStage] | None = None
+    stage_exec: StageExecutionRow | None = None
+    if resolution.action == "send_back":
+        if not resolution.send_back_to_stage:
+            raise InvalidPauseResolutionError("send_back requires send_back_to_stage")
+        stage_exec = await session.get(StageExecutionRow, pause.stage_execution_id)
+        assert stage_exec is not None
+        assert stage_exec.stage_index is not None
+        run_for_definition = await session.get(PipelineRunRow, pause.run_id)
+        assert run_for_definition is not None
+        flattened = FlattenedDefinition.from_snapshot(run_for_definition.definition_snapshot)
+        paused_stage = flattened.stages[stage_exec.stage_index]
+        assert isinstance(paused_stage, SkillStage | ReviewSkillStage)
+        send_back_target = engine.resolve_send_back_target(
+            flattened,
+            stage=paused_stage,
+            before_index=stage_exec.stage_index,
+            target_name=resolution.send_back_to_stage,
         )
+        if send_back_target is None:
+            raise InvalidPauseResolutionError(
+                f"send_back_to_stage {resolution.send_back_to_stage!r} is not a valid upstream stage"
+            )
 
     run = await session.get(PipelineRunRow, pause.run_id)
     if run is None:
@@ -432,6 +560,21 @@ async def resolve_pause(
 
     if resolution.action == "approve":
         await engine.resume_from_pause(pause, run, session=session)
+    elif resolution.action == "instruct":
+        assert resolution.instruction is not None
+        await engine.resume_with_instruction(pause, run, instruction=resolution.instruction, session=session)
+    elif resolution.action == "send_back":
+        assert send_back_target is not None
+        assert stage_exec is not None
+        target_index, target_stage = send_back_target
+        await engine.resume_with_send_back(
+            pause,
+            run,
+            stage_exec=stage_exec,
+            target_index=target_index,
+            target_stage=target_stage,
+            session=session,
+        )
     else:
         assert resolution.action == "kill"
         await engine.kill_run(run, session=session)
@@ -459,15 +602,6 @@ async def instantiate_template(
 
 def list_templates() -> tuple[PipelineDefinition, ...]:
     """The code-shipped default pipelines (pinned ids)."""
-    raise NotImplementedError
-
-
-async def list_runs_for_ticket(ticket_id: UUID, *, session: AsyncSession) -> list[PipelineRun]:
-    """Runs-tab timeline (newest first; no pagination)."""
-    raise NotImplementedError
-
-
-async def get_run_overview(ticket_id: UUID, *, session: AsyncSession) -> RunOverview | None:
     raise NotImplementedError
 
 

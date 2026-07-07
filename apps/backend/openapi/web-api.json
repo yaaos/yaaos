@@ -103,6 +103,78 @@
         "title": "ActivityLog",
         "type": "object"
       },
+      "Actor": {
+        "description": "Who-did-what. One value across the codebase.\n\nInvariants:\n  - kind=github_user → login required; user_id/agent_id/workspace_id None.\n  - kind=agent → agent_id required; login/user_id/workspace_id None.\n  - kind=system → all id fields None.\n  - kind=user → user_id required; login optional (display login);\n    agent_id/workspace_id None.\n  - kind=workspace → workspace_id required; everything else None.\n  - kind=sso → all id fields None (only the IdP knew); login optional.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Actor",
+        "type": "object"
+      },
+      "ActorKind": {
+        "enum": [
+          "github_user",
+          "agent",
+          "system",
+          "user",
+          "workspace",
+          "sso"
+        ],
+        "title": "ActorKind",
+        "type": "string"
+      },
       "AgentEvent": {
         "properties": {
           "artifact": {
@@ -811,6 +883,50 @@
         "title": "CreatePipelineResponse",
         "type": "object"
       },
+      "Decision": {
+        "description": "One pause resolution recorded against a stage execution.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Login"
+          },
+          "instruction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction"
+          },
+          "resolved_at": {
+            "format": "date-time",
+            "title": "Resolved At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "actor_login",
+          "instruction",
+          "resolved_at"
+        ],
+        "title": "Decision",
+        "type": "object"
+      },
       "EmailView": {
         "properties": {
           "email": {
@@ -838,6 +954,256 @@
           "verified"
         ],
         "title": "EmailView",
+        "type": "object"
+      },
+      "Finding": {
+        "description": "Domain value object for one durable finding.",
+        "properties": {
+          "artifact_section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Section"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "code_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code File"
+          },
+          "code_line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Line"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "defect_in_artifact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defect In Artifact"
+          },
+          "defended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defended At"
+          },
+          "display_id": {
+            "title": "Display Id",
+            "type": "integer"
+          },
+          "display_prefix": {
+            "title": "Display Prefix",
+            "type": "string"
+          },
+          "external_comment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Comment Id"
+          },
+          "first_seen_iteration": {
+            "title": "First Seen Iteration",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "blocker",
+              "should_fix",
+              "nit"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "source_run_id": {
+            "format": "uuid",
+            "title": "Source Run Id",
+            "type": "string"
+          },
+          "source_stage_execution_id": {
+            "format": "uuid",
+            "title": "Source Stage Execution Id",
+            "type": "string"
+          },
+          "source_stage_name": {
+            "title": "Source Stage Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_events": {
+            "items": {
+              "$ref": "#/components/schemas/FindingStatusEvent"
+            },
+            "title": "Status Events",
+            "type": "array"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "title": "Ticket Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "ticket_id",
+          "source_run_id",
+          "source_stage_name",
+          "source_stage_execution_id",
+          "first_seen_iteration",
+          "display_prefix",
+          "display_id",
+          "severity",
+          "body",
+          "code_file",
+          "code_line",
+          "artifact_section",
+          "defect_in_artifact",
+          "status",
+          "status_events",
+          "defended_at",
+          "external_comment_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Finding",
+        "type": "object"
+      },
+      "FindingStatusEvent": {
+        "description": "Appended per transition AND per re-assertion (re-flag/re-sighting).",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "comment_external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment External Id"
+          },
+          "method": {
+            "enum": [
+              "review_verdict",
+              "user_overrode"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "stage_execution_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Execution Id"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "method",
+          "actor",
+          "at"
+        ],
+        "title": "FindingStatusEvent",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1341,6 +1707,22 @@
         "title": "ListPipelinesResponse",
         "type": "object"
       },
+      "ListRunsResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "ListRunsResponse",
+        "type": "object"
+      },
       "MemberView": {
         "properties": {
           "display_name": {
@@ -1445,6 +1827,66 @@
           }
         },
         "title": "PatchIntegrationRequest",
+        "type": "object"
+      },
+      "PauseDetail": {
+        "description": "Overview-tab payload for a `paused` run.",
+        "properties": {
+          "artifact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          },
+          "can_respond": {
+            "title": "Can Respond",
+            "type": "boolean"
+          },
+          "escalation_logins": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Escalation Logins",
+            "type": "array"
+          },
+          "pause_id": {
+            "format": "uuid",
+            "title": "Pause Id",
+            "type": "string"
+          },
+          "residuals": {
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "title": "Residuals",
+            "type": "array"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "tripped": {
+            "additionalProperties": true,
+            "title": "Tripped",
+            "type": "object"
+          }
+        },
+        "required": [
+          "pause_id",
+          "stage_name",
+          "tripped",
+          "artifact_id",
+          "residuals",
+          "escalation_logins",
+          "can_respond"
+        ],
+        "title": "PauseDetail",
         "type": "object"
       },
       "PauseResolution": {
@@ -1653,6 +2095,83 @@
         "title": "PipelineDetailResponse",
         "type": "object"
       },
+      "PipelineRun": {
+        "description": "Replaces WorkflowExecution — the Runs-tab timeline entry.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kickoff": {
+            "$ref": "#/components/schemas/RunKickoffView"
+          },
+          "pipeline_name": {
+            "title": "Pipeline Name",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageExecution"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "paused",
+              "completed",
+              "failed",
+              "killed",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "pipeline_name",
+          "state",
+          "kickoff",
+          "created_at",
+          "completed_at",
+          "failure_reason",
+          "stages"
+        ],
+        "title": "PipelineRun",
+        "type": "object"
+      },
       "PipelineSummary": {
         "description": "One `list_pipelines` element — definition rows, unflattened.",
         "properties": {
@@ -1782,6 +2301,44 @@
           "skill_name"
         ],
         "title": "RepoSkillRow",
+        "type": "object"
+      },
+      "RerunRequest": {
+        "properties": {
+          "from_stage": {
+            "title": "From Stage",
+            "type": "string"
+          },
+          "instruction": {
+            "title": "Instruction",
+            "type": "string"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "title": "Ticket Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "from_stage",
+          "instruction"
+        ],
+        "title": "RerunRequest",
+        "type": "object"
+      },
+      "RerunResponse": {
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "RerunResponse",
         "type": "object"
       },
       "RespondPauseResponse": {
@@ -1923,6 +2480,145 @@
         ],
         "title": "Role",
         "type": "string"
+      },
+      "RunKickoffView": {
+        "description": "Read-model projection of a run's `Kickoff` for the Runs tab.",
+        "properties": {
+          "actor_kind": {
+            "title": "Actor Kind",
+            "type": "string"
+          },
+          "actor_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Login"
+          },
+          "input_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Text"
+          },
+          "intake_point_id": {
+            "title": "Intake Point Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intake_point_id",
+          "actor_kind",
+          "actor_login",
+          "input_text"
+        ],
+        "title": "RunKickoffView",
+        "type": "object"
+      },
+      "RunOutcome": {
+        "description": "Overview-tab payload for a `terminal` run.",
+        "properties": {
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "paused",
+              "completed",
+              "failed",
+              "killed",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "pr_url",
+          "failure_reason"
+        ],
+        "title": "RunOutcome",
+        "type": "object"
+      },
+      "RunOverview": {
+        "description": "Server-computed Overview-tab payload, tagged on `status`.",
+        "properties": {
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pause": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PauseDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "paused",
+              "in_flight",
+              "terminal"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "RunOverview",
+        "type": "object"
       },
       "SetKeyRequest": {
         "properties": {
@@ -2109,6 +2805,148 @@
           "boundary"
         ],
         "title": "SkillStage",
+        "type": "object"
+      },
+      "StageExecution": {
+        "description": "One stage-execution attempt, read-model shape for the Runs tab.",
+        "properties": {
+          "action_result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Result"
+          },
+          "artifact_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "boundary_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "proceeded",
+                  "paused",
+                  "sent_back"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary Outcome"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/Decision"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "kind": {
+            "enum": [
+              "skill",
+              "review",
+              "action",
+              "system"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "review_iterations": {
+            "title": "Review Iterations",
+            "type": "integer"
+          },
+          "stage_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Index"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage_index",
+          "kind",
+          "stage_name",
+          "status",
+          "confidence",
+          "review_iterations",
+          "boundary_outcome",
+          "artifact_ids",
+          "action_result",
+          "decisions",
+          "failure_reason",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "StageExecution",
         "type": "object"
       },
       "StepActivityResponse": {
@@ -7149,6 +7987,157 @@
         ]
       }
     },
+    "/api/pipelines/runs": {
+      "get": {
+        "description": "Registered before `/{pipeline_id}` — that pattern is a bare\nsingle-segment match (route matching happens before FastAPI's own UUID\nparsing) and would otherwise swallow `/runs`.",
+        "operationId": "list_runs_endpoint_api_pipelines_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ticket_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ticket Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListRunsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runs Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/overview": {
+      "get": {
+        "operationId": "run_overview_endpoint_api_pipelines_runs_overview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ticket_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ticket Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Overview Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
     "/api/pipelines/runs/pauses/{pause_id}/respond": {
       "post": {
         "operationId": "respond_pause_endpoint_api_pipelines_runs_pauses__pause_id__respond_post",
@@ -7229,6 +8218,81 @@
           }
         },
         "summary": "Respond Pause Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/rerun": {
+      "post": {
+        "operationId": "rerun_endpoint_api_pipelines_runs_rerun_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerun Endpoint",
         "tags": [
           "pipelines"
         ]

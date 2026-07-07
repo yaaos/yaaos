@@ -1037,6 +1037,7 @@ from = ["app.domain.orgs"]
 expose = [
   "ActionStage",
   "BoundaryControl",
+  "InvalidPauseResolutionError",
   "Kickoff",
   "MissingInheritedArtifactError",
   "NotEscalationTargetError",
