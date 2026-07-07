@@ -21,6 +21,18 @@ def main() -> int:
     # `plugins` or `testing` under layering rules.
     import app.core.coding_agent  # noqa: PLC0415
     import app.core.workflow  # noqa: PLC0415
+
+    # domain/reviewer (old engine) plus the six run-engine modules,
+    # coexisting with core/workflow + domain/reviewer. isort alphabetizes this block — harmless, since
+    # none of these modules has an import-time side effect that depends on
+    # load order yet (unlike the workflow/agent_gateway pair above, which
+    # register taskiq task names and routes at import time).
+    import app.domain.actions  # noqa: PLC0415
+    import app.domain.artifacts  # noqa: PLC0415
+    import app.domain.findings  # noqa: PLC0415
+    import app.domain.pipelines  # noqa: PLC0415
+    import app.domain.pr_review  # noqa: PLC0415
+    import app.domain.repos  # noqa: PLC0415
     import app.domain.reviewer  # noqa: PLC0415
 
     # Workspace providers registration.

@@ -135,6 +135,20 @@ async def plugin_registries_isolation():
                 yield
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def actions_registry_isolation():
+    """Bind a fresh copy of the actions registry for each test.
+
+    Same shape as `plugin_registries_isolation` — a test that registers or
+    swaps an action only affects its own copy; the next test rebinds from
+    the default.
+    """
+    from app.domain.actions import set_actions_for_tests  # noqa: PLC0415
+
+    with set_actions_for_tests():
+        yield
+
+
 @pytest_asyncio.fixture
 async def workspace_providers_isolation():
     """Bind an empty workspace-provider registry before the test.
@@ -151,6 +165,7 @@ async def workspace_providers_isolation():
 
 
 __all__ = [
+    "actions_registry_isolation",
     "bearer_verify_isolation",
     "email_inbox_isolation",
     "plugin_registries_isolation",

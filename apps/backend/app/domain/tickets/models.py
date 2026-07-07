@@ -52,6 +52,15 @@ class TicketRow(Base):
     current_workflow_execution_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), nullable=True
     )
+    # Soft ref to the pipeline_runs row currently driving this ticket. The
+    # run-engine's equivalent of current_workflow_execution_id above; the two
+    # columns coexist while both engines do.
+    current_run_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # Per-ticket work branch. Intake-supplied (PR tickets: the head branch
+    # LABEL — provenance/display only, checkout pins the head SHA) or minted
+    # at creation (yaaos/<slugified-title>-<shortid>). Nullable: the
+    # pr_review_v1 path never populates it.
+    branch_name: Mapped[str | None] = mapped_column(String, nullable=True)
     # Denormalized rollup written by reviewer after each review run or ack.
     # Avoids a cross-module import from tickets → reviewer at list time.
     findings_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

@@ -49,6 +49,16 @@ from app.domain import lessons  # noqa: F401, E402
 from app.domain import tickets  # noqa: F401, E402
 from app.domain import reviewer  # noqa: F401, E402
 
+# 5a-pipelines. Run-engine modules, coexisting with core/workflow +
+# domain/reviewer (the predecessor engine). Types-first: findings/artifacts/repos carry no dependencies on the others;
+# pipelines imports findings; actions/pr_review import pipelines + findings.
+from app.domain import findings as _domain_findings  # noqa: F401, E402
+from app.domain import artifacts as _domain_artifacts  # noqa: F401, E402
+from app.domain import repos as _domain_repos  # noqa: F401, E402
+from app.domain import pipelines as _domain_pipelines  # noqa: F401, E402
+from app.domain import actions as _domain_actions  # noqa: F401, E402
+from app.domain import pr_review as _domain_pr_review  # noqa: F401, E402
+
 # 5a. Workspace providers registration.
 from app.core.workspace import register_workspace_providers  # noqa: E402
 

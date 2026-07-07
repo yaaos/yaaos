@@ -41,7 +41,7 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 
 ## Data owned
 
-`tickets` — canonical schema in [core_database.md](core_database.md). Includes `findings_count INT NOT NULL DEFAULT 0` and `max_severity VARCHAR NULL` — written by reviewer, read by this module.
+`tickets` — canonical schema in [core_database.md](core_database.md). Includes `findings_count INT NOT NULL DEFAULT 0` and `max_severity VARCHAR NULL` — written by reviewer, read by this module. Also carries `current_run_id UUID NULL` (soft ref to `pipeline_runs`, [domain_pipelines.md](domain_pipelines.md)'s run-engine equivalent of `current_workflow_execution_id`) and `branch_name VARCHAR NULL` (per-ticket work branch; nullable while the old `pr_review_v1` path — which never populates it — coexists). Neither column is read or written by any code path yet.
 
 `pull_requests` — `(id, org_id, plugin_id, external_id, …)`. Unique on `(plugin_id, external_id)`. FK `ticket_id → tickets.id`. Implemented in `tickets/pull_request.py`; table name unchanged from previous module location.
 
