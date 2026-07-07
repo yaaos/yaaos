@@ -18,6 +18,8 @@
 - **Progress events do not resume the backend's workflow engine** — only `completed_*` events do. `RealHandler.RunClaude` streams stdout lines as `kind=progress` while accumulating the final result.
 - **`RealHandler` writes a `.workspace-id` manifest** after clone so the startup reconciliation can reattribute orphan directories. See [workspace_lifecycle.md](workspace_lifecycle.md).
 - **`workspacetest.StubHandler` is the test default** for supervisor-level tests via `supervisortest.InProcessSpawn(workspacetest.StubHandler{})`. It returns deterministic no-op success for every command kind.
+- **`RunClaude` stats `cmd.SkillPath` before spawning anything.** Absent → deterministic `completed_failure` (`"skill not found: <path>"`), no subprocess launched — zero agent policy, the convention is backend-computed.
+- **Artifact + exit-push ride every `InvokeClaudeCode` exit, success or failure.** `TMPDIR` is workspace-local so `$TMPDIR/<command_id>.md` dies with the workspace at `Cleanup`, not per-file. `readArtifact` enforces `artifactMaxBytes`; `maybePushOriginHead` pushes iff HEAD is a named branch. Both artifact fields ride the `AgentEvent`'s top-level `artifact`/`artifact_error` via `command.ArtifactResult`, populated on both `executeCommand` return paths — a push failure never masks a real artifact. See [architecture.md § Skill-path check + artifact collection + exit-push](architecture.md#skill-path-check--artifact-collection--exit-push).
 
 ## Gotchas
 
@@ -31,6 +33,7 @@
 - **`RunFunc`** — function type for Claude Code subprocess dispatch (`func(context.Context, RunStreamingOptions) (*RunStreamingResult, error)`); `RealHandlerConfig` field; production default is `RunStreaming`. Tests inject a fake to avoid spawning a real Claude binary.
 - **`Run`** — the dispatcher loop entrypoint; one goroutine per workspace subprocess (or in-process equivalent in tests).
 - **`inProcessRunner`** — test double wiring `workspace.Run` in a goroutine over `io.Pipe` pairs; used by `supervisortest.InProcessSpawn` in supervisor tests.
+- **`command.ArtifactResult`** — optional interface (`ArtifactPayload() (*string, string)`) a command `Result` implements to carry a collected artifact; today only `command.InvokeResult`. `workspace.executeCommand` type-asserts against it to populate the `AgentEvent`'s top-level `artifact`/`artifact_error` fields, distinct from the `ToWire()` `Outputs` map.
 
 ## Entry points
 

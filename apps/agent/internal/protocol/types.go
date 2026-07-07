@@ -99,6 +99,11 @@ type InvokeClaudeCodeCommand struct {
 	MCPServers []map[string]any       `json:"mcp_servers,omitempty"`
 	Limits     InvokeClaudeCodeLimits `json:"limits"`
 	ResultSpec map[string]any         `json:"result_spec,omitempty"`
+	// SkillPath is the backend-computed conventional path of the named
+	// skill inside the checkout (`.claude/skills/<skill_name>/SKILL.md`).
+	// RealHandler.RunClaude stats this path before spawning claude; absent
+	// → completed_failure with failure_reason="skill not found: <path>".
+	SkillPath string `json:"skill_path"`
 }
 
 type CleanupWorkspaceCommand struct {
@@ -117,6 +122,12 @@ const (
 	EventCompletedSkipped EventKind = "completed_skipped"
 )
 
+// Artifact carries the agent-collected file content read from
+// `$TMPDIR/<command_id>.md` after an InvokeClaudeCode subprocess exits.
+type Artifact struct {
+	Body string `json:"body"`
+}
+
 // AgentEvent is the agent → backend POST body for /api/v1/commands/{id}/events.
 type AgentEvent struct {
 	CommandID     string         `json:"command_id"`
@@ -130,6 +141,15 @@ type AgentEvent struct {
 	// CompletionToken echoes the originating command's CompletionToken so the
 	// backend can authorize this event by hash.
 	CompletionToken string `json:"completion_token,omitempty"`
+	// Artifact is set on InvokeClaudeCode terminal events when the skill
+	// wrote `$TMPDIR/<command_id>.md` within the agent's size cap. Nil when
+	// the skill wrote no artifact file — a legitimate outcome for review
+	// invocations and non-completed main-skill outcomes.
+	Artifact *Artifact `json:"artifact,omitempty"`
+	// ArtifactError is set when the artifact file exceeded the agent's size
+	// cap or otherwise couldn't be read — distinguishes "wrote none" from
+	// "wrote too much".
+	ArtifactError string `json:"artifact_error,omitempty"`
 }
 
 // ── Identity / heartbeat / claim ───────────────────────────────────────

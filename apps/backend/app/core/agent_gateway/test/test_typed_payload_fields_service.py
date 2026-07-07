@@ -47,6 +47,7 @@ def _make_invoke_fields() -> InvokeClaudeCodeFields:
         mcp_servers=[],
         limits={"wallclock_seconds": 300},
         result_spec={},
+        skill_path=".claude/skills/pr_review/SKILL.md",
     )
 
 
@@ -117,8 +118,8 @@ async def test_enqueue_command_payload_typed_fields_key_set(db_session) -> None:
     ).scalar_one()
     typed_keys = set(typed_row.payload.keys())
 
-    # Expected keys: the 4 kind-specific fields + 6 envelope fields.
-    expected_kind_keys = {"invocation", "mcp_servers", "limits", "result_spec"}
+    # Expected keys: the 5 kind-specific fields + 6 envelope fields.
+    expected_kind_keys = {"invocation", "mcp_servers", "limits", "result_spec", "skill_path"}
     expected_envelope_keys = {
         "kind",
         "command_id",

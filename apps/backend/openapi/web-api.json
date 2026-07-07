@@ -105,6 +105,27 @@
       },
       "AgentEvent": {
         "properties": {
+          "artifact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Artifact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifact_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Error"
+          },
           "attempt": {
             "default": 0,
             "title": "Attempt",
@@ -318,6 +339,20 @@
           "version"
         ],
         "title": "AgentView",
+        "type": "object"
+      },
+      "Artifact": {
+        "description": "Agent-collected artifact body for an InvokeClaudeCode terminal event.\n\nPopulated when the skill wrote `$TMPDIR/<command_id>.md` and the file fit\nunder the agent's size cap. `AgentEvent.artifact_error` explains why this\nis null despite a completed invocation (over-cap or read failure);\nboth fields null means the skill legitimately wrote no artifact.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "Artifact",
         "type": "object"
       },
       "AuditEntryView": {

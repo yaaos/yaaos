@@ -16,6 +16,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from app.core.agent_gateway import get_command_org_and_payload
 from app.core.coding_agent import (
     Invocation,
     dispatch_invocation,
@@ -206,6 +207,58 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
     )
 
     assert id1 != id2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_invocation_sets_skill_path_from_convention(db_session) -> None:
+    """The enqueued command's `skill_path` follows the
+    `.claude/skills/<skill_name>/SKILL.md` convention, keyed off `invocation.skill`."""
+    org_id = uuid.uuid4()
+    wfe_id = uuid.uuid4()
+    ws_id = await _seed_active_workspace(org_id)
+    invocation = Invocation(
+        workspace_id=ws_id,
+        skill="requirements",
+        model="opus",
+        effort="medium",
+        context={"repo": "test-repo"},
+        wallclock_seconds=300,
+    )
+
+    command_id = await dispatch_invocation(
+        invocation=invocation,
+        plugin=FakeCodingAgentPlugin(),
+        ctx=_ctx(wfe_id),
+        session=db_session,
+    )
+
+    result = await get_command_org_and_payload(command_id, session=db_session)
+    assert result is not None
+    _, payload = result
+    assert payload["skill_path"] == ".claude/skills/requirements/SKILL.md"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_invocation_skill_path_empty_for_legacy_pr_review(db_session) -> None:
+    """The legacy `pr_review` skill identifier has no on-disk file convention
+    (the review prompt is rendered inline) — `skill_path` is left empty so the
+    agent's pre-spawn skill-stat check never fires against an arbitrary
+    third-party reviewed repo."""
+    org_id = uuid.uuid4()
+    wfe_id = uuid.uuid4()
+    ws_id = await _seed_active_workspace(org_id)
+
+    command_id = await dispatch_invocation(
+        invocation=_invocation(ws_id),
+        plugin=FakeCodingAgentPlugin(),
+        ctx=_ctx(wfe_id),
+        session=db_session,
+    )
+
+    result = await get_command_org_and_payload(command_id, session=db_session)
+    assert result is not None
+    _, payload = result
+    assert payload["skill_path"] == ""
 
 
 @pytest.mark.asyncio

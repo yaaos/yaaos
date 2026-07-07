@@ -212,6 +212,7 @@ expose = [
   "AgentMetadata",
   "AgentRef",
   "AgentRunSink",
+  "Artifact",
   "AuthBlock",
   "CancelShutdownCommand",
   "CancelShutdownResult",

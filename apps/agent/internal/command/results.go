@@ -74,9 +74,26 @@ func (r RefreshResult) ToWire() map[string]any {
 
 // InvokeResult is the typed output of InvokeClaudeCode. Embeds ExecResult for
 // the subprocess outcome plus a workspace identifier.
+//
+// Artifact/ArtifactError carry the agent-collected `$TMPDIR/<command_id>.md`
+// content (or the reason it's absent) to the AgentEvent's top-level
+// `artifact`/`artifact_error` fields — NOT part of ToWire()'s Outputs map,
+// since those are distinct wire fields alongside `outputs`, not inside it.
+// Populated even when RunClaude ultimately returns an error (e.g. a push
+// failure after a successful invocation) — see ArtifactPayload.
 type InvokeResult struct {
 	WorkspaceID string
 	ExecResult
+	Artifact      *string
+	ArtifactError string
+}
+
+// ArtifactPayload implements ArtifactResult. workspace.executeCommand calls
+// this (on both the success and error return paths) to populate the
+// AgentEvent's top-level artifact fields — distinct from the ToWire() map,
+// which only survives on the success path.
+func (r InvokeResult) ArtifactPayload() (body *string, artifactError string) {
+	return r.Artifact, r.ArtifactError
 }
 
 // ToWire returns the map[string]any the backend expects from InvokeClaudeCode.
@@ -95,6 +112,14 @@ func (r InvokeResult) ToWire() map[string]any {
 		"stderr":         r.Stderr,
 		"stdout_excerpt": stdoutExcerpt,
 	}
+}
+
+// ArtifactResult is implemented by command Results that can carry a
+// collected artifact body (today: InvokeResult only). workspace.executeCommand
+// type-asserts against this interface to populate the AgentEvent's top-level
+// artifact fields, which live alongside — not inside — the ToWire() Outputs map.
+type ArtifactResult interface {
+	ArtifactPayload() (body *string, artifactError string)
 }
 
 // CleanupResult is the typed output of CleanupWorkspace.

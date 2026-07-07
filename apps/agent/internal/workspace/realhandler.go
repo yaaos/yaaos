@@ -14,17 +14,27 @@
 //                            No I/O — used by the supervisor when the
 //                            backend rotates a GitHub installation token
 //                            mid-flight.
-//   - RunClaude            — read `invocation.exec` from the wire
-//                            ({argv, stdin, env}), merge env
-//                            on top of `os.Environ()`, inject BYOK
-//                            secrets from the last ConfigUpdate (e.g.
-//                            ANTHROPIC_API_KEY), add TRACEPARENT for
-//                            span linkage, dispatch via the configured
-//                            `RunFunc` (production default:
-//                            `RunStreaming`) with the workspace tempdir
-//                            as cwd. Captured stdout is returned in the
-//                            typed InvokeResult. Zero biz logic — the
-//                            backend owns prompt assembly + argv flags.
+//   - RunClaude            — stats `cmd.SkillPath` inside the checkout
+//                            before spawning anything (absent → fail
+//                            deterministically with "skill not found:
+//                            <path>"); reads `invocation.exec` from the
+//                            wire ({argv, stdin, env}), merges env on top
+//                            of `os.Environ()`, injects BYOK secrets from
+//                            the last ConfigUpdate (e.g.
+//                            ANTHROPIC_API_KEY), sets a workspace-local
+//                            TMPDIR, adds TRACEPARENT for span linkage,
+//                            dispatches via the configured `RunFunc`
+//                            (production default: `RunStreaming`) with
+//                            the workspace tempdir as cwd. After exit —
+//                            regardless of claude's own exit status —
+//                            reads `$TMPDIR/<command_id>.md` (capped at
+//                            `artifactMaxBytes`) and pushes `origin HEAD`
+//                            iff HEAD is a named branch (detached PR-ticket
+//                            checkouts skip). Captured stdout + the
+//                            artifact are returned in the typed
+//                            InvokeResult. Zero biz logic — the backend
+//                            owns prompt assembly + argv flags + the
+//                            skill-path convention.
 //   - Cleanup              — `os.RemoveAll` the tempdir + drop the slot.
 //                            Idempotent on a missing workspace_id.
 //
@@ -76,6 +86,18 @@ const (
 	claudeErrStderrCap     = 2048
 	claudeErrStdoutTailCap = 4096
 )
+
+// artifactMaxBytes caps the artifact file RunClaude reads from
+// `$TMPDIR/<command_id>.md`. A file over this cap ships no body — the
+// artifact_error field explains why so the backend can distinguish "wrote
+// none" from "wrote too much".
+const artifactMaxBytes = 2 * 1024 * 1024
+
+// workspaceTmpDirName is the workspace-relative TMPDIR RunClaude sets on
+// every claude subprocess. Workspace-local so artifact (and any other
+// scratch) files are torn down automatically by Cleanup's `os.RemoveAll` —
+// no per-file deletion, and files remain for debugging until then.
+const workspaceTmpDirName = ".yaaos-invoke-tmp"
 
 // excerptHead returns the first `limit` bytes of `b`, suffixed with a
 // truncation marker when bytes were cut. Returns "<empty>" for an empty input
@@ -355,6 +377,21 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 		return command.InvokeResult{}, errors.New("invocation.exec.argv missing or empty")
 	}
 
+	// Pre-spawn: the compiled prompt instructs the named skill to run from
+	// this checkout. A missing skill file means the invocation cannot
+	// possibly succeed — fail fast and deterministically instead of letting
+	// claude discover it mid-run.
+	if _, statErr := os.Stat(filepath.Join(slot.path, cmd.SkillPath)); statErr != nil {
+		return command.InvokeResult{}, fmt.Errorf("skill not found: %s", cmd.SkillPath)
+	}
+
+	// TMPDIR: workspace-local so the artifact file is cleaned up
+	// automatically with the workspace tempdir (see workspaceTmpDirName).
+	tmpDir := filepath.Join(slot.path, workspaceTmpDirName)
+	if err := os.MkdirAll(tmpDir, h.cfg.DirPerm); err != nil {
+		return command.InvokeResult{}, fmt.Errorf("create tmpdir: %w", err)
+	}
+
 	// Env layering, low-to-high priority:
 	//   1. Parent process env (PATH, HOME, …) so claude can find its
 	//      binary + write to $HOME/.claude state.
@@ -381,6 +418,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	for k, v := range inv.Exec.Env {
 		env = append(env, k+"="+v)
 	}
+	env = append(env, "TMPDIR="+tmpDir)
 	if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
 		env = append(env, tpEnv)
 	}
@@ -404,7 +442,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	emitter := EmitterFromContext(ctx)
 	var accumulated bytes.Buffer
 	_, endRun := tracing.StartSpan(ctx, "workspace.runclaude")
-	res, err := h.cfg.RunFunc(ctx, RunStreamingOptions{
+	res, runErr := h.cfg.RunFunc(ctx, RunStreamingOptions{
 		Argv:  inv.Exec.Argv,
 		Stdin: []byte(inv.Exec.Stdin),
 		Env:   env,
@@ -418,14 +456,31 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 			})
 		},
 	})
-	endRun(err)
+	endRun(runErr)
 	if res != nil {
 		// RunStreaming leaves res.Stdout empty when a callback is set;
 		// we replace it with the accumulated bytes so downstream code
 		// that reads res.Stdout sees the full output.
 		res.Stdout = accumulated.Bytes()
 	}
-	if err != nil {
+
+	// Artifact collection + conditional push happen for every
+	// InvokeClaudeCode exit, regardless of claude's own exit status — a
+	// failing invocation may still have written partial output, and a git
+	// push failure must not mask a real artifact. Both ship on the
+	// InvokeResult below even when this function ultimately returns an
+	// error (workspace.executeCommand reads the artifact fields off the
+	// Result on both the success and error paths).
+	artifactBody, artifactErr := readArtifact(tmpDir, cmd.CommandID)
+	pushErr := maybePushOriginHead(ctx, slot.path)
+
+	result := command.InvokeResult{
+		WorkspaceID:   cmd.WorkspaceID,
+		Artifact:      artifactBody,
+		ArtifactError: artifactErr,
+	}
+
+	if runErr != nil {
 		// `RunStreaming` returns `*exec.ExitError` on non-zero exit with
 		// res still populated; surface exit code + stderr + the tail of
 		// stdout so the supervisor's failure event carries actionable
@@ -435,26 +490,85 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 		// ctx.Err which the supervisor's pool already maps to a
 		// "timeout:" reason.
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && res != nil {
-			return command.InvokeResult{}, fmt.Errorf(
+		if errors.As(runErr, &exitErr) && res != nil {
+			return result, fmt.Errorf(
 				"claude exit %d: stderr=%s stdout_tail=%s",
 				res.ExitCode,
 				excerptHead(res.Stderr, claudeErrStderrCap),
 				excerptTail(res.Stdout, claudeErrStdoutTailCap),
 			)
 		}
-		return command.InvokeResult{}, fmt.Errorf("claude subprocess: %w", err)
+		return result, fmt.Errorf("claude subprocess: %w", runErr)
+	}
+	if pushErr != nil {
+		// Exit-push failure is a stage failure with the git stderr — the
+		// artifact still ships via `result` above even though this command
+		// reports completed_failure.
+		return result, fmt.Errorf("git push: %w", pushErr)
 	}
 
-	return command.InvokeResult{
-		WorkspaceID: cmd.WorkspaceID,
-		ExecResult: command.ExecResult{
-			ExitCode: res.ExitCode,
-			Stdout:   string(res.Stdout),
-			Stderr:   string(res.Stderr),
-			Duration: res.Duration,
-		},
-	}, nil
+	result.ExecResult = command.ExecResult{
+		ExitCode: res.ExitCode,
+		Stdout:   string(res.Stdout),
+		Stderr:   string(res.Stderr),
+		Duration: res.Duration,
+	}
+	return result, nil
+}
+
+// readArtifact reads `$TMPDIR/<command_id>.md`, enforcing artifactMaxBytes.
+// Returns (nil, "") when the skill wrote no artifact file — a legitimate
+// outcome for review invocations and non-completed main-skill outcomes.
+// Returns (nil, "<message>") when the file exists but exceeds the cap (or
+// otherwise can't be read) — distinguishes "wrote none" from "wrote too
+// much" for the backend. The file is left in place; it dies with the
+// workspace tempdir at Cleanup, not here.
+func readArtifact(tmpDir, commandID string) (*string, string) {
+	path := filepath.Join(tmpDir, commandID+".md")
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ""
+		}
+		return nil, fmt.Sprintf("artifact stat failed: %v", err)
+	}
+	if info.Size() > artifactMaxBytes {
+		return nil, fmt.Sprintf("artifact exceeds %d bytes (was %d)", artifactMaxBytes, info.Size())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Sprintf("artifact read failed: %v", err)
+	}
+	body := string(data)
+	return &body, ""
+}
+
+// headBranchName returns the short name of the branch HEAD points at.
+// Returns an error when HEAD is detached (PR-ticket workspaces; review
+// flows never commit) or `dir` isn't a git checkout at all — both cases
+// mean "nothing to push" to the caller.
+func headBranchName(ctx context.Context, dir string) (string, error) {
+	c := exec.CommandContext(ctx, "git", "symbolic-ref", "-q", "--short", "HEAD")
+	c.Dir = dir
+	out, err := c.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// maybePushOriginHead runs `git push origin HEAD` iff HEAD is a named
+// branch. Detached checkouts skip silently (nothing to push, not a
+// failure). A branch with no new commits is itself a push no-op (git exits
+// 0, "Everything up-to-date"). A genuine failure — most commonly a
+// non-fast-forward because something rewrote history upstream — surfaces
+// via runGit's captured + redacted stderr.
+func maybePushOriginHead(ctx context.Context, dir string) error {
+	branch, err := headBranchName(ctx, dir)
+	if err != nil || branch == "" {
+		return nil
+	}
+	return runGit(ctx, dir, "push", "origin", "HEAD")
 }
 
 func (h *RealHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {

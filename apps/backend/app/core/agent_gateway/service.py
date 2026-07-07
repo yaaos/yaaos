@@ -1088,6 +1088,15 @@ async def record_agent_event(
     if sink_extras is not None:
         outputs = {**outputs, **sink_extras}
 
+    # Artifact fields ride the terminal event's forwarded `outputs` payload —
+    # the outbox row that carries this dict is durable Postgres, so this is
+    # where the artifact rides until an engine reads it. Not yet consumed by
+    # anything downstream.
+    if event.artifact is not None:
+        outputs["artifact"] = event.artifact.model_dump(mode="json")
+    if event.artifact_error is not None:
+        outputs["artifact_error"] = event.artifact_error
+
     # Strip raw agent `stdout` after the sink has processed it. The sink is
     # the source of truth for what flows forward — it returns `{"output": ...}`
     # (the structured skill response JSON extracted from the stream-json result field)

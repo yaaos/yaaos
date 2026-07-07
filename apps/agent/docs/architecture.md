@@ -103,6 +103,16 @@ Full state machine and record shapes → [workspace_lifecycle.md](workspace_life
 
 On a non-zero claude exit, `RunClaude` returns `claude exit <code>: stderr=<…head…> stdout_tail=<…tail…>` — the supervisor maps this to the `completed_failure` event's `failure_reason`. Both halves ride because claude with `--output-format=stream-json` emits its `{"type":"result","is_error":true,…}` event at the end of stdout, so stderr alone is usually empty. Caps live in `realhandler.go` (`claudeErrStderrCap`, `claudeErrStdoutTailCap`); excerpts mark truncation explicitly (`...[truncated tail]` on stderr head, `...[truncated head]` on stdout tail). Empty halves render `<empty>` so a missing capture is distinguishable from a captured-nothing.
 
+### Skill-path check + artifact collection + exit-push
+
+`RunClaude` performs three additional steps around every `InvokeClaudeCode` invocation, all in `realhandler.go`:
+
+- **Pre-spawn skill check.** `InvokeClaudeCodeCommand.SkillPath` (backend-computed, convention `.claude/skills/<skill_name>/SKILL.md`) is stat'd inside the checkout before claude is spawned. Absent → `completed_failure` with `failure_reason="skill not found: <path>"`, no subprocess ever launched. Zero agent policy — the convention is entirely backend-side; the agent only stats the path it's given.
+- **Artifact collection.** `TMPDIR` is set on the claude subprocess to a workspace-local directory (`workspaceTmpDirName`, torn down by `Cleanup`'s `os.RemoveAll` — no per-file deletion, so a failed run's artifact survives for debugging until then). After the subprocess exits — regardless of its own exit status — `readArtifact` reads `$TMPDIR/<command_id>.md`, capped at `artifactMaxBytes` (2 MiB). Three outcomes: file absent → `(nil, "")` (legitimate — review invocations and non-completed main-skill outcomes write none); file present and under cap → `(&body, "")`; file present and over cap → `(nil, "<message>")`, distinguishing "wrote none" from "wrote too much". Both fields ride the terminal `AgentEvent`'s top-level `artifact`/`artifact_error` (not inside `outputs`) via `command.InvokeResult.ArtifactPayload()`, which `workspace.executeCommand` reads on both the success and error return paths — a push failure never masks a real artifact.
+- **Exit-push.** `maybePushOriginHead` runs `git push origin HEAD` iff HEAD is a named branch (`headBranchName` via `git symbolic-ref -q --short HEAD`); a detached checkout (today's only real-world case — see `gitClone` above) or a non-repo directory both resolve to "skip, not a failure". A named branch with no new commits is itself a push no-op (git reports "Everything up-to-date"). A genuine push failure (most commonly non-fast-forward) is a stage failure carrying the redacted git stderr — the artifact still ships on that same terminal event.
+
+Mechanical exit order: skill-stat (pre-spawn) → TMPDIR set (pre-spawn) → subprocess runs → artifact read → conditional push → terminal event reported.
+
 ### BYOK credential delivery
 
 Per-org API keys (e.g. `ANTHROPIC_API_KEY`) arrive via `ConfigUpdate.AgentConfig.ByokSecrets` — a `map[string]secret.Secret` keyed by provider ID. The mapping from provider ID to env var name lives in two identical package-level tables:

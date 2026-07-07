@@ -105,6 +105,12 @@ class InvokeClaudeCodeCommand(_CommandBase):
     mcp_servers: tuple[dict[str, Any], ...] = ()
     limits: InvokeClaudeCodeLimits
     result_spec: dict[str, Any] = Field(default_factory=dict)
+    # Conventional path of the named skill inside the checkout
+    # (`.claude/skills/<skill_name>/SKILL.md`), computed by
+    # `core/coding_agent.dispatch_invocation`. The agent stats this path
+    # before spawning claude and fails deterministically when it's absent —
+    # zero agent policy, the convention lives here.
+    skill_path: str
 
 
 class CleanupWorkspaceCommand(_CommandBase):
@@ -131,6 +137,8 @@ class InvokeClaudeCodeFields(BaseModel):
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
     limits: dict[str, Any]
     result_spec: dict[str, Any] = Field(default_factory=dict)
+    # See InvokeClaudeCodeCommand.skill_path.
+    skill_path: str
 
 
 class AgentConfig(BaseModel):
@@ -267,6 +275,19 @@ TERMINAL_EVENT_KINDS: frozenset[AgentEventKind] = frozenset(
 )
 
 
+class Artifact(BaseModel):
+    """Agent-collected artifact body for an InvokeClaudeCode terminal event.
+
+    Populated when the skill wrote `$TMPDIR/<command_id>.md` and the file fit
+    under the agent's size cap. `AgentEvent.artifact_error` explains why this
+    is null despite a completed invocation (over-cap or read failure);
+    both fields null means the skill legitimately wrote no artifact.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    body: str
+
+
 class AgentEvent(BaseModel):
     model_config = ConfigDict(frozen=True)
     command_id: UUID
@@ -281,6 +302,12 @@ class AgentEvent(BaseModel):
     # against `agent_commands.completion_token_hash` before any side effect.
     # NEVER log this field.
     completion_token: str | None = None
+    # Agent-collected artifact content (see Artifact) — set on InvokeClaudeCode
+    # terminal events when the skill wrote `$TMPDIR/<command_id>.md`.
+    artifact: Artifact | None = None
+    # Set when the artifact file exceeded the agent's size cap or otherwise
+    # couldn't be read — distinguishes "wrote none" from "wrote too much".
+    artifact_error: str | None = None
 
     def is_terminal(self) -> bool:
         return self.kind in TERMINAL_EVENT_KINDS

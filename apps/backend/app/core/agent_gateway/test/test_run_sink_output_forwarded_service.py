@@ -23,6 +23,7 @@ import pytest
 from app.core.agent_gateway import (
     AgentEvent,
     AgentEventKind,
+    Artifact,
     InvokeClaudeCodeCommand,
     InvokeClaudeCodeLimits,
     RepoRef,
@@ -126,6 +127,7 @@ async def _seed_invoke_command(
         ),
         invocation={"prompt": "review the code"},
         limits=InvokeClaudeCodeLimits(wallclock_seconds=300),
+        skill_path=".claude/skills/pr_review/SKILL.md",
     )
     await enqueue_command(
         org_id=org_id,
@@ -198,3 +200,74 @@ async def test_real_sink_forwards_output_and_strips_stdout(db_session) -> None:
 
     # (b) raw `stdout` is stripped — downstream steps must not read the stale key.
     assert "stdout" not in task_outputs, f"stdout should be stripped; got keys: {list(task_outputs)}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_agent_event_artifact_fields_forwarded_to_outbox_payload(db_session) -> None:
+    """`AgentEvent.artifact` / `artifact_error` ride the `HANDLE_AGENT_EVENT`
+    task args' `outputs` dict — the durable outbox row is where the artifact
+    lives until an engine reads it."""
+    org_id = uuid4()
+    wfx_id = uuid4()
+
+    cmd_id = await _seed_invoke_command(org_id, workflow_execution_id=wfx_id, session=db_session)
+    await db_session.commit()
+
+    event = AgentEvent(
+        command_id=cmd_id,
+        kind=AgentEventKind.COMPLETED_SUCCESS,
+        outputs={"exit_code": 0, "stdout": "## Requirements\nDone."},
+        reported_at=datetime.now(UTC),
+        traceparent="",
+        artifact=Artifact(body="## Requirements\nDone."),
+    )
+
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
+    async with org_context(org_id, ActorKind.WORKSPACE):
+        await record_agent_event(event, session=db_session)
+
+    payloads = await get_pending_outbox_payloads(db_session)
+    handle_payloads = [p for p in payloads if p.get("task_name", "").endswith("handle_agent_event")]
+    assert len(handle_payloads) == 1, f"expected exactly one handle_agent_event; got {handle_payloads}"
+
+    task_outputs = handle_payloads[0]["args"]["outputs"]
+    assert task_outputs.get("artifact") == {"body": "## Requirements\nDone."}
+    assert "artifact_error" not in task_outputs
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_agent_event_artifact_error_forwarded_to_outbox_payload(db_session) -> None:
+    """`artifact_error` rides the forwarded outputs when the artifact was
+    over-cap (or otherwise unreadable) — distinct from a null artifact."""
+    org_id = uuid4()
+    wfx_id = uuid4()
+
+    cmd_id = await _seed_invoke_command(org_id, workflow_execution_id=wfx_id, session=db_session)
+    await db_session.commit()
+
+    event = AgentEvent(
+        command_id=cmd_id,
+        kind=AgentEventKind.COMPLETED_SUCCESS,
+        outputs={"exit_code": 0, "stdout": ""},
+        reported_at=datetime.now(UTC),
+        traceparent="",
+        artifact_error="artifact exceeds 2097152 bytes (was 3000000)",
+    )
+
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
+    async with org_context(org_id, ActorKind.WORKSPACE):
+        await record_agent_event(event, session=db_session)
+
+    payloads = await get_pending_outbox_payloads(db_session)
+    handle_payloads = [p for p in payloads if p.get("task_name", "").endswith("handle_agent_event")]
+    assert len(handle_payloads) == 1, f"expected exactly one handle_agent_event; got {handle_payloads}"
+
+    task_outputs = handle_payloads[0]["args"]["outputs"]
+    assert task_outputs.get("artifact_error") == "artifact exceeds 2097152 bytes (was 3000000)"
+    assert "artifact" not in task_outputs

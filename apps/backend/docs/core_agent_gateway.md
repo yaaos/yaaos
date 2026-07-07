@@ -99,7 +99,7 @@ The span is a child of whatever span is current at the call site (typically a `w
 
 **Envelope-wins integrity guarantee:** the merge order ensures callers cannot supply counterfeit identity fields. The persisted flat JSONB key set is identical to the pre-typed layout; `_row_to_command` and the Go agent's `command.Decode` are unaffected.
 
-**`InvokeClaudeCodeFields`** (`core/agent_gateway/types.py`) is the typed model for `InvokeClaudeCode` kind-specific fields: `invocation`, `mcp_servers`, `limits`, `result_spec`. Exported from `core/agent_gateway.__all__`; the companion `InvokeClaudeCodeCommand` and `InvokeClaudeCodeLimits` remain available for deserialization and internal use.
+**`InvokeClaudeCodeFields`** (`core/agent_gateway/types.py`) is the typed model for `InvokeClaudeCode` kind-specific fields: `invocation`, `mcp_servers`, `limits`, `result_spec`, `skill_path`. Exported from `core/agent_gateway.__all__`; the companion `InvokeClaudeCodeCommand` and `InvokeClaudeCodeLimits` remain available for deserialization and internal use.
 
 Service tests: `test/test_dispatch_service.py` (typed `enqueue_command`); `test/test_enqueue_command_payload_service.py` (typed-fields `enqueue_command_payload`); `test/test_typed_payload_fields_service.py` (round-trip, key-set, envelope-wins).
 
@@ -167,7 +167,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 - **BytokSecretsProvider IoC seam** — `byok_provider.py` holds a single-slot registry for an async callable `(org_id, *, session) -> dict[str, SecretStr]`. Registered by `core/coding_agent` at import time (`_register_byok_secrets_provider(build_byok_secrets_for_org)`). `agent_gateway` calls `get_byok_secrets_provider()` inside `_build_config_update_dto` without importing `core/byok` or `core/coding_agent` — the IoC seam keeps the `agent_gateway → coding_agent` edge absent. Public exports: `register_byok_secrets_provider`, `get_byok_secrets_provider`, `clear_byok_secrets_provider`.
 - **`enqueue_config_update_for_all_org_agents(org_id, *, session)`** — selects all active `WorkspaceAgentRow` rows for the org and calls `enqueue_config_update_for_agent` for each. Called by `core/coding_agent` via a `core/byok.register_on_change` callback so agents receive fresh `byok_secrets` immediately after every BYOK `set()` or `clear()`.
 - **AgentCommand** — discriminated union: `ProvisionWorkspace | WriteFiles | RefreshWorkspaceAuth | InvokeClaudeCode | CleanupWorkspace | ConfigUpdate | Shutdown | CancelShutdown`.
-- **AgentEvent** — `progress` or `received` (non-terminal) or `completed_{success|failure|skipped}` (terminal). `received` cancels the lease requeue.
+- **AgentEvent** — `progress` or `received` (non-terminal) or `completed_{success|failure|skipped}` (terminal). `received` cancels the lease requeue. `artifact` (`Artifact | None`, `{body: str}`) and `artifact_error` (`str | None`) carry the agent-collected `$TMPDIR/<command_id>.md` content on `InvokeClaudeCode` terminal events — `record_agent_event` merges both into the `outputs` dict forwarded to `HANDLE_AGENT_EVENT` (not yet read by anything downstream).
 - **WorkspaceEvent** — `created | ready | exited | destroyed | failed`.
 - **BearerContext** — resolved identity from a verified bearer: `bearer_id`, `agent_id`, `org_id`.
 
@@ -187,7 +187,7 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 `test/test_run_sink_return_merges_service.py` covers: a stub `AgentRunSink` returning `{"foo": "bar"}` causes the `HANDLE_AGENT_EVENT` task args to carry `outputs["foo"] == "bar"`; a sink key overrides a same-key native value in `event.outputs`; a sink returning `None` leaves `outputs` equal to `event.outputs`.
 
-`test/test_run_sink_output_forwarded_service.py` covers: the real `CodingAgentRunSinkImpl` (stub-wrapped plugin) forwards `output` into the `HANDLE_AGENT_EVENT` task args and strips raw `stdout` — exercises the now-unconditional sink call path in `record_agent_event`.
+`test/test_run_sink_output_forwarded_service.py` covers: the real `CodingAgentRunSinkImpl` (stub-wrapped plugin) forwards `output` into the `HANDLE_AGENT_EVENT` task args and strips raw `stdout` — exercises the now-unconditional sink call path in `record_agent_event`; plus `AgentEvent.artifact` / `artifact_error` forwarding into the same `outputs` dict.
 
 `test/test_durable_command_service.py` covers: `enqueue_command` inserts a `pending` row; command survives a simulated backend restart; `claim_next` returns exactly ONE row per call leaving no others in `claimed` limbo; never returns a command for an unlisted workspace; unconfigured claim returns only `ConfigUpdate`; lease: `received` flips `claimed → delivered`; no `received` within 30s requeues to `pending`; terminal event → `done`; attempt cap → `done` (terminal failure); redelivery of `received` is idempotent.
 

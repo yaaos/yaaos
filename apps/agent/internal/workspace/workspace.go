@@ -118,6 +118,19 @@ func executeCommand(ctx context.Context, cmd command.WorkspaceCommand, ops comma
 	}
 
 	res, err := cmd.Execute(ctx, ops)
+	// Artifact fields ride the AgentEvent's top-level artifact/artifact_error —
+	// distinct from the ToWire() Outputs map below, and populated on BOTH the
+	// success and error return paths (a push failure after a successful
+	// invocation must not mask the artifact the invocation produced). Results
+	// that don't carry an artifact (every kind but InvokeClaudeCode) simply
+	// don't satisfy this interface.
+	if ar, ok := res.(command.ArtifactResult); ok {
+		body, artifactErr := ar.ArtifactPayload()
+		if body != nil {
+			base.Artifact = &protocol.Artifact{Body: *body}
+		}
+		base.ArtifactError = artifactErr
+	}
 	if err != nil {
 		base.Kind = protocol.EventCompletedFailure
 		base.FailureReason = err.Error()

@@ -43,6 +43,7 @@ def _invoke_fields() -> InvokeClaudeCodeFields:
         mcp_servers=[],
         limits={"wallclock_seconds": 300},
         result_spec={},
+        skill_path=".claude/skills/pr_review/SKILL.md",
     )
 
 

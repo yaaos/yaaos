@@ -161,6 +161,21 @@ async def dispatch_invocation(
 
     invocation_data = plugin.compile_invocation(invocation)
 
+    # Conventional path of the named skill inside the checkout. The agent
+    # stats this before spawning claude and fails deterministically
+    # (`completed_failure`, reason "skill not found: <path>") when it's
+    # absent — zero agent policy, the convention lives here.
+    #
+    # `pr_review` is exempt: it is the legacy reviewer's hardcoded skill
+    # identifier (`ClaudeCodePlugin.compile_invocation` only ever accepts
+    # `invocation.skill == "pr_review"`) and has no on-disk file — the whole
+    # review prompt is rendered inline, and the reviewed repo is an arbitrary
+    # third-party checkout that was never expected to carry a yaaos skill
+    # file. Left empty here, which `filepath.Join`s to the workspace root on
+    # the agent side (always present), so the pre-spawn check always succeeds
+    # for it. Goes away once the legacy reviewer's dispatch path is removed.
+    skill_path = "" if invocation.skill == "pr_review" else f".claude/skills/{invocation.skill}/SKILL.md"
+
     # Build the typed command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
     # the `exec` wrapper is required — a flat argv dict leaves `inv.Exec.Argv`
     # empty after json.Unmarshal and causes `completed_failure`.
@@ -179,6 +194,7 @@ async def dispatch_invocation(
         mcp_servers=(),
         limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
         result_spec={},
+        skill_path=skill_path,
     )
 
     # Layer 2: enqueue + pin + claim atomically.

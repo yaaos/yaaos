@@ -45,10 +45,13 @@ The `@final dispatch` (inherited from `AgentDispatchCommand`) calls `build_invoc
 Layer 3 helper in `service.py`. Flow:
 1. `get_workspace_owner(workspace_id)` — loads `org_id` + `owning_agent_id` from the workspace row; raises `WorkspaceNotFoundError` if absent.
 2. `plugin.compile_invocation(invocation)` — translates high-level intent to an exec block; raises `CodingAgentError` on unknown skills.
-3. Mints a UUIDv7 `command_id`; builds `InvokeClaudeCodeCommand` with `invocation.exec` wrapped correctly.
-4. `dispatch_via_workspace(command, workspace_id, ctx, session, claim_workspace=True)` — Layer 2: enqueues, pins to owning agent, atomically claims via `try_claim`; raises `WorkspaceClaimFailed` when busy or inactive.
-5. `create_run(...)` — inserts `coding_agent_runs` row.
+3. Computes `skill_path = f".claude/skills/{invocation.skill}/SKILL.md"` — the conventional on-disk path of the named skill inside the checkout. Exception: `invocation.skill == "pr_review"` (the legacy reviewer's hardcoded skill identifier — `ClaudeCodePlugin.compile_invocation` only ever accepts this value) gets `skill_path = ""` — that flow renders its whole prompt inline and reviews arbitrary third-party repos that were never expected to carry a yaaos skill file. An empty `skill_path` resolves to the workspace root on the agent side (always present), so the pre-spawn check always succeeds for it. The exemption goes away once the legacy reviewer's dispatch path is removed.
+4. Mints a UUIDv7 `command_id`; builds `InvokeClaudeCodeCommand` with `invocation.exec` wrapped correctly and `skill_path` set.
+5. `dispatch_via_workspace(command, workspace_id, ctx, session, claim_workspace=True)` — Layer 2: enqueues, pins to owning agent, atomically claims via `try_claim`; raises `WorkspaceClaimFailed` when busy or inactive.
+6. `create_run(...)` — inserts `coding_agent_runs` row.
 Returns `command_id`. `org_id` is resolved from the workspace row, not a caller parameter.
+
+The agent stats `skill_path` before spawning claude (skipped when empty, per the `pr_review` exception above) — absent → `completed_failure` with `failure_reason="skill not found: <path>"`. Zero policy on the agent side; the convention is entirely backend-computed.
 
 ### Value objects
 
@@ -120,7 +123,7 @@ Partitioned RANGE on `created_at` (weekly child partitions, ~4-week TTL). One ro
 
 - `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `set_coding_agents_for_tests` isolation.
 - `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set, Protocol has exactly `compile_invocation` + `byok_requirement` + `parse_result` + `validate_settings`, retired names not importable.
-- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns UUIDv7, inserts run row, resolvable via `get_run_id_for_command`.
+- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns UUIDv7, inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` on the enqueued command from the `.claude/skills/<skill_name>/SKILL.md` convention.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service: create/finalize round-trip, activity blob, `get_step_activity`.
 - `app/core/coding_agent/test/test_sink_uses_parse_result_service.py` — service: `CodingAgentRunSinkImpl.handle_terminal_event` calls `plugin.parse_result`, writes run row, returns `output` + `error_message`; non-`InvokeClaudeCode` kinds return `None`.
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `_parse_usage` + `_render_activity_log` private helpers.

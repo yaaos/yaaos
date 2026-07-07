@@ -1841,6 +1841,9 @@ export interface components {
         };
         /** AgentEvent */
         AgentEvent: {
+            artifact?: components["schemas"]["Artifact"] | null;
+            /** Artifact Error */
+            artifact_error?: string | null;
             /**
              * Attempt
              * @default 0
@@ -1913,6 +1916,19 @@ export interface components {
             state: string;
             /** Version */
             version: string | null;
+        };
+        /**
+         * Artifact
+         * @description Agent-collected artifact body for an InvokeClaudeCode terminal event.
+         *
+         *     Populated when the skill wrote `$TMPDIR/<command_id>.md` and the file fit
+         *     under the agent's size cap. `AgentEvent.artifact_error` explains why this
+         *     is null despite a completed invocation (over-cap or read failure);
+         *     both fields null means the skill legitimately wrote no artifact.
+         */
+        Artifact: {
+            /** Body */
+            body: string;
         };
         /** AuditEntryView */
         AuditEntryView: {
