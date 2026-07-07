@@ -1,20 +1,22 @@
 """Value objects owned by `domain/pipelines`.
 
-The definition model (`PipelineDefinition` + `Stage` union) is the wire +
-storage shape edited by the Pipelines page; `PipelineRun` / `StageExecution`
-are the read-model VOs the Runs tab consumes.
+The definition model (`PipelineDefinition` + `Stage` union) plus the
+flatten/validate logic over it live in `definition.py`. This module carries
+the stored-entity wrappers (`Pipeline`, `PipelineSummary`) and the
+run/stage read-model VOs the Runs tab consumes.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.core.audit_log import Actor
 from app.domain.findings import Finding
+from app.domain.pipelines.definition import PipelineDefinition
 
 RunState = Literal["queued", "running", "paused", "completed", "failed", "killed", "cancelled"]
 RunPhase = Literal["provision", "stages", "cleanup"]
@@ -23,99 +25,6 @@ StageStatus = Literal["running", "completed", "failed"]
 StagePhase = Literal["main", "review", "fix"]
 Confidence = Literal["low", "medium", "high"]
 BoundaryOutcome = Literal["proceeded", "paused", "sent_back"]
-
-
-# ---------------------------------------------------------------------------
-# Definition model (wire + storage shape)
-# ---------------------------------------------------------------------------
-
-
-class BoundaryControl(BaseModel, frozen=True):
-    """Flat per-stage "what to do next" setting; `on_*` evaluated only when
-    `mode == "conditional"`."""
-
-    mode: Literal["always_hitl", "always_proceed", "conditional"] = "always_hitl"
-    on_blocker_residuals: bool = False
-    on_should_fix_residuals: bool = False
-    on_protected_code: bool = False
-    on_confidence_below: Literal["medium", "high"] | None = None
-
-
-class ReviewConfig(BaseModel, frozen=True):
-    """Review skill name + max iterations; `None` on the owning stage means
-    review is off."""
-
-    skill_name: str
-    max_iterations: int = Field(ge=1, le=3)
-    finding_prefix: str | None = None
-
-
-class SkillStage(BaseModel, frozen=True):
-    """A main-skill invocation stage; optionally carries a review loop."""
-
-    kind: Literal["skill"] = "skill"
-    id: UUID
-    name: str
-    description: str = ""
-    skill_name: str
-    coding_agent_plugin_id: str
-    model: str
-    effort: str
-    review: ReviewConfig | None = None
-    context_stages: tuple[str, ...] | None = None
-    wallclock_seconds: int = 3600
-    boundary: BoundaryControl
-
-
-class ReviewSkillStage(BaseModel, frozen=True):
-    """A stage whose main invocation speaks the review contract directly —
-    produces findings, no artifact, structurally cannot carry a review loop."""
-
-    kind: Literal["review"] = "review"
-    id: UUID
-    name: str
-    description: str = ""
-    skill_name: str
-    coding_agent_plugin_id: str
-    model: str
-    effort: str
-    finding_prefix: str | None = None
-    context_stages: tuple[str, ...] | None = None
-    wallclock_seconds: int = 3600
-    boundary: BoundaryControl
-
-
-class ActionStage(BaseModel, frozen=True):
-    """A synchronous control-plane action stage."""
-
-    kind: Literal["action"] = "action"
-    id: UUID
-    description: str = ""
-    action_id: str
-
-
-class PipelineCallStage(BaseModel, frozen=True):
-    """Calls another org pipeline; expands recursively at flatten time."""
-
-    kind: Literal["call"] = "call"
-    id: UUID
-    description: str = ""
-    pipeline_id: UUID
-
-
-Stage = Annotated[
-    SkillStage | ReviewSkillStage | ActionStage | PipelineCallStage, Field(discriminator="kind")
-]
-
-
-class PipelineDefinition(BaseModel, frozen=True):
-    """The authored content — what POST/PUT accept. Shipped defaults are code
-    instances with pinned uuid7 ids."""
-
-    id: UUID
-    name: str
-    description: str = ""
-    stages: tuple[Stage, ...]
 
 
 class Pipeline(BaseModel, frozen=True):

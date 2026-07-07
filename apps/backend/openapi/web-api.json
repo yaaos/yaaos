@@ -14,6 +14,36 @@
         "title": "AcceptRequest",
         "type": "object"
       },
+      "ActionStage": {
+        "description": "A synchronous control-plane action stage. No `name` — actions carry\nno artifact identity, send-back key, or re-run inheritance key.",
+        "properties": {
+          "action_id": {
+            "title": "Action Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "action",
+            "default": "action",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "title": "ActionStage",
+        "type": "object"
+      },
       "ActivityEvent": {
         "description": "One rendered event in a coding-agent activity stream.\n\nProduced by `plugins/claude_code._render_activity_log` from Claude Code\nstream-json events. Persisted inside the `ActivityLog.events` JSONB array.\n\nFields:\n- `seq` — monotonic integer; 0-based; assigned by `_render_activity_log`.\n- `ts` — UTC datetime of the render pass (post-hoc, not real-time stream).\n  Pydantic coerces ISO-8601 strings to `datetime` on construction.\n- `kind` — one of the six canonical values in `ActivityEventKind`.\n- `message` — pre-rendered one-liner for the SPA activity feed.\n- `detail` — kind-specific metadata dict (safe for cross-boundary transport).\n\nPer-kind `detail` shapes:\n- `session_start`: `{model: str, session_id: str | None}`\n- `subagent_dispatched`: `{subagent: str, tool_use_id: str, description: str | None}`\n- `tool_call_started`: `{tool: str, tool_use_id: str, input_summary: dict}`\n- `assistant_message`: `{}` (message carries the text excerpt)\n- `tool_call_finished`: `{tool_use_id: str, is_error: bool, size_bytes: int}`\n- `result`: `{duration_ms: int | None, num_turns: int | None}`",
         "properties": {
@@ -361,6 +391,53 @@
         "title": "AuditEntryView",
         "type": "object"
       },
+      "BoundaryControl": {
+        "description": "Flat per-stage \"what to do next\" setting; `on_*` evaluated only when\n`mode == \"conditional\"`.",
+        "properties": {
+          "mode": {
+            "default": "always_hitl",
+            "enum": [
+              "always_hitl",
+              "always_proceed",
+              "conditional"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "on_blocker_residuals": {
+            "default": false,
+            "title": "On Blocker Residuals",
+            "type": "boolean"
+          },
+          "on_confidence_below": {
+            "anyOf": [
+              {
+                "enum": [
+                  "medium",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Confidence Below"
+          },
+          "on_protected_code": {
+            "default": false,
+            "title": "On Protected Code",
+            "type": "boolean"
+          },
+          "on_should_fix_residuals": {
+            "default": false,
+            "title": "On Should Fix Residuals",
+            "type": "boolean"
+          }
+        },
+        "title": "BoundaryControl",
+        "type": "object"
+      },
       "CancelShutdownResult": {
         "description": "Per-agent outcome of a bulk ``cancel_shutdown_agents`` call.",
         "properties": {
@@ -568,6 +645,20 @@
           "body"
         ],
         "title": "CreateLessonRequest",
+        "type": "object"
+      },
+      "CreatePipelineResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "CreatePipelineResponse",
         "type": "object"
       },
       "EmailView": {
@@ -1068,6 +1159,22 @@
         "title": "Lesson",
         "type": "object"
       },
+      "ListPipelinesResponse": {
+        "properties": {
+          "pipelines": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineSummary"
+            },
+            "title": "Pipelines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pipelines"
+        ],
+        "title": "ListPipelinesResponse",
+        "type": "object"
+      },
       "MemberView": {
         "properties": {
           "display_name": {
@@ -1174,6 +1281,218 @@
         "title": "PatchIntegrationRequest",
         "type": "object"
       },
+      "PipelineCallStage": {
+        "description": "Calls another org pipeline; expands recursively at flatten time.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "call",
+            "default": "call",
+            "title": "Kind",
+            "type": "string"
+          },
+          "pipeline_id": {
+            "format": "uuid",
+            "title": "Pipeline Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline_id"
+        ],
+        "title": "PipelineCallStage",
+        "type": "object"
+      },
+      "PipelineDefinition": {
+        "description": "The authored content — what POST/PUT accept. Shipped defaults are code\ninstances with pinned uuid7 ids.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "action": "#/components/schemas/ActionStage",
+                  "call": "#/components/schemas/PipelineCallStage",
+                  "review": "#/components/schemas/ReviewSkillStage",
+                  "skill": "#/components/schemas/SkillStage"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ReviewSkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ActionStage"
+                },
+                {
+                  "$ref": "#/components/schemas/PipelineCallStage"
+                }
+              ]
+            },
+            "minItems": 1,
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "stages"
+        ],
+        "title": "PipelineDefinition",
+        "type": "object"
+      },
+      "PipelineDetailResponse": {
+        "description": "Flat wire shape — `Pipeline.definition`'s fields ride at the top\nlevel alongside the stored-entity metadata.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "referenced": {
+            "title": "Referenced",
+            "type": "boolean"
+          },
+          "stages": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "action": "#/components/schemas/ActionStage",
+                  "call": "#/components/schemas/PipelineCallStage",
+                  "review": "#/components/schemas/ReviewSkillStage",
+                  "skill": "#/components/schemas/SkillStage"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ReviewSkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ActionStage"
+                },
+                {
+                  "$ref": "#/components/schemas/PipelineCallStage"
+                }
+              ]
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By Login"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "stages",
+          "updated_at",
+          "updated_by_login",
+          "referenced"
+        ],
+        "title": "PipelineDetailResponse",
+        "type": "object"
+      },
+      "PipelineSummary": {
+        "description": "One `list_pipelines` element — definition rows, unflattened.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "referenced": {
+            "title": "Referenced",
+            "type": "boolean"
+          },
+          "stage_count": {
+            "title": "Stage Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By Login"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "stage_count",
+          "updated_at",
+          "updated_by_login",
+          "referenced"
+        ],
+        "title": "PipelineSummary",
+        "type": "object"
+      },
       "ProviderStatus": {
         "properties": {
           "last_used_at": {
@@ -1255,6 +1574,123 @@
           "skill_name"
         ],
         "title": "RepoSkillRow",
+        "type": "object"
+      },
+      "ReviewConfig": {
+        "description": "Review skill name + max iterations; `None` on the owning stage means\nreview is off.",
+        "properties": {
+          "finding_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finding Prefix"
+          },
+          "max_iterations": {
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Max Iterations",
+            "type": "integer"
+          },
+          "skill_name": {
+            "title": "Skill Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_name",
+          "max_iterations"
+        ],
+        "title": "ReviewConfig",
+        "type": "object"
+      },
+      "ReviewSkillStage": {
+        "description": "A stage whose main invocation speaks the review contract directly —\nproduces findings, no artifact, structurally cannot carry a review loop.",
+        "properties": {
+          "boundary": {
+            "$ref": "#/components/schemas/BoundaryControl"
+          },
+          "coding_agent_plugin_id": {
+            "title": "Coding Agent Plugin Id",
+            "type": "string"
+          },
+          "context_stages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Stages"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "effort": {
+            "title": "Effort",
+            "type": "string"
+          },
+          "finding_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finding Prefix"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "review",
+            "default": "review",
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "skill_name": {
+            "title": "Skill Name",
+            "type": "string"
+          },
+          "wallclock_seconds": {
+            "default": 3600,
+            "title": "Wallclock Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "skill_name",
+          "coding_agent_plugin_id",
+          "model",
+          "effort",
+          "boundary"
+        ],
+        "title": "ReviewSkillStage",
         "type": "object"
       },
       "Role": {
@@ -1368,6 +1804,90 @@
           "outcome"
         ],
         "title": "ShutdownResult",
+        "type": "object"
+      },
+      "SkillStage": {
+        "description": "A main-skill invocation stage; optionally carries a review loop.",
+        "properties": {
+          "boundary": {
+            "$ref": "#/components/schemas/BoundaryControl"
+          },
+          "coding_agent_plugin_id": {
+            "title": "Coding Agent Plugin Id",
+            "type": "string"
+          },
+          "context_stages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Stages"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "effort": {
+            "title": "Effort",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "skill",
+            "default": "skill",
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skill_name": {
+            "title": "Skill Name",
+            "type": "string"
+          },
+          "wallclock_seconds": {
+            "default": 3600,
+            "title": "Wallclock Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "skill_name",
+          "coding_agent_plugin_id",
+          "model",
+          "effort",
+          "boundary"
+        ],
+        "title": "SkillStage",
         "type": "object"
       },
       "StepActivityResponse": {
@@ -6117,6 +6637,373 @@
         "summary": "Bulk Shutdown Agents",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/pipelines": {
+      "get": {
+        "operationId": "list_pipelines_endpoint_api_pipelines_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListPipelinesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pipelines Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      },
+      "post": {
+        "operationId": "create_pipeline_endpoint_api_pipelines_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineDefinition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatePipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Pipeline Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/{pipeline_id}": {
+      "delete": {
+        "operationId": "delete_pipeline_endpoint_api_pipelines__pipeline_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Pipeline Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      },
+      "get": {
+        "operationId": "get_pipeline_endpoint_api_pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Pipeline Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      },
+      "put": {
+        "operationId": "update_pipeline_endpoint_api_pipelines__pipeline_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineDefinition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Pipeline Endpoint",
+        "tags": [
+          "pipelines"
         ]
       }
     },

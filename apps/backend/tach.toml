@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pipelines"
-depends_on = ["app.core.audit_log", "app.core.database", "app.domain.findings"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tenancy", "app.core.webserver", "app.domain.findings", "app.domain.repos"]
 
 [[modules]]
 path = "app.domain.pr_review"
@@ -300,6 +300,7 @@ expose = [
   "audit",
   "audit_for_finding",
   "audit_for_lesson",
+  "audit_for_pipeline",
   "audit_for_pr",
   "audit_for_review_job",
   "audit_for_ticket",
@@ -1030,6 +1031,7 @@ expose = [
   "Pipeline",
   "PipelineCallStage",
   "PipelineDefinition",
+  "PipelineNameTakenError",
   "PipelineNotFoundError",
   "PipelineReferencedError",
   "PipelineRun",

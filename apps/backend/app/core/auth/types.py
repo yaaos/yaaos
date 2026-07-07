@@ -84,6 +84,10 @@ class Action(StrEnum):
     # Workspace-agent lifecycle management. Admin only.
     WORKSPACE_AGENT_SHUTDOWN = "workspace_agent.shutdown"
 
+    # Pipeline-definition CRUD (`domain/pipelines`). Admin only — reads and
+    # writes both, unlike the READ/WRITE-split settings actions above.
+    PIPELINES_MANAGE = "pipelines.manage"
+
 
 class RouteSecurity(StrEnum):
     """The three route categories. See module docstring."""
@@ -197,6 +201,8 @@ ORG_SCOPED_PREFIXES: tuple[str, ...] = (
     "/api/reviewer",
     # SSE routes mounted at core/sse/web.py — org-scoped per-workflow streams.
     "/api/sse",
+    # Pipeline-definition CRUD.
+    "/api/pipelines",
 )
 
 

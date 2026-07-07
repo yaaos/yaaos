@@ -191,6 +191,18 @@ async def audit_for_workspace(
     return await audit("workspace", workspace_id, kind, payload, actor, org_id=org_id, session=session)
 
 
+async def audit_for_pipeline(
+    pipeline_id: UUID,
+    kind: str,
+    payload: BaseModel,
+    *,
+    actor: Actor,
+    org_id: UUID,
+    session: AsyncSession,
+) -> AuditEntry:
+    return await audit("pipeline", pipeline_id, kind, payload, actor, org_id=org_id, session=session)
+
+
 # Read API
 
 

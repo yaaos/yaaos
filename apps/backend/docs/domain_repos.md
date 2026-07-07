@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns the `repo_settings` and `repo_trigger_bindings` tables. There is no `repos` table — repos are external ids from the VCS installation; the Repos-page accordion is `vcs.list_installation_repos(org_id)` (live) joined against this module's config rows. An absent `repo_settings` row means the model's defaults apply — `unconfigured` is a state, not an error. Does not yet own any runtime behavior — every `service.py` function raises `NotImplementedError`.
+Owns the `repo_settings` and `repo_trigger_bindings` tables. There is no `repos` table — repos are external ids from the VCS installation; the Repos-page accordion is `vcs.list_installation_repos(org_id)` (live) joined against this module's config rows. An absent `repo_settings` row means the model's defaults apply — `unconfigured` is a state, not an error. Does not yet own any runtime behavior — every `service.py` function raises `NotImplementedError`, except `pipeline_referenced_by_binding`, which always returns `False` (no `TriggerBinding` can reference a pipeline before bindings themselves are writable) so `domain/pipelines.delete_pipeline` has a real answer to OR against its own call-stage check.
 
 ## Public interface
 

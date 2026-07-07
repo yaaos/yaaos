@@ -1,6 +1,9 @@
 """Stub service surface for `domain/repos`.
 
 Bodies raise `NotImplementedError` — only the signatures are load-bearing.
+Exception: `pipeline_referenced_by_binding` always returns `False` — no
+`TriggerBinding` can reference a pipeline before repo trigger bindings are
+writable, so `domain/pipelines.delete_pipeline` can call it safely today.
 """
 
 from __future__ import annotations
@@ -84,7 +87,10 @@ def match_protected(
 
 
 async def pipeline_referenced_by_binding(pipeline_id: UUID, *, session: AsyncSession) -> bool:
-    raise NotImplementedError
+    """Always False until repo trigger bindings exist — no `TriggerBinding`
+    can reference a pipeline before the bindings themselves are writable."""
+    del pipeline_id, session
+    return False
 
 
 async def list_due_schedule_bindings(*, now: datetime, session: AsyncSession) -> list[DueFire]:

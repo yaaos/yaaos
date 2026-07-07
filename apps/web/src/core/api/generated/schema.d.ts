@@ -1017,6 +1017,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Pipelines Endpoint */
+        get: operations["list_pipelines_endpoint_api_pipelines_get"];
+        put?: never;
+        /** Create Pipeline Endpoint */
+        post: operations["create_pipeline_endpoint_api_pipelines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pipelines/{pipeline_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pipeline Endpoint */
+        get: operations["get_pipeline_endpoint_api_pipelines__pipeline_id__get"];
+        /** Update Pipeline Endpoint */
+        put: operations["update_pipeline_endpoint_api_pipelines__pipeline_id__put"];
+        post?: never;
+        /** Delete Pipeline Endpoint */
+        delete: operations["delete_pipeline_endpoint_api_pipelines__pipeline_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reviewer/cancel": {
         parameters: {
             query?: never;
@@ -1713,6 +1750,30 @@ export interface components {
             token: string;
         };
         /**
+         * ActionStage
+         * @description A synchronous control-plane action stage. No `name` — actions carry
+         *     no artifact identity, send-back key, or re-run inheritance key.
+         */
+        ActionStage: {
+            /** Action Id */
+            action_id: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "action";
+        };
+        /**
          * ActivityEvent
          * @description One rendered event in a coding-agent activity stream.
          *
@@ -1883,6 +1944,36 @@ export interface components {
             };
         };
         /**
+         * BoundaryControl
+         * @description Flat per-stage "what to do next" setting; `on_*` evaluated only when
+         *     `mode == "conditional"`.
+         */
+        BoundaryControl: {
+            /**
+             * Mode
+             * @default always_hitl
+             * @enum {string}
+             */
+            mode: "always_hitl" | "always_proceed" | "conditional";
+            /**
+             * On Blocker Residuals
+             * @default false
+             */
+            on_blocker_residuals: boolean;
+            /** On Confidence Below */
+            on_confidence_below?: ("medium" | "high") | null;
+            /**
+             * On Protected Code
+             * @default false
+             */
+            on_protected_code: boolean;
+            /**
+             * On Should Fix Residuals
+             * @default false
+             */
+            on_should_fix_residuals: boolean;
+        };
+        /**
          * CancelShutdownResult
          * @description Per-agent outcome of a bulk ``cancel_shutdown_agents`` call.
          */
@@ -1978,6 +2069,14 @@ export interface components {
             source_pr_url?: string | null;
             /** Title */
             title: string;
+        };
+        /** CreatePipelineResponse */
+        CreatePipelineResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
         };
         /** EmailView */
         EmailView: {
@@ -2192,6 +2291,11 @@ export interface components {
              */
             updated_at: string;
         };
+        /** ListPipelinesResponse */
+        ListPipelinesResponse: {
+            /** Pipelines */
+            pipelines: components["schemas"]["PipelineSummary"][];
+        };
         /** MemberView */
         MemberView: {
             /** Display Name */
@@ -2235,6 +2339,104 @@ export interface components {
             /** Enabled */
             enabled?: boolean | null;
         };
+        /**
+         * PipelineCallStage
+         * @description Calls another org pipeline; expands recursively at flatten time.
+         */
+        PipelineCallStage: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "call";
+            /**
+             * Pipeline Id
+             * Format: uuid
+             */
+            pipeline_id: string;
+        };
+        /**
+         * PipelineDefinition
+         * @description The authored content — what POST/PUT accept. Shipped defaults are code
+         *     instances with pinned uuid7 ids.
+         */
+        PipelineDefinition: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /** Name */
+            name: string;
+            /** Stages */
+            stages: (components["schemas"]["SkillStage"] | components["schemas"]["ReviewSkillStage"] | components["schemas"]["ActionStage"] | components["schemas"]["PipelineCallStage"])[];
+        };
+        /**
+         * PipelineDetailResponse
+         * @description Flat wire shape — `Pipeline.definition`'s fields ride at the top
+         *     level alongside the stored-entity metadata.
+         */
+        PipelineDetailResponse: {
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Referenced */
+            referenced: boolean;
+            /** Stages */
+            stages: (components["schemas"]["SkillStage"] | components["schemas"]["ReviewSkillStage"] | components["schemas"]["ActionStage"] | components["schemas"]["PipelineCallStage"])[];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Updated By Login */
+            updated_by_login: string | null;
+        };
+        /**
+         * PipelineSummary
+         * @description One `list_pipelines` element — definition rows, unflattened.
+         */
+        PipelineSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Referenced */
+            referenced: boolean;
+            /** Stage Count */
+            stage_count: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Updated By Login */
+            updated_by_login: string | null;
+        };
         /** ProviderStatus */
         ProviderStatus: {
             /** Last Used At */
@@ -2257,6 +2459,61 @@ export interface components {
             repo_external_id: string;
             /** Skill Name */
             skill_name: string | null;
+        };
+        /**
+         * ReviewConfig
+         * @description Review skill name + max iterations; `None` on the owning stage means
+         *     review is off.
+         */
+        ReviewConfig: {
+            /** Finding Prefix */
+            finding_prefix?: string | null;
+            /** Max Iterations */
+            max_iterations: number;
+            /** Skill Name */
+            skill_name: string;
+        };
+        /**
+         * ReviewSkillStage
+         * @description A stage whose main invocation speaks the review contract directly —
+         *     produces findings, no artifact, structurally cannot carry a review loop.
+         */
+        ReviewSkillStage: {
+            boundary: components["schemas"]["BoundaryControl"];
+            /** Coding Agent Plugin Id */
+            coding_agent_plugin_id: string;
+            /** Context Stages */
+            context_stages?: string[] | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Effort */
+            effort: string;
+            /** Finding Prefix */
+            finding_prefix?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "review";
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            /** Skill Name */
+            skill_name: string;
+            /**
+             * Wallclock Seconds
+             * @default 3600
+             */
+            wallclock_seconds: number;
         };
         /**
          * Role
@@ -2315,6 +2572,46 @@ export interface components {
              * @enum {string}
              */
             outcome: "draining" | "already_draining" | "already_shutdown" | "not_found";
+        };
+        /**
+         * SkillStage
+         * @description A main-skill invocation stage; optionally carries a review loop.
+         */
+        SkillStage: {
+            boundary: components["schemas"]["BoundaryControl"];
+            /** Coding Agent Plugin Id */
+            coding_agent_plugin_id: string;
+            /** Context Stages */
+            context_stages?: string[] | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Effort */
+            effort: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "skill";
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            review?: components["schemas"]["ReviewConfig"] | null;
+            /** Skill Name */
+            skill_name: string;
+            /**
+             * Wallclock Seconds
+             * @default 3600
+             */
+            wallclock_seconds: number;
         };
         /**
          * StepActivityResponse
@@ -4588,6 +4885,185 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["_BulkShutdownResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pipelines_endpoint_api_pipelines_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPipelinesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_pipeline_endpoint_api_pipelines_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineDefinition"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pipeline_endpoint_api_pipelines__pipeline_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_pipeline_endpoint_api_pipelines__pipeline_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineDefinition"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_pipeline_endpoint_api_pipelines__pipeline_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

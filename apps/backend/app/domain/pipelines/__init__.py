@@ -7,14 +7,27 @@ per org pipeline, executed by a generic run/stage dispatcher instead of
 per-step command classes. See `apps/backend/docs/domain_pipelines.md`.
 """
 
+# Side-effect import: registers /api/pipelines/* routes.
+import app.domain.pipelines.web  # noqa: F401
+from app.domain.pipelines.definition import (
+    ActionStage,
+    BoundaryControl,
+    PipelineCallStage,
+    PipelineDefinition,
+    PipelineValidationError,
+    ReviewConfig,
+    ReviewSkillStage,
+    SkillStage,
+    Stage,
+)
 from app.domain.pipelines.service import (
     MissingInheritedArtifactError,
     NotEscalationTargetError,
     PauseAlreadyResolvedError,
     PauseNotFoundError,
+    PipelineNameTakenError,
     PipelineNotFoundError,
     PipelineReferencedError,
-    PipelineValidationError,
     RunNotFoundError,
     StageNotInDefinitionError,
     create_pipeline,
@@ -34,20 +47,12 @@ from app.domain.pipelines.service import (
     update_pipeline,
 )
 from app.domain.pipelines.types import (
-    ActionStage,
-    BoundaryControl,
     Kickoff,
     PauseResolution,
     Pipeline,
-    PipelineCallStage,
-    PipelineDefinition,
     PipelineRun,
     PipelineSummary,
-    ReviewConfig,
-    ReviewSkillStage,
     RunOverview,
-    SkillStage,
-    Stage,
     StageExecution,
 )
 
@@ -63,6 +68,7 @@ __all__ = [
     "Pipeline",
     "PipelineCallStage",
     "PipelineDefinition",
+    "PipelineNameTakenError",
     "PipelineNotFoundError",
     "PipelineReferencedError",
     "PipelineRun",
