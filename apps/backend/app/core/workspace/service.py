@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
@@ -741,6 +741,25 @@ async def update_workspace_status(
     """
     await session.execute(
         update(WorkspaceRow).where(WorkspaceRow.id == workspace_id).values(status=new_status)
+    )
+
+
+async def extend_expiry(
+    workspace_id: UUID,
+    *,
+    seconds: int,
+    session: AsyncSession,
+) -> None:
+    """Push `expires_at` out to `now + seconds`, unconditionally.
+
+    Used by `domain/pipelines` to keep a paused run's workspace alive
+    through its HITL grace window — the normal reaper collects the
+    workspace once the deadline passes with no resolution.
+    """
+    await session.execute(
+        update(WorkspaceRow)
+        .where(WorkspaceRow.id == workspace_id)
+        .values(expires_at=_utcnow() + timedelta(seconds=seconds))
     )
 
 

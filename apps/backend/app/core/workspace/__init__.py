@@ -31,6 +31,7 @@ from app.core.workspace.dispatch import (
 from app.core.workspace.remote_provider import register_workspace_providers
 from app.core.workspace.service import (
     close_workspace,
+    extend_expiry,
     get_provider,
     get_workspace_claim_state,
     get_workspace_command_state,
@@ -111,6 +112,7 @@ __all__ = [
     "dispatch_provision",
     "dispatch_push",
     "dispatch_via_workspace",
+    "extend_expiry",
     "get_provider",
     "get_workspace_claim_state",
     "get_workspace_command_state",

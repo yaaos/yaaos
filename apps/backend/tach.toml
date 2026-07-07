@@ -139,7 +139,7 @@ depends_on = ["app.core.database"]
 
 [[modules]]
 path = "app.domain.repos"
-depends_on = ["app.core.audit_log", "app.core.database"]
+depends_on = ["app.core.audit_log", "app.core.database", "app.domain.findings"]
 
 [[modules]]
 path = "app.domain.reviewer"
@@ -306,6 +306,7 @@ expose = [
   "audit_for_lesson",
   "audit_for_pipeline",
   "audit_for_pr",
+  "audit_for_repo_settings",
   "audit_for_review_job",
   "audit_for_ticket",
   "audit_for_webhook_event",
@@ -843,6 +844,7 @@ expose = [
   "dispatch_provision",
   "dispatch_push",
   "dispatch_via_workspace",
+  "extend_expiry",
   "get_provider",
   "get_workspace_claim_state",
   "get_workspace_command_state",
@@ -1195,6 +1197,8 @@ expose = [
   "set_workflow_execution",
   "transition_on_workflow_start",
   "transition_on_workflow_terminal",
+  "transition_ticket_on_run_paused",
+  "transition_ticket_on_run_resumed",
   "transition_ticket_on_run_start",
   "transition_ticket_on_run_terminal",
   "transition_ticket_on_start",

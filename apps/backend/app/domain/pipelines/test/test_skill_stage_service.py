@@ -74,6 +74,9 @@ async def _seed_org_ticket_and_user(db_session) -> tuple[UUID, UUID, UUID]:
 
 
 def _one_skill_stage_definition() -> PipelineDefinition:
+    # `mode="always_proceed"` — this file exercises skill-stage dispatch
+    # mechanics, not boundary policy; `BoundaryControl()`'s own default
+    # (`always_hitl`) would pause every run here instead of completing it.
     return PipelineDefinition(
         name=f"pipe-{uuid4().hex[:8]}",
         stages=(
@@ -83,7 +86,7 @@ def _one_skill_stage_definition() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                boundary=BoundaryControl(),
+                boundary=BoundaryControl(mode="always_proceed"),
             ),
         ),
     )
@@ -101,7 +104,7 @@ def _two_skill_stage_definition() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                boundary=BoundaryControl(),
+                boundary=BoundaryControl(mode="always_proceed"),
             ),
             SkillStage(
                 name="review-spec",
@@ -109,7 +112,7 @@ def _two_skill_stage_definition() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                boundary=BoundaryControl(),
+                boundary=BoundaryControl(mode="always_proceed"),
             ),
         ),
     )

@@ -1069,6 +1069,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pipelines/runs/pauses/{pause_id}/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Respond Pause Endpoint */
+        post: operations["respond_pause_endpoint_api_pipelines_runs_pauses__pause_id__respond_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pipelines/runs/{run_id}/cancel": {
         parameters: {
             query?: never;
@@ -2477,6 +2494,21 @@ export interface components {
             enabled?: boolean | null;
         };
         /**
+         * PauseResolution
+         * @description The `resolve_pause` request body shape.
+         */
+        PauseResolution: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "approve" | "instruct" | "send_back" | "kill";
+            /** Instruction */
+            instruction?: string | null;
+            /** Send Back To Stage */
+            send_back_to_stage?: string | null;
+        };
+        /**
          * PipelineCallStage
          * @description Calls another org pipeline; expands recursively at flatten time.
          */
@@ -2596,6 +2628,11 @@ export interface components {
             repo_external_id: string;
             /** Skill Name */
             skill_name: string | null;
+        };
+        /** RespondPauseResponse */
+        RespondPauseResponse: {
+            /** Run State */
+            run_state: string;
         };
         /**
          * ReviewConfig
@@ -5162,6 +5199,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreatePipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    respond_pause_endpoint_api_pipelines_runs_pauses__pause_id__respond_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                pause_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PauseResolution"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespondPauseResponse"];
                 };
             };
             /** @description Validation Error */

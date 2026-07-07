@@ -1447,6 +1447,48 @@
         "title": "PatchIntegrationRequest",
         "type": "object"
       },
+      "PauseResolution": {
+        "description": "The `resolve_pause` request body shape.",
+        "properties": {
+          "action": {
+            "enum": [
+              "approve",
+              "instruct",
+              "send_back",
+              "kill"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "instruction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction"
+          },
+          "send_back_to_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Send Back To Stage"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "PauseResolution",
+        "type": "object"
+      },
       "PipelineCallStage": {
         "description": "Calls another org pipeline; expands recursively at flatten time.",
         "properties": {
@@ -1740,6 +1782,19 @@
           "skill_name"
         ],
         "title": "RepoSkillRow",
+        "type": "object"
+      },
+      "RespondPauseResponse": {
+        "properties": {
+          "run_state": {
+            "title": "Run State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_state"
+        ],
+        "title": "RespondPauseResponse",
         "type": "object"
       },
       "ReviewConfig": {
@@ -7089,6 +7144,91 @@
           }
         },
         "summary": "Create Pipeline Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/pauses/{pause_id}/respond": {
+      "post": {
+        "operationId": "respond_pause_endpoint_api_pipelines_runs_pauses__pause_id__respond_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pause_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pause Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PauseResolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RespondPauseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Respond Pause Endpoint",
         "tags": [
           "pipelines"
         ]

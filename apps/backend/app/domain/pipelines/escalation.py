@@ -8,6 +8,7 @@ Intra-module only — not re-exported from `__init__.py`. The engine
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import ActorKind
 from app.core.auth import Role
 from app.core.identity import find_oauth_identity
-from app.core.tenancy import list_memberships_for_org
+from app.core.tenancy import get_member_role, list_memberships_for_org
 from app.domain.pipelines.types import Kickoff
 
 _ADMIN_ROLES = (Role.OWNER, Role.ADMIN)
@@ -41,3 +42,15 @@ async def resolve_escalation_targets(kickoff: Kickoff, org_id: UUID, *, session:
 async def _org_admin_ids(org_id: UUID, *, session: AsyncSession) -> set[UUID]:
     memberships = await list_memberships_for_org(session, org_id)
     return {m.user_id for m in memberships if m.role in _ADMIN_ROLES}
+
+
+async def is_pause_responder(
+    user_id: UUID, escalation_user_ids: Sequence[UUID], *, org_id: UUID, session: AsyncSession
+) -> bool:
+    """True iff `user_id` may resolve a pause: in the pause's own escalation
+    set, OR an org admin/owner — "responders = escalation set union org
+    admins always" per architecture."""
+    if user_id in escalation_user_ids:
+        return True
+    role = await get_member_role(session, user_id=user_id, org_id=org_id)
+    return role is not None and role.covers(Role.ADMIN)

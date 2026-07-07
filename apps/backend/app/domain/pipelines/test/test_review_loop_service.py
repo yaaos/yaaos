@@ -79,6 +79,9 @@ async def _seed_org_ticket_and_user(db_session) -> tuple[UUID, UUID, UUID]:
 
 
 def _review_loop_definition() -> PipelineDefinition:
+    # `mode="always_proceed"` — this file exercises the review/fix loop, not
+    # boundary policy; `BoundaryControl()`'s own default (`always_hitl`)
+    # would pause every run here instead of completing it.
     return PipelineDefinition(
         name=f"pipe-{uuid4().hex[:8]}",
         stages=(
@@ -89,7 +92,7 @@ def _review_loop_definition() -> PipelineDefinition:
                 model="sonnet",
                 effort="medium",
                 review=ReviewConfig(skill_name="review-implement", max_iterations=2, finding_prefix="SPEC"),
-                boundary=BoundaryControl(),
+                boundary=BoundaryControl(mode="always_proceed"),
             ),
         ),
     )
@@ -106,7 +109,7 @@ def _review_only_stage_definition() -> PipelineDefinition:
                 model="sonnet",
                 effort="medium",
                 finding_prefix="REV",
-                boundary=BoundaryControl(),
+                boundary=BoundaryControl(mode="always_proceed"),
             ),
         ),
     )
@@ -338,7 +341,8 @@ async def test_review_fix_loop_acceptance(db_session) -> None:
     assert still_open_nit.status == "open"
 
     # max_iterations=2 hit — the loop stops even though the nit residual
-    # remains (boundary evaluation is a labeled always-proceed stub).
+    # remains; the stage's `mode="always_proceed"` boundary control means
+    # the residual never trips a pause.
     run = await _finish_via_cleanup(org_id, run_id, db_session)
     assert run.state == "completed"
 

@@ -12,18 +12,20 @@ taskiq trio, terminal bookkeeping) to `engine.py`. `start_rerun_from_stage`, `re
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit_log import Actor, audit_for_pipeline
+from app.core.audit_log import Actor, audit, audit_for_pipeline
 from app.core.auth import require_org_context
 from app.core.tenancy import get_membership_info
 from app.domain.pipelines import engine
 from app.domain.pipelines.definition import PipelineDefinition, flatten, validate_definition
-from app.domain.pipelines.models import PipelineRow, PipelineRunRow
+from app.domain.pipelines.escalation import is_pause_responder
+from app.domain.pipelines.models import PipelineRow, PipelineRunRow, RunPauseRow
 from app.domain.pipelines.types import (
     Kickoff,
     PauseResolution,
@@ -369,10 +371,15 @@ async def request_cancel(run_id: UUID, *, actor: Actor, session: AsyncSession) -
     if run.state == "running":
         run.cancel_requested = True
         return
-    # `paused` cancel-immediately semantics land with the pause/resolve
-    # machinery — no pause can exist yet (boundary evaluation always
-    # proceeds), so this branch is unreachable today.
-    raise NotImplementedError("cancel of a paused run lands with the pause/resolve machinery")
+    # `run.state == "paused"` — cancel immediately. A paused run always has
+    # exactly one open pause row (created atomically with the state flip).
+    pause = await engine.get_open_pause_for_run(run.id, session=session)
+    assert pause is not None, f"run {run.id} is paused but has no open run_pauses row"
+    await engine.cancel_paused(run, pause, session=session)
+
+
+class _PauseResolvedPayload(BaseModel):
+    action: str
 
 
 async def resolve_pause(
@@ -382,8 +389,64 @@ async def resolve_pause(
     actor: Actor,
     session: AsyncSession,
 ) -> None:
-    """The single HITL resolution entry."""
-    raise NotImplementedError
+    """The single HITL resolution entry. `approve` resumes at the next
+    boundary; `kill` terminates the run. `instruct`/`send_back` raise a
+    labeled `NotImplementedError` — the machinery that resumes a stage with
+    an instruction, or rewinds to an earlier stage, doesn't exist yet; it
+    lands with the send-back/instruct re-entry machinery."""
+    org_id = require_org_context()
+    pause = await session.get(RunPauseRow, pause_id)
+    if pause is None or pause.org_id != org_id:
+        raise PauseNotFoundError(pause_id)
+    if actor.user_id is None or not await is_pause_responder(
+        actor.user_id, pause.escalation_user_ids, org_id=org_id, session=session
+    ):
+        raise NotEscalationTargetError(str(pause_id))
+    if pause.resolved_at is not None:
+        raise PauseAlreadyResolvedError(pause_id)
+
+    if resolution.action in ("instruct", "send_back"):
+        raise NotImplementedError(
+            f"{resolution.action!r} resolution lands with the send-back/instruct re-entry machinery"
+        )
+
+    run = await session.get(PipelineRunRow, pause.run_id)
+    if run is None:
+        raise RunNotFoundError(pause.run_id)
+
+    pause.resolution = resolution.action
+    pause.instruction = resolution.instruction
+    pause.send_back_to_stage = resolution.send_back_to_stage
+    pause.resolved_by = actor.user_id
+    pause.resolved_at = datetime.now(UTC)
+
+    await audit(
+        "pipeline_run",
+        run.id,
+        "run.pause_resolved",
+        _PauseResolvedPayload(action=resolution.action),
+        actor=actor,
+        org_id=org_id,
+        session=session,
+    )
+
+    if resolution.action == "approve":
+        await engine.resume_from_pause(pause, run, session=session)
+    else:
+        assert resolution.action == "kill"
+        await engine.kill_run(run, session=session)
+
+
+async def get_run_state_for_pause(pause_id: UUID, *, session: AsyncSession) -> str:
+    """Read-only helper for the `respond` endpoint's `{run_state}` response
+    — the owning run's state after `resolve_pause` applied its effect."""
+    return (
+        await session.execute(
+            select(PipelineRunRow.state)
+            .join(RunPauseRow, RunPauseRow.run_id == PipelineRunRow.id)
+            .where(RunPauseRow.id == pause_id)
+        )
+    ).scalar_one()
 
 
 async def instantiate_template(

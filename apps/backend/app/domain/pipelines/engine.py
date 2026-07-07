@@ -18,10 +18,26 @@ send-back, creates a new row). Every reported finding materializes
 immediately as a durable `domain/findings` row; the engine applies the
 verdict matrix mechanically (`fixed -> resolve`; `still_present` -> `reflag`
 when open, `reopen` when resolved; `user_overrode -> dismiss`). The loop
-stops (and always proceeds — boundary evaluation is still a labeled
-always-proceed stub) once no residuals remain or `review.max_iterations` is
-reached. A standalone `ReviewSkillStage` (`kind='review'`) dispatches one
-review invocation — no artifact, no loop.
+stops once no residuals remain or `review.max_iterations` is reached, then
+`boundary.evaluate_boundary` decides pause-vs-proceed (mode + residual
+severities + protected paths + bucketed confidence). A standalone
+`ReviewSkillStage` (`kind='review'`) dispatches one review invocation — no
+artifact, no loop — then the same boundary evaluation.
+
+A tripped boundary (`always_hitl`, or a `conditional` mode with at least one
+condition firing) writes a `run_pauses` row, flips the run `paused` and the
+ticket `hitl`, extends the workspace's expiry by
+`PAUSED_RUN_WORKSPACE_GRACE_SECONDS`, and notifies the resolved escalation
+set (`domain/pipelines.escalation` targets, unioned with protected-path
+owners when that condition fired). `resolve_pause` (in `service.py`) drives
+`approve` (resume at the next boundary) and `kill` (terminal `killed`)
+through `resume_from_pause`/`kill_run` below; `instruct`/`send_back`
+resolutions aren't implemented yet — `service.resolve_pause` raises a
+labeled `NotImplementedError` for those two actions until the re-entry
+machinery that resumes a stage with an instruction, or rewinds to an
+earlier stage, exists. `request_cancel` on a `paused` run cancels
+immediately via `cancel_paused`, closing the open pause without a
+resolution.
 
 Workspace provision/cleanup are engine-dispatched `kind='system'`
 `stage_executions` rows (`stage_index NULL`). Before every skill/review-stage
@@ -71,6 +87,7 @@ from app.core.workspace import (
     dispatch_auth_refresh,
     dispatch_cleanup,
     dispatch_provision,
+    extend_expiry,
     get_workspace_info,
 )
 from app.domain.actions import ActionContext, ActionError, get_action
@@ -89,6 +106,7 @@ from app.domain.findings import (
     reopen,
     resolve,
 )
+from app.domain.pipelines.boundary import BoundaryDecision, evaluate_boundary
 from app.domain.pipelines.contracts import (
     PriorFindingVerdict,
     SkillReturn,
@@ -97,7 +115,7 @@ from app.domain.pipelines.contracts import (
 )
 from app.domain.pipelines.definition import ActionStage, FlattenedDefinition, ReviewSkillStage, SkillStage
 from app.domain.pipelines.escalation import resolve_escalation_targets
-from app.domain.pipelines.models import PipelineRunRow, StageExecutionRow
+from app.domain.pipelines.models import PipelineRunRow, RunPauseRow, StageExecutionRow
 from app.domain.pipelines.types import Kickoff, PriorFindingRef, RevisionContext, StageInvocationContext
 from app.domain.tickets import (
     get as get_ticket,
@@ -105,6 +123,8 @@ from app.domain.tickets import (
 from app.domain.tickets import (
     get_pull_request,
     set_current_run,
+    transition_ticket_on_run_paused,
+    transition_ticket_on_run_resumed,
     transition_ticket_on_run_start,
     transition_ticket_on_run_terminal,
 )
@@ -119,9 +139,7 @@ _RUN_STATE_TO_TICKET_STATUS = {
 }
 
 # How long a paused run's workspace is kept alive past the pause before the
-# normal reaper can collect it. Defined now (the constant is part of the
-# stage-lifecycle contract in architecture) but unconsumed until pause
-# machinery exists — no run ever pauses in this engine yet.
+# normal reaper can collect it.
 PAUSED_RUN_WORKSPACE_GRACE_SECONDS = 1800
 
 # Names of the engine-dispatched `kind='system'` bookkeeping stage executions.
@@ -262,6 +280,140 @@ async def cancel_queued(run: PipelineRunRow, *, actor: Actor, session: AsyncSess
 
 
 # ---------------------------------------------------------------------------
+# Pause creation + resolution
+# ---------------------------------------------------------------------------
+
+
+class _RunPausedPayload(BaseModel):
+    ticket_id: str
+    pipeline_name: str
+    stage_name: str
+    tripped: dict[str, Any]
+
+
+async def _enter_pause(
+    run: PipelineRunRow,
+    stage_exec: StageExecutionRow,
+    decision: BoundaryDecision,
+    *,
+    kickoff: Kickoff,
+    session: AsyncSession,
+) -> None:
+    """A boundary tripped: record the pause, flip run + ticket state, extend
+    the workspace's grace window, and notify the escalation set (resolved
+    targets unioned with protected-path owners when that condition fired).
+    """
+    stage_exec.boundary_outcome = "paused"
+    stage_exec.boundary_detail = decision.tripped
+
+    escalation_targets = await resolve_escalation_targets(kickoff, run.org_id, session=session)
+    escalation_targets |= set(decision.protected_owner_user_ids)
+
+    pause = RunPauseRow(
+        org_id=run.org_id,
+        run_id=run.id,
+        stage_execution_id=stage_exec.id,
+        tripped=decision.tripped,
+        escalation_user_ids=list(escalation_targets),
+    )
+    session.add(pause)
+    await session.flush()
+
+    run.state = "paused"
+    if run.workspace_id is not None:
+        await extend_expiry(run.workspace_id, seconds=PAUSED_RUN_WORKSPACE_GRACE_SECONDS, session=session)
+    await transition_ticket_on_run_paused(run.ticket_id, org_id=run.org_id, run_id=run.id, session=session)
+    _publish_run_state(session, run)
+
+    await audit(
+        "pipeline_run",
+        run.id,
+        "run.paused",
+        _RunPausedPayload(
+            ticket_id=str(run.ticket_id),
+            pipeline_name=run.pipeline_name,
+            stage_name=stage_exec.stage_name,
+            tripped=decision.tripped,
+        ),
+        actor=Actor.system(),
+        org_id=run.org_id,
+        session=session,
+    )
+
+    for user_id in escalation_targets:
+        await create_notification(
+            user_id=user_id,
+            org_id=run.org_id,
+            type="pipeline_run_paused",
+            title=f"{run.pipeline_name} needs your input",
+            body=f"{stage_exec.stage_name} is waiting on a decision.",
+            subject_type="run_pause",
+            subject_id=pause.id,
+            session=session,
+        )
+
+
+async def get_open_pause_for_run(run_id: UUID, *, session: AsyncSession) -> RunPauseRow | None:
+    """The pause row currently blocking `run_id`, if any (`resolved_at IS
+    NULL`). A `paused` run always has exactly one — used by
+    `service.request_cancel` to close it on an immediate cancel."""
+    return (
+        await session.execute(
+            select(RunPauseRow).where(RunPauseRow.run_id == run_id, RunPauseRow.resolved_at.is_(None))
+        )
+    ).scalar_one_or_none()
+
+
+async def resume_from_pause(pause: RunPauseRow, run: PipelineRunRow, *, session: AsyncSession) -> None:
+    """`approve`: resume at the next boundary. The paused stage already
+    completed its own work (`stage_executions.status='completed'`), so this
+    replays the exact `ROUTE_RUN(completed_stage_index=..., outcome_label=
+    "success")` call the stage would have made itself had the boundary not
+    tripped."""
+    stage_exec = await session.get(StageExecutionRow, pause.stage_execution_id)
+    assert stage_exec is not None
+    run.state = "running"
+    await transition_ticket_on_run_resumed(run.ticket_id, org_id=run.org_id, run_id=run.id, session=session)
+    _publish_run_state(session, run)
+    await enqueue(
+        ROUTE_RUN,
+        args={
+            "run_id": str(run.id),
+            "completed_stage_index": stage_exec.stage_index,
+            "outcome_label": "success",
+            "failure_reason": None,
+        },
+        session=session,
+    )
+
+
+async def kill_run(run: PipelineRunRow, *, session: AsyncSession) -> None:
+    """`kill`: run terminal `killed` — same cleanup-first routing as any
+    other decided run outcome. Flips `state` back to `running` first (the
+    "a dispatch is in flight" state, regardless of `paused`'s HITL meaning)
+    so the cleanup stage's own terminal event — routed through
+    `HANDLE_AGENT_EVENT`, which requires `state == "running"` — isn't
+    dropped as stale."""
+    run.state = "running"
+    await _finish_or_cleanup(run, "killed", failure_reason=None, session=session)
+
+
+async def cancel_paused(run: PipelineRunRow, pause: RunPauseRow, *, session: AsyncSession) -> None:
+    """`request_cancel` on a `paused` run: cancels immediately. Closes the
+    open pause (`resolved_at` stamped, no `resolution` recorded — the run is
+    being cancelled out from under it, not resolved), flips `state` back to
+    `running` for the same reason `kill_run` does, sets `cancel_requested`
+    (the same signal `_finalize_after_cleanup` already reads for a
+    running-run cancel — no separate detection needed), and routes through
+    the normal terminal path (cleanup-workspace first — a paused run always
+    already provisioned one)."""
+    pause.resolved_at = datetime.now(UTC)
+    run.state = "running"
+    run.cancel_requested = True
+    await _finish_or_cleanup(run, "cancelled", failure_reason=None, session=session)
+
+
+# ---------------------------------------------------------------------------
 # ActionContext assembly
 # ---------------------------------------------------------------------------
 
@@ -345,9 +497,12 @@ async def _route_run_impl(
         await _finish_or_cleanup(run, "failed", failure_reason=failure_reason, session=session)
         return
 
-    # Boundary evaluation is a labeled stub that always proceeds — real
-    # conditional/HITL boundary evaluation doesn't exist yet. Cancel is
-    # checked at every boundary regardless, including the last one.
+    # By the time ROUTE_RUN sees `outcome_label == "success"`, the completed
+    # stage's own `BoundaryControl` (see `boundary.evaluate_boundary`) has
+    # already decided to proceed — a `pause` decision routes through
+    # `_enter_pause` instead and never reaches here. ROUTE_RUN's own job is
+    # next-stage-or-terminal routing plus the cancel check, which fires at
+    # every boundary regardless, including the last one.
     if run.cancel_requested:
         await _finish_or_cleanup(run, "cancelled", failure_reason=None, session=session)
         return
@@ -465,6 +620,18 @@ async def _dispatch_cleanup_stage(run: PipelineRunRow, *, session: AsyncSession)
     run.pending_agent_command_id = command_id
 
 
+async def _run_was_killed(run_id: UUID, *, session: AsyncSession) -> bool:
+    """True iff a `run_pauses` row on this run resolved `kill` — the signal
+    `_finalize_after_cleanup` uses to distinguish a killed run from a
+    normal completion, without a dedicated column: `kill` is terminal, so a
+    run can carry at most one such row."""
+    return (
+        await session.execute(
+            select(RunPauseRow.id).where(RunPauseRow.run_id == run_id, RunPauseRow.resolution == "kill")
+        )
+    ).first() is not None
+
+
 async def _finalize_after_cleanup(run: PipelineRunRow, *, session: AsyncSession) -> None:
     """Re-derive the terminal state `_finish_or_cleanup` decided before
     dispatching cleanup, and enter it. Cleanup's own outcome (success or
@@ -474,6 +641,8 @@ async def _finalize_after_cleanup(run: PipelineRunRow, *, session: AsyncSession)
         target_state = "failed"
     elif run.cancel_requested:
         target_state = "cancelled"
+    elif await _run_was_killed(run.id, session=session):
+        target_state = "killed"
     else:
         target_state = "completed"
     await _enter_terminal(run, target_state, failure_reason=run.failure_reason, session=session)
@@ -694,6 +863,19 @@ def _last_artifact_id(stage_exec: StageExecutionRow) -> UUID:
         if artifact_id is not None:
             return UUID(artifact_id)
     raise AssertionError(f"stage execution {stage_exec.id} has no recorded artifact")
+
+
+def _last_paths_affected(stage_exec: StageExecutionRow) -> list[str]:
+    """The most recently reported `SkillReturn.paths_affected` for this
+    stage execution (main or fix pass) — read back from `loop_state`,
+    mirroring `_last_artifact_id`. Used by the boundary evaluation once a
+    review loop stops, since only the main/fix passes report paths (review
+    passes speak `SkillReviewReturn`, which carries no such field)."""
+    for entry in reversed(stage_exec.loop_state):
+        paths = entry.get("paths_affected")
+        if paths is not None:
+            return paths
+    return []
 
 
 async def _apply_verdicts(
@@ -1238,7 +1420,7 @@ async def _handle_skill_stage_event(
     if stage_exec.phase == "fix":
         await _handle_fix_return(run, stage, stage_exec, outputs=outputs, session=session)
         return
-    await _handle_main_return(run, stage, stage_exec, outputs=outputs, session=session)
+    await _handle_main_return(run, stage, stage_exec, kickoff=kickoff, outputs=outputs, session=session)
 
 
 async def _validate_skill_return_and_artifact(
@@ -1298,13 +1480,63 @@ async def _validate_skill_return_and_artifact(
         iteration=stage_exec.iteration,
         session=session,
     )
-    # Boundary evaluation is a labeled stub that always proceeds this phase
-    # — mark the artifact final immediately rather than waiting on a pause
-    # that will never trip. Nothing reads a mid-loop artifact downstream
+    # Mark every produced version final immediately rather than waiting on
+    # a boundary decision — nothing reads a mid-loop artifact downstream
     # (the run engine only proceeds to the next stage once this one's whole
-    # loop finishes), so marking every produced version final is harmless.
+    # loop finishes), so there's no "wrong" version to guard against.
     await mark_final(artifact_id, session=session)
     return skill_return, artifact_id, artifact_body
+
+
+async def _settle_stage_boundary(
+    run: PipelineRunRow,
+    stage: SkillStage | ReviewSkillStage,
+    stage_exec: StageExecutionRow,
+    *,
+    kickoff: Kickoff,
+    paths_affected: Sequence[str],
+    stage_index: int,
+    session: AsyncSession,
+) -> None:
+    """Shared boundary-evaluation tail for every stage kind that carries a
+    `BoundaryControl` (`SkillStage`, `ReviewSkillStage`) once its own
+    main/review work has settled — `cannot_complete`/`send_back` outcomes
+    never reach here (see `_validate_skill_return_and_artifact`), so the
+    stage's work has always "completed" by this point."""
+    residuals = [
+        f for f in await list_for_stage_execution(stage_exec.id, session=session) if f.status == "open"
+    ]
+    ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
+    assert stage_exec.confidence is not None
+    decision = await evaluate_boundary(
+        stage.boundary,
+        org_id=run.org_id,
+        repo_external_id=ticket.repo_external_id,
+        residuals=residuals,
+        paths_affected=paths_affected,
+        confidence=stage_exec.confidence,  # type: ignore[arg-type]
+        session=session,
+    )
+
+    stage_exec.status = "completed"
+    stage_exec.completed_at = datetime.now(UTC)
+
+    if decision.outcome == "pause":
+        await _enter_pause(run, stage_exec, decision, kickoff=kickoff, session=session)
+        return
+
+    stage_exec.boundary_outcome = "proceeded"
+    _publish_stage_state(session, run)
+    await enqueue(
+        ROUTE_RUN,
+        args={
+            "run_id": str(run.id),
+            "completed_stage_index": stage_index,
+            "outcome_label": "success",
+            "failure_reason": None,
+        },
+        session=session,
+    )
 
 
 async def _handle_main_return(
@@ -1312,6 +1544,7 @@ async def _handle_main_return(
     stage: SkillStage,
     stage_exec: StageExecutionRow,
     *,
+    kickoff: Kickoff,
     outputs: dict[str, Any],
     session: AsyncSession,
 ) -> None:
@@ -1325,24 +1558,24 @@ async def _handle_main_return(
 
     stage_exec.loop_state = [
         *stage_exec.loop_state,
-        {"phase": "main", "artifact_id": str(artifact_id), "confidence": skill_return.confidence},
+        {
+            "phase": "main",
+            "artifact_id": str(artifact_id),
+            "confidence": skill_return.confidence,
+            "paths_affected": skill_return.paths_affected,
+        },
     ]
     stage_exec.confidence = bucket_confidence(skill_return.confidence)
     _publish_artifact_stored(session, run)
 
     if stage.review is None:
-        stage_exec.boundary_outcome = "proceeded"
-        stage_exec.status = "completed"
-        stage_exec.completed_at = datetime.now(UTC)
-        _publish_stage_state(session, run)
-        await enqueue(
-            ROUTE_RUN,
-            args={
-                "run_id": str(run.id),
-                "completed_stage_index": stage_index,
-                "outcome_label": "success",
-                "failure_reason": None,
-            },
+        await _settle_stage_boundary(
+            run,
+            stage,
+            stage_exec,
+            kickoff=kickoff,
+            paths_affected=skill_return.paths_affected,
+            stage_index=stage_index,
             session=session,
         )
         return
@@ -1368,7 +1601,12 @@ async def _handle_fix_return(
 
     stage_exec.loop_state = [
         *stage_exec.loop_state,
-        {"phase": "fix", "artifact_id": str(artifact_id), "confidence": skill_return.confidence},
+        {
+            "phase": "fix",
+            "artifact_id": str(artifact_id),
+            "confidence": skill_return.confidence,
+            "paths_affected": skill_return.paths_affected,
+        },
     ]
     stage_exec.confidence = bucket_confidence(skill_return.confidence)
     _publish_artifact_stored(session, run)
@@ -1441,18 +1679,13 @@ async def _handle_review_return(
         return
 
     # Loop stops here — either no residuals or the iteration cap is hit.
-    # Boundary evaluation is a labeled stub that always proceeds.
-    stage_exec.boundary_outcome = "proceeded"
-    stage_exec.status = "completed"
-    stage_exec.completed_at = datetime.now(UTC)
-    await enqueue(
-        ROUTE_RUN,
-        args={
-            "run_id": str(run.id),
-            "completed_stage_index": stage_index,
-            "outcome_label": "success",
-            "failure_reason": None,
-        },
+    await _settle_stage_boundary(
+        run,
+        stage,
+        stage_exec,
+        kickoff=kickoff,
+        paths_affected=_last_paths_affected(stage_exec),
+        stage_index=stage_index,
         session=session,
     )
 
@@ -1481,6 +1714,7 @@ async def _handle_review_stage_event(
     flattened = FlattenedDefinition.from_snapshot(run.definition_snapshot)
     stage = flattened.stages[stage_index]
     assert isinstance(stage, ReviewSkillStage)
+    kickoff = Kickoff.model_validate(run.kickoff)
 
     try:
         review_return = SkillReviewReturn.model_validate_json(outputs.get("output", ""))
@@ -1517,19 +1751,11 @@ async def _handle_review_stage_event(
         },
     ]
     stage_exec.confidence = bucket_confidence(review_return.confidence)
-    stage_exec.boundary_outcome = "proceeded"
-    stage_exec.status = "completed"
-    stage_exec.completed_at = datetime.now(UTC)
-    _publish_stage_state(session, run)
-    await enqueue(
-        ROUTE_RUN,
-        args={
-            "run_id": str(run.id),
-            "completed_stage_index": stage_index,
-            "outcome_label": "success",
-            "failure_reason": None,
-        },
-        session=session,
+    # `paths_affected` is always empty here — `SkillReviewReturn` carries no
+    # such field, so `on_protected_code` can never trip for a standalone
+    # review stage.
+    await _settle_stage_boundary(
+        run, stage, stage_exec, kickoff=kickoff, paths_affected=(), stage_index=stage_index, session=session
     )
 
 

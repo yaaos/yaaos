@@ -668,6 +668,57 @@ async def transition_ticket_on_run_terminal(
     return True
 
 
+async def transition_ticket_on_run_paused(
+    ticket_id: UUID,
+    *,
+    org_id: UUID,
+    run_id: UUID,
+    session: AsyncSession,
+) -> bool:
+    """Flip a ticket to `hitl` when a boundary pause traps its owning run.
+
+    Same ownership + not-already-terminal guard as
+    `transition_ticket_on_run_terminal` — a pause is not itself a terminal
+    run state, so it gets its own entry point rather than overloading that
+    function's terminal-only contract. Caller commits.
+    """
+    row = (
+        await session.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    if row.current_run_id != run_id:
+        return False
+    if row.status in ("done", "cancelled", "failed"):
+        return False
+    await _apply_transition(session, row, new_status="hitl", reason=None, org_id=org_id)
+    return True
+
+
+async def transition_ticket_on_run_resumed(
+    ticket_id: UUID,
+    *,
+    org_id: UUID,
+    run_id: UUID,
+    session: AsyncSession,
+) -> bool:
+    """Flip a ticket back to `running` when a pause on its owning run
+    resolves with `approve`. Only applies from `hitl` — a ticket that moved
+    on for any other reason is left alone. Caller commits.
+    """
+    row = (
+        await session.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    if row.current_run_id != run_id:
+        return False
+    if row.status != "hitl":
+        return False
+    await _apply_transition(session, row, new_status="running", reason=None, org_id=org_id)
+    return True
+
+
 async def complete(ticket_id: UUID, *, org_id: UUID) -> None:
     await _transition(ticket_id, new_status="done", org_id=org_id)
 
