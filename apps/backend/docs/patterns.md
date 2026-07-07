@@ -501,7 +501,7 @@ Each wall-clock wait has an env var. Code reads from `core/config` — never har
 
 ### Pytest plugin entry-point
 
-Cross-cutting fixtures (transactional DB session, fake-github base URL) live in a small in-repo pytest plugin registered via `[project.entry-points."pytest11"]` so it auto-loads.
+Cross-cutting fixtures shared across every module's tests (transactional `db_session`, `fake_github_base_url`) live in the top-level `apps/backend/conftest.py` — pytest's own directory-hierarchy auto-discovery, not module-local. A genuine `[project.entry-points."pytest11"]`-registered plugin (`app.core.llm.pytest_plugin`, adding `--allow-llm-calls` + the LLM response cache) is the exception, used only where a CLI option is needed.
 
 ## Observability
 

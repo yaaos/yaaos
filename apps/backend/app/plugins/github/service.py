@@ -361,6 +361,17 @@ class GitHubPlugin:
         except Exception:
             return False
 
+    async def get_default_branch(self, org_id: UUID, repo_external_id: str) -> str:
+        """Live lookup, not part of `VCSPlugin` — `github:create_pr` (an
+        Action, not a Protocol method) needs a base branch when opening a PR
+        from a yaaos-authored ticket branch; no stored config carries a
+        repo's default branch anywhere else in the tree."""
+        owner, repo = repo_external_id.split("/", 1)
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=10) as client:
+            resp = await client.get(f"/repos/{owner}/{repo}", headers=await self._api_headers(org_id))
+        resp.raise_for_status()
+        return str(resp.json()["default_branch"])
+
     async def post_finding(
         self,
         org_id: UUID,
@@ -777,11 +788,15 @@ async def _on_vcs_cleared(org_id: UUID, plugin_id: str, session: Any) -> None:
 
 def bootstrap() -> None:
     from app.core.intake import IntakePoint, register_intake_point  # noqa: PLC0415
+    from app.domain.actions import register_action  # noqa: PLC0415
     from app.domain.orgs import register_onboarding_contributor, register_vcs_clear_hook  # noqa: PLC0415
+    from app.plugins.github.actions import GitHubCreatePRAction, GitHubUpdatePRAction  # noqa: PLC0415
 
     register_vcs_plugin(_plugin)
     register_onboarding_contributor("github_app_installed", _onboarding_github_app_installed)
     register_vcs_clear_hook(_on_vcs_cleared)
+    register_action(GitHubCreatePRAction())
+    register_action(GitHubUpdatePRAction())
 
     # Trigger-binding picker entries — `domain/repos.add_binding` validates
     # `intake_point_id` against this registry; the webhook rewire in

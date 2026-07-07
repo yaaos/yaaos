@@ -144,9 +144,20 @@ async def record_findings(
     return results
 
 
+async def get(finding_id: UUID, *, session: AsyncSession) -> Finding:
+    """Fetch one finding by id. Raises `FindingNotFoundError`."""
+    return Finding.from_row(await _get_row(finding_id, session=session))
+
+
 async def set_external_anchor(finding_id: UUID, *, comment_external_id: str, session: AsyncSession) -> None:
-    """Stamp the PR comment id a finding was posted under."""
-    raise NotImplementedError
+    """Stamp the PR comment id a finding was posted under. Idempotent — a
+    posting action calls this once per finding, after either a fresh
+    `vcs.post_finding` or reconciling an already-posted comment discovered
+    via `vcs.list_yaaos_comments`; re-stamping the same id is a harmless
+    overwrite. Metadata only — no status transition, no audit row."""
+    row = await _get_row(finding_id, session=session)
+    row.external_comment_id = comment_external_id
+    await session.flush()
 
 
 async def resolve(finding_id: UUID, *, event: FindingStatusEvent, session: AsyncSession) -> None:

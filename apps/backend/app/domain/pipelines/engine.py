@@ -102,7 +102,7 @@ from app.core.workspace import (
     extend_expiry,
     get_workspace_info,
 )
-from app.domain.actions import ActionContext, ActionError, get_action
+from app.domain.actions import ActionContext, ActionError, StageVerdict, get_action
 from app.domain.artifacts import get as get_artifact
 from app.domain.artifacts import latest_final, mark_final
 from app.domain.artifacts import store as store_artifact
@@ -130,20 +130,22 @@ from app.domain.pipelines.escalation import resolve_escalation_targets
 from app.domain.pipelines.models import PipelineRunRow, RunPauseRow, StageExecutionRow
 from app.domain.pipelines.types import (
     Kickoff,
+    PRContext,
     PriorFindingRef,
     RevisionContext,
     StageInvocationContext,
 )
 from app.domain.tickets import (
-    get as get_ticket,
-)
-from app.domain.tickets import (
+    Ticket,
     get_pull_request,
     set_current_run,
     transition_ticket_on_run_paused,
     transition_ticket_on_run_resumed,
     transition_ticket_on_run_start,
     transition_ticket_on_run_terminal,
+)
+from app.domain.tickets import (
+    get as get_ticket,
 )
 
 log = structlog.get_logger("domain.pipelines.engine")
@@ -489,16 +491,122 @@ async def cancel_paused(run: PipelineRunRow, pause: RunPauseRow, *, session: Asy
 
 
 # ---------------------------------------------------------------------------
+# PRContext assembly — how review skills know what to diff, and how actions
+# know which PR to post to.
+# ---------------------------------------------------------------------------
+
+
+async def _prev_reviewed_head_sha(
+    ticket_id: UUID, *, exclude_run_id: UUID, session: AsyncSession
+) -> str | None:
+    """Head SHA of the ticket's last COMPLETED run that carried a PR kickoff
+    (`Kickoff.pr_head_sha` set) — the incremental-review diff floor. `None`
+    on the ticket's first PR review. No dedicated column: derived by walking
+    completed runs newest-first and reading each one's own `kickoff` JSONB."""
+    rows = (
+        (
+            await session.execute(
+                select(PipelineRunRow)
+                .where(
+                    PipelineRunRow.ticket_id == ticket_id,
+                    PipelineRunRow.state == "completed",
+                    PipelineRunRow.id != exclude_run_id,
+                )
+                .order_by(PipelineRunRow.completed_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        prior_kickoff = Kickoff.model_validate(row.kickoff)
+        if prior_kickoff.pr_head_sha is not None:
+            return prior_kickoff.pr_head_sha
+    return None
+
+
+async def _build_pr_context(
+    run: PipelineRunRow, kickoff: Kickoff, ticket: Ticket, *, session: AsyncSession
+) -> PRContext | None:
+    """`None` when the ticket has no PR, or this run's own kickoff didn't pin
+    a head SHA (a non-PR-triggered run on a PR ticket, e.g. a schedule
+    kickoff) — head/base always come from THIS run's kickoff pins, never the
+    PR row's own (possibly stale) fields."""
+    if ticket.pr_id is None or kickoff.pr_head_sha is None:
+        return None
+    pr = await get_pull_request(ticket.pr_id, org_id=run.org_id)
+    prev_reviewed_head_sha = await _prev_reviewed_head_sha(
+        run.ticket_id, exclude_run_id=run.id, session=session
+    )
+    return PRContext(
+        pr_external_id=pr.external_id,
+        head_sha=kickoff.pr_head_sha,
+        base_sha=kickoff.pr_base_sha or "",
+        prev_reviewed_head_sha=prev_reviewed_head_sha,
+    )
+
+
+# ---------------------------------------------------------------------------
 # ActionContext assembly
 # ---------------------------------------------------------------------------
 
 
-async def _build_action_context(run: PipelineRunRow, kickoff: Kickoff, *, org_id: UUID) -> ActionContext:
+async def _latest_stage_execution(
+    run_id: UUID, stage_index: int, *, session: AsyncSession
+) -> StageExecutionRow | None:
+    """The most recent stage-execution row at `stage_index` on this run —
+    the one that just settled leading into the current dispatch (re-entries
+    create new rows at the same index, so "latest" is the live one)."""
+    return (
+        (
+            await session.execute(
+                select(StageExecutionRow)
+                .where(StageExecutionRow.run_id == run_id, StageExecutionRow.stage_index == stage_index)
+                .order_by(StageExecutionRow.started_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _last_review_verdicts(stage_exec: StageExecutionRow) -> list[dict[str, Any]]:
+    """The last `review`-phase `loop_state` entry's recorded verdicts (see
+    `_handle_review_return`/`_handle_review_stage_event`) — mirrors
+    `_last_artifact_id`/`_last_paths_affected`'s reversed-scan idiom. Empty
+    when the stage never ran a review pass (a plain `SkillStage` with no
+    `review` configured, or an action-kind preceding stage)."""
+    for entry in reversed(stage_exec.loop_state):
+        if entry.get("phase") == "review":
+            return entry.get("verdicts", [])
+    return []
+
+
+async def _build_action_context(
+    run: PipelineRunRow, kickoff: Kickoff, *, stage_index: int, org_id: UUID, session: AsyncSession
+) -> ActionContext:
     ticket = await get_ticket(run.ticket_id, org_id=org_id)
     pr_external_id: str | None = None
     if ticket.pr_id is not None:
         pr = await get_pull_request(ticket.pr_id, org_id=org_id)
         pr_external_id = pr.external_id
+
+    preceding_residuals: tuple[Finding, ...] = ()
+    preceding_verdicts: tuple[StageVerdict, ...] = ()
+    preceding_artifact_id: UUID | None = None
+    if stage_index > 0:
+        preceding = await _latest_stage_execution(run.id, stage_index - 1, session=session)
+        if preceding is not None:
+            own_findings = await list_for_stage_execution(preceding.id, session=session)
+            preceding_residuals = tuple(f for f in own_findings if f.status == "open")
+            preceding_verdicts = tuple(
+                StageVerdict(finding_id=UUID(v["finding_id"]), status=v.get("status"), reply=v.get("reply"))
+                for v in _last_review_verdicts(preceding)
+            )
+            if preceding.kind == "skill":
+                preceding_artifact_id = _last_artifact_id(preceding)
+
     return ActionContext(
         org_id=org_id,
         ticket_id=run.ticket_id,
@@ -509,12 +617,9 @@ async def _build_action_context(run: PipelineRunRow, kickoff: Kickoff, *, org_id
         branch_name=ticket.branch_name or "",
         intake_point_id=kickoff.intake_point_id,
         kickoff_input=kickoff.input_text,
-        # Residuals/verdicts arrive with the review loop (durable findings
-        # don't exist yet); the preceding artifact isn't threaded to actions
-        # yet either — all three stay empty until that wiring lands.
-        preceding_residuals=(),
-        preceding_verdicts=(),
-        preceding_artifact_id=None,
+        preceding_residuals=preceding_residuals,
+        preceding_verdicts=preceding_verdicts,
+        preceding_artifact_id=preceding_artifact_id,
     )
 
 
@@ -888,12 +993,14 @@ async def _dispatch_skill_stage(
     command_id = uuid7()
     ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
     input_text = await _resolve_stage_input(run, stage_index, kickoff=kickoff, session=session)
+    pr = await _build_pr_context(run, kickoff, ticket, session=session)
 
     invocation_ctx = StageInvocationContext(
         ticket_id=run.ticket_id,
         stage_name=stage.name,
         branch_name=ticket.branch_name or "",
         input=input_text,
+        pr=pr,
         revision=revision,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
@@ -1094,13 +1201,16 @@ async def _dispatch_review_invocation(
     stage_exec.iteration += 1
     command_id = uuid7()
     ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
+    kickoff = Kickoff.model_validate(run.kickoff)
     prior_findings = await _resolve_prior_findings(run, stage_exec, session=session)
+    pr = await _build_pr_context(run, kickoff, ticket, session=session)
 
     invocation_ctx = StageInvocationContext(
         ticket_id=run.ticket_id,
         stage_name=stage.name,
         branch_name=ticket.branch_name or "",
         input=artifact_body,
+        pr=pr,
         prior_findings=prior_findings,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
@@ -1143,6 +1253,7 @@ async def _dispatch_fix_invocation(
     command_id = uuid7()
     ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
     input_text = await _resolve_stage_input(run, stage_index, kickoff=kickoff, session=session)
+    pr = await _build_pr_context(run, kickoff, ticket, session=session)
     revision = RevisionContext(
         source="fix", text=_render_findings_for_fix(residuals), prior_artifact=prior_artifact_body
     )
@@ -1152,6 +1263,7 @@ async def _dispatch_fix_invocation(
         stage_name=stage.name,
         branch_name=ticket.branch_name or "",
         input=input_text,
+        pr=pr,
         revision=revision,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
@@ -1211,12 +1323,14 @@ async def _dispatch_review_only_stage(
     ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
     input_text = await _resolve_stage_input(run, stage_index, kickoff=kickoff, session=session)
     prior_findings = await _resolve_prior_findings(run, stage_exec, session=session)
+    pr = await _build_pr_context(run, kickoff, ticket, session=session)
 
     invocation_ctx = StageInvocationContext(
         ticket_id=run.ticket_id,
         stage_name=stage.name,
         branch_name=ticket.branch_name or "",
         input=input_text,
+        pr=pr,
         revision=revision,
         prior_findings=prior_findings,
         artifact_path=f"$TMPDIR/{command_id}.md",
@@ -1260,7 +1374,9 @@ async def _run_action_stage(
     session.add(stage_exec)
     await session.flush()
 
-    ctx = await _build_action_context(run, kickoff, org_id=run.org_id)
+    ctx = await _build_action_context(
+        run, kickoff, stage_index=stage_index, org_id=run.org_id, session=session
+    )
 
     failure_reason: str | None = None
     try:
@@ -1932,6 +2048,10 @@ async def _handle_review_return(
             "confidence": review_return.confidence,
             "new_finding_ids": [str(f.id) for f in recorded],
             "residual_finding_ids": [str(f.id) for f in residuals],
+            "verdicts": [
+                {"finding_id": str(v.finding_id), "status": v.status, "reply": v.reply}
+                for v in review_return.prior_finding_verdicts
+            ],
         },
     ]
     _publish_stage_state(session, run)
@@ -2020,6 +2140,10 @@ async def _handle_review_stage_event(
             "confidence": review_return.confidence,
             "new_finding_ids": [str(f.id) for f in recorded],
             "residual_finding_ids": [str(f.id) for f in residuals],
+            "verdicts": [
+                {"finding_id": str(v.finding_id), "status": v.status, "reply": v.reply}
+                for v in review_return.prior_finding_verdicts
+            ],
         },
     ]
     stage_exec.confidence = bucket_confidence(review_return.confidence)

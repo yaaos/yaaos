@@ -15,7 +15,7 @@ Bridges GitHub REST + webhooks to `core/vcs` types. Two distinct GitHub registra
 
 Why two: install lifecycle and login flow live on different GitHub primitives; sharing one conflates two independent failure modes.
 
-`bootstrap()` registers, at import time: the `VCSPlugin` (`register_vcs_plugin`), an onboarding contributor + VCS-clear hook (`domain/orgs`), and three [`core/intake`](core_intake.md) `IntakePoint`s the Repos-page trigger picker lists — `github:pr_opened`, `github:pr_commits` (both consumed by the webhook rewire below), and `github:pr_comment` (registered; nothing consumes it yet).
+`bootstrap()` registers, at import time: the `VCSPlugin` (`register_vcs_plugin`), an onboarding contributor + VCS-clear hook (`domain/orgs`), two [`domain/actions`](domain_actions.md) `Action`s (`github:create_pr`, `github:update_pr` — see § Actions below), and three [`core/intake`](core_intake.md) `IntakePoint`s the Repos-page trigger picker lists — `github:pr_opened`, `github:pr_commits` (both consumed by the webhook rewire below), and `github:pr_comment` (registered; nothing consumes it yet).
 
 Env vars: `yaaos_github_app_id`, `yaaos_github_app_slug`, `yaaos_github_app_private_key`, `yaaos_github_app_webhook_secret`, `yaaos_github_oauth_client_id`, `yaaos_github_oauth_client_secret`, `yaaos_github_oauth_token_url` (optional, test stack only). See [docs/setup.md](../../../docs/setup.md).
 
@@ -88,6 +88,16 @@ All calls use short-lived per-method `httpx` clients against `github_api_base_ur
 - `has_active_approval` — `GET /pulls/{n}/reviews`; reads the latest review by the app's own bot login (`<yaaos_github_app_slug>[bot]`) and returns whether its state is `APPROVED`. GitHub is the source of truth — no local marker.
 - `resolve_finding_thread` — GitHub has no REST endpoint for resolving a review thread. Two GraphQL round trips against `POST /graphql`: a `reviewThreads` query to locate the thread id anchoring the given comment (`databaseId`), then the `resolveReviewThread` mutation.
 
+### Actions (`actions.py`)
+
+Two [`domain/actions.Action`](domain_actions.md)s, registered by `bootstrap()`:
+
+- **`github:create_pr`** — opens the PR for a yaaos-authored ticket's work branch: `GitHubPlugin.get_default_branch` (a live `GET /repos/{owner}/{repo}` lookup, not part of the `VCSPlugin` Protocol — no stored config carries a repo's default branch elsewhere) supplies `base_branch`, `vcs.create_pr` opens it (idempotent on retry via its own find-existing-for-branch fallback), `tickets.upsert`/`attach_pr_to_ticket` bind it to the ticket. A ticket that already has a PR (an externally-authored review ticket whose definition opens with `create_pr` anyway) skips straight to posting.
+- **`github:update_pr`** — reflects the preceding review stage's mechanically-applied verdicts onto the PR: resolves the thread of every `fixed` finding (`vcs.resolve_finding_thread`) and posts any verdict `reply` text into the finding's own thread (`vcs.post_comment_reply`). The engine already applied the status transition before this action runs (`domain/findings.resolve`/`reflag`/`reopen`) — this only makes GitHub reflect it.
+- **`_post_residuals`** — the posting primitive both actions share: posts every not-yet-anchored `ActionContext.preceding_residuals` finding via `vcs.post_finding` and `findings.set_external_anchor`. Externally idempotent: before posting, it reconciles against `vcs.list_yaaos_comments` — a finding's own `handle` (e.g. `SPEC-001`) rides verbatim in the `rule_violated` argument (the one `post_finding` argument this call fully controls), so a literal substring match against already-posted comment bodies survives a mid-body crash (GitHub comment created, DB anchor write lost) without double-posting.
+
+`github:reply_to_comment` (the conversation-policy action — defense stamping, dispute coercion) lands with the comment feedback loop.
+
 ## Data owned
 
 - `github_app_installations` — `(org_id, install_external_id, account_login, status)`. Written by both install callback and `installation.*` webhooks.
@@ -105,9 +115,10 @@ Unit tests in `app/plugins/github/test/`:
 - `test_intake_producer_service.py` (`@pytest.mark.service`) — `GithubIntakeType.handle` calls `create_from_pr` + `attach_pr_to_ticket`; ticket row created, `ticket.created` + `ticket.pr_bound` audit rows written, SSE + notifications outbox row enqueued.
 - `test_intake_rewire_service.py` (`@pytest.mark.service`) — bound `pull_request.opened`/`synchronize` route into `pipelines.start_run` (ticket `branch_name` set from the PR's head branch); unbound repos keep the `pr_review_v1` fallback; a `start_run` config-problem exception surfaces as a 2xx outcome plus a `ticket.pipeline_start_failed` audit row.
 - `test_set_github_plugin_for_tests.py` — `set_github_plugin_for_tests` swaps and restores the singleton for the block.
+- `test_pr_actions_service.py` (`@pytest.mark.service`, live `apps/fake-github`) — `GitHubCreatePRAction`/`_post_residuals` driven directly (entry point is `Action.execute`, owned by this module): `create_pr` idempotency on retry after a simulated crash that lost the `attach_pr_to_ticket` write (DB shows no PR, GitHub already has one — `vcs.create_pr`'s find-existing-for-branch fallback resolves the same PR); posting reconciliation after a simulated crash that lost a finding's `external_comment_id` write (the comment is real on GitHub — `vcs.list_yaaos_comments` + the finding's own `handle` find it, no duplicate post). The full-engine acceptance flow (residuals posted + incremental review resolves a thread) lives at `apps/backend/app/domain/pipelines/test/test_pr_actions_service.py` instead — its entry point is `pipelines.start_run`, owned by that module.
 
 `set_github_plugin_for_tests` (exported from `app.plugins.github`) is the test seam for swapping the singleton `GitHubPlugin` instance. `get_plugin` is module-private (not in `__all__`); tests access the singleton via the context manager's yielded value.
 
-The PR write surface (`create_pr`/`approve_pr`/`has_active_approval`/`resolve_finding_thread`) is covered by `app/core/vcs/test/test_write_ops_against_fake_github.py` — a live `apps/fake-github` subprocess round trip, since these operations are best proven against the fake's real REST + GraphQL shim rather than `httpx_mock`.
+The PR write surface (`create_pr`/`approve_pr`/`has_active_approval`/`resolve_finding_thread`) is covered by `app/core/vcs/test/test_write_ops_against_fake_github.py` — a live `apps/fake-github` subprocess round trip, since these operations are best proven against the fake's real REST + GraphQL shim rather than `httpx_mock`. The `fake_github_base_url` fixture spawning that subprocess lives in the top-level `apps/backend/conftest.py` (shared across every module's tests), not a module-local `conftest.py`.
 
 Full webhook, login, install handshake, repositories proxy, and force-push detection exercised by `apps/e2e/` specs against `apps/fake-github`.

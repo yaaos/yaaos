@@ -84,15 +84,16 @@ class PauseResolution(BaseModel, frozen=True):
 
 # ---------------------------------------------------------------------------
 # Stage-invocation context — engine-assembled input to every skill/review
-# invocation. Several fields are structurally present but stay empty/None
-# until later machinery exists (see per-field notes below); the shape is
-# fixed now so `Invocation.context` never needs a breaking change.
+# invocation. `upstream_stages` is structurally present but stays empty
+# until the `context_stages`-filtered upstream-artifact offering exists; the
+# shape is fixed now so `Invocation.context` never needs a breaking change.
 # ---------------------------------------------------------------------------
 
 
 class UpstreamStageRef(BaseModel, frozen=True):
     """One upstream stage's produced artifact, offered to a later stage's
-    invocation context (filtered by `context_stages`)."""
+    invocation context (filtered by `context_stages`). Not populated yet —
+    always empty on `StageInvocationContext` until that wiring lands."""
 
     stage_name: str
     description: str
@@ -102,8 +103,9 @@ class UpstreamStageRef(BaseModel, frozen=True):
 
 class PRContext(BaseModel, frozen=True):
     """How review skills know what to diff. Assembled from the ticket + the
-    run's kickoff, not pipeline config. Not populated until PR-ticket wiring
-    exists — always `None` on `StageInvocationContext` until then."""
+    run's kickoff, not pipeline config (`engine._build_pr_context`) — `None`
+    when the ticket has no PR or this run's own kickoff didn't pin a head
+    SHA (e.g. a non-PR-triggered run on a PR ticket)."""
 
     pr_external_id: str
     head_sha: str
@@ -112,8 +114,7 @@ class PRContext(BaseModel, frozen=True):
 
 
 class PriorFindingRef(BaseModel, frozen=True):
-    """One durable finding offered to a review invocation's context, by id.
-    Empty until the findings module + review loop exist."""
+    """One durable finding offered to a review invocation's context, by id."""
 
     finding_id: UUID
     severity: str

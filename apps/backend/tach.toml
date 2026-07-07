@@ -155,7 +155,7 @@ depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.co
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.orgs", "app.domain.pipelines", "app.domain.repos", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.actions", "app.domain.findings", "app.domain.orgs", "app.domain.pipelines", "app.domain.repos", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.linear"
@@ -909,6 +909,7 @@ expose = [
   "dismiss",
   "evaluate_auto_approve",
   "find_by_external_comment",
+  "get",
   "list_for_stage_execution",
   "list_open_for_ticket",
   "mark_defended",
