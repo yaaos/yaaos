@@ -7,7 +7,9 @@ per org pipeline, executed by a generic run/stage dispatcher instead of
 per-step command classes. See `apps/backend/docs/domain_pipelines.md`.
 """
 
-# Side-effect import: registers /api/pipelines/* routes.
+# Side-effect imports: registers /api/pipelines/* routes, and registers the
+# pipeline_schedule_tick + resume_stalled_runs `@scheduled` jobs with core/tasks.
+import app.domain.pipelines.scheduler_jobs
 import app.domain.pipelines.web  # noqa: F401
 from app.core.agent_gateway import register_agent_event_consumer as _register_agent_event_consumer
 from app.core.intake import IntakePoint, register_intake_point

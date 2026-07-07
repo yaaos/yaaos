@@ -498,6 +498,7 @@ Each wall-clock wait has an env var. Code reads from `core/config` — never har
 | `YAAOS_REAPER_INTERVAL_SECONDS` | 30 | Workspace reaper sweep interval. Tests: 1. |
 | `YAAOS_HEARTBEAT_INTERVAL_SECONDS` | 10 | Review-job heartbeat interval. |
 | `YAAOS_CATCHUP_DELAY_SECONDS` | 10 | Boot delay before the GitHub catch-up coro. |
+| `YAAOS_RUN_STALL_THRESHOLD_SECONDS` | 300 | `domain/pipelines.resume_stalled_runs` grace window before a `running` pipeline run with no pending agent command (or a pending command already `done`) is treated as stalled. |
 
 ### Pytest plugin entry-point
 

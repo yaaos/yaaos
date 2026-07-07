@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pipelines"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.database", "app.core.identity", "app.core.intake", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.actions", "app.domain.artifacts", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.core.workspace", "app.domain.actions", "app.domain.artifacts", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.pr_review"
@@ -261,6 +261,7 @@ expose = [
   "get_agent_info",
   "get_byok_secrets_provider",
   "get_command_org_and_payload",
+  "get_command_status",
   "get_command_workflow_execution_id",
   "get_report_sink",
   "get_run_sink",
@@ -1192,6 +1193,7 @@ expose = [
   "build_status_change_specs",
   "complete",
   "create_from_pr",
+  "create_from_schedule",
   "fail",
   "get",
   "get_by_external",

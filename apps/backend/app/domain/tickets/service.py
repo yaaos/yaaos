@@ -289,6 +289,70 @@ async def create_from_pr(
     return ticket_id, created
 
 
+async def create_from_schedule(
+    *,
+    org_id: UUID,
+    source_external_id: str,
+    title: str,
+    repo_external_id: str,
+    plugin_id: str,
+    session: AsyncSession,
+) -> tuple[UUID, bool]:
+    """Race-safe ticket INSERT for a schedule firing — the second instance of
+    the `create_from_<source>` convention `create_from_pr` establishes.
+
+    Schedule tickets are yaaos-authored (no upstream branch to inherit), so
+    `branch_name` is always freshly minted here (unlike `create_from_pr`,
+    which accepts an intake-supplied branch for PR tickets). On
+    `created=True` writes the `ticket.created` audit row and fires
+    `notify_ticket_status_change`. On conflict (a redelivered
+    `source_external_id` — the `(org_id, source, source_external_id)` unique
+    constraint) returns the existing ticket's id with `created=False`; the
+    caller does no further work.
+    """
+    ticket_id, created = await _insert_ticket_atomic(
+        org_id=org_id,
+        type="schedule",
+        source="schedule",
+        source_external_id=source_external_id,
+        title=title,
+        description=None,
+        repo_external_id=repo_external_id,
+        plugin_id=plugin_id,
+        idempotency_key=source_external_id,
+        payload={},
+        status="pending",
+        conflict_target=("org_id", "source", "source_external_id"),
+        session=session,
+    )
+    if created:
+        minted_branch_name = mint_branch_name(title, ticket_id)
+        await session.execute(
+            update(TicketRow).where(TicketRow.id == ticket_id).values(branch_name=minted_branch_name)
+        )
+        await audit_for_ticket(
+            ticket_id,
+            "ticket.created",
+            _TicketCreatedPayload(
+                type="schedule",
+                source="schedule",
+                source_external_id=source_external_id,
+                idempotency_key=source_external_id,
+            ),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=session,
+        )
+        await notify_ticket_status_change(
+            ticket_id=ticket_id,
+            org_id=org_id,
+            new_status="pending",
+            previous_status=None,
+            session=session,
+        )
+    return ticket_id, created
+
+
 async def notify_ticket_status_change(
     *,
     ticket_id: UUID,

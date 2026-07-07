@@ -127,6 +127,13 @@ class Settings(BaseSettings):
     # threshold with no active workflow execution is flipped to `failed`.
     yaaos_ticket_orphan_grace_seconds: int = 300  # 5 min
 
+    # Pipeline-run stall sweep grace window. A `running` pipeline_runs row
+    # with no pending agent command and an `updated_at` older than this
+    # threshold is treated as stalled (its next dispatch message was lost)
+    # and re-routed. Also gates the lost-resume reconciliation so a
+    # synthetic resume never races the real terminal-event resume.
+    yaaos_run_stall_threshold_seconds: int = 300  # 5 min
+
     # The platform yaaos GitHub App — used for per-org installs only
     # (app_id/private_key/webhook_secret drive installation-token minting + the
     # webhook receiver). The slug builds `${github_web_base_url}/apps/<slug>/installations/new`.

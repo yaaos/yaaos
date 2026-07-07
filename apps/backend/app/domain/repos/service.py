@@ -7,8 +7,8 @@ the Repos-page protected-code + auto-approve config.
 
 `add_binding`/`remove_binding`/`find_bindings`/`list_repo_configs`/
 `pipeline_referenced_by_binding` are real — trigger bindings are writable.
-`list_due_schedule_bindings` is a stub (body raises `NotImplementedError`);
-nothing fires schedule bindings yet.
+`list_due_schedule_bindings` is real too — a cross-org cron match consumed by
+`domain/pipelines.pipeline_schedule_tick`.
 
 `add_binding`'s pipeline-org-ownership check can't import `domain/pipelines`
 directly (`pipelines` already depends on `repos` for
@@ -391,6 +391,32 @@ async def pipeline_referenced_by_binding(pipeline_id: UUID, *, session: AsyncSes
 
 
 async def list_due_schedule_bindings(*, now: datetime, session: AsyncSession) -> list[DueFire]:
-    """Cron matching (UTC, floored-minute slot) over schedule bindings.
-    Consumed by `domain/pipelines`' `pipeline_schedule_tick`."""
-    raise NotImplementedError
+    """Cron matching (UTC, floored-minute slot) over schedule bindings, across
+    every org — the caller (`domain/pipelines.pipeline_schedule_tick`) has no
+    single org to scope by; it's a global per-minute scan. Consumed by
+    `domain/pipelines`' `pipeline_schedule_tick`."""
+    slot = now.replace(second=0, microsecond=0)
+    rows = (
+        (
+            await session.execute(
+                select(RepoTriggerBindingRow).where(RepoTriggerBindingRow.schedule.is_not(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    due: list[DueFire] = []
+    for row in rows:
+        assert row.schedule is not None
+        schedule = Schedule.model_validate(row.schedule)
+        try:
+            cron = CronExpr.parse(schedule.cron)
+        except ValueError:
+            # A malformed cron shouldn't happen (validated at write by
+            # `_validate_schedule`), but a bad row must never crash the tick.
+            continue
+        if not cron.matches(slot):
+            continue
+        binding = await _to_trigger_binding(row, session=session)
+        due.append(DueFire(org_id=row.org_id, binding=binding, fire_time=slot))
+    return due

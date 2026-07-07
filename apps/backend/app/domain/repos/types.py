@@ -96,8 +96,16 @@ class RepoConfigSummary(BaseModel):
 
 
 class DueFire(BaseModel):
-    """One due schedule firing, as returned by `list_due_schedule_bindings`."""
+    """One due schedule firing, as returned by `list_due_schedule_bindings`.
 
+    `org_id` is not on `TriggerBinding` itself (that VO is also the read
+    model for the Repos-page accordion, which is always called inside an
+    already org-scoped request) — `list_due_schedule_bindings` is a global,
+    cross-org scan, so the firing needs to carry its own org identity for
+    the caller to open `org_context` and create the ticket in the right org.
+    """
+
+    org_id: UUID
     binding: TriggerBinding
     fire_time: datetime
 

@@ -326,6 +326,28 @@ async def get_command_org_and_payload(
     return (row.org_id, dict(row.payload) if row.payload else {})
 
 
+async def get_command_status(
+    command_id: UUID,
+    *,
+    session: AsyncSession,
+) -> str | None:
+    """Return the `agent_commands.status` lifecycle value (`pending` →
+    `claimed` → `delivered` → `done`) for the given command, or `None` when
+    the row is not found.
+
+    Pure read — no writes. Used by `domain/pipelines`' stall sweeper to
+    detect a command whose terminal event was already recorded (`status ==
+    "done"`, stamped by `retire_command`) but whose engine resume never
+    processed — the resume task's outbox message was dispatched then lost
+    (e.g. a Redis flush), so `status` is the only durable trace left.
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    return (
+        await session.execute(select(AgentCommandRow.status).where(AgentCommandRow.id == command_id))
+    ).scalar_one_or_none()
+
+
 async def get_command_workflow_execution_id(
     command_id: UUID,
     *,

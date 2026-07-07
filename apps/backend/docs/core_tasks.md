@@ -33,6 +33,13 @@
 - **`set_broker_for_tests(broker=None)`** (exported from `app.core.tasks`) — context manager that swaps the singleton broker for the block. Pass an `AsyncBroker` instance to test broker-dependent paths, or `None` to simulate an uninitialized broker.
 - **`shutdown()` does not drop the broker singleton** — task registrations set at import time remain intact.
 
+## Multi-pod safe patterns
+
+Canonical shapes for `@scheduled` consumers running concurrently across multiple worker pods.
+
+- **Per-tick atomic claim.** Every registered schedule races the same `INSERT INTO scheduled_runs (schedule_id, fire_time) VALUES (…) ON CONFLICT DO NOTHING` per floored-minute slot; only the inserting pod calls `enqueue(...)`. See § Why / invariants above for the full mechanics.
+- **Stall sweep re-derives durable state, never trusts in-flight messages.** A consumer that needs to detect "the last dispatched message for X never arrived" (e.g. `domain/pipelines.resume_stalled_runs`) reads ONLY durable Postgres state to decide what to re-enqueue — never assumes anything about a message still being in Redis or in flight. Guard every such reconciliation with a staleness threshold (an `updated_at`-style column older than a config-controlled grace window) so a synthetic re-enqueue never races a message that's merely still processing; pair it with a stale-command/stale-claim guard on the CONSUMING side so whichever message (real or synthetic) lands first is authoritative regardless of ordering. This is what makes Redis fully disposable for that consumer — a flush converges within one sweep.
+
 ## Data owned
 
 - `outbox_entries` — `(id uuid, created_at timestamptz NOT NULL, kind text, payload jsonb, dispatched_at nullable, attempt int, last_error text nullable)`. Composite PK `(id, created_at)` — partition-ready hedge (migration 042). `created_at` has a server default; the NOT NULL + composite PK are idempotent DDL applied on top of migration 014. Only kind today: `taskiq_enqueue`.
