@@ -20,6 +20,7 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 - **`_apply_transition` is the shared side-effect kernel.** `_transition` (Shape-b), `transition_on_workflow_terminal` (Shape-a), and `transition_on_workflow_start` (Shape-a) all delegate to it. It delegates SSE + notification outbox to `notify_ticket_status_change` so the broadcast seam is used consistently.
 - **`transition_on_workflow_start` flips `pending → running` atomically with the workflow bootstrap commit.** Called via `transition_ticket_on_start` (in `workflow_callbacks.py`) which is wired into `pr_review_v1.on_start` — the engine awaits it inside the bootstrap-commit transaction. Shape-a (caller's session, never commits). Guards: ticket not found, wrong org, different `current_workflow_execution_id`, or already past `pending` → returns `False` silently. Returns `True` when flipped.
 - **`on_terminal(terminal_state=CANCELLED)` maps to ticket status `cancelled`** via `_STATE_TO_STATUS` in `workflow_callbacks.py`. The engine fires `on_terminal` with `terminal_state=WorkflowState.CANCELLED, failure_reason=None` on cancel; `transition_ticket_on_terminal` translates to `to_status="cancelled"` atomically with the engine's terminal commit.
+- **`transition_ticket_on_run_start`/`transition_ticket_on_run_terminal` are the run-engine's equivalents**, keyed on `current_run_id` instead of `current_workflow_execution_id`. Unlike the workflow-era pair, there's no `on_start`/`on_terminal` hook indirection — [`domain/pipelines`](domain_pipelines.md)'s engine calls these directly (a plain acyclic `pipelines → tickets` import). Same guard semantics: silent `False` on ticket-not-found, wrong owner, or already-past-the-relevant-state; caller commits.
 - **Workspace ≠ ticket.** The reviewer opens one workspace per coordinator call; it is anonymous from the ticket's perspective — no FK, no column.
 - **`findings_count` + `max_severity` are denormalized, not live-aggregated.** Reviewer writes them via `update_findings_summary` after each review run and on ack/push-back. `list_tickets` reads them directly from the row — no cross-module import from tickets → reviewer.
 - **All ticket reads are org-scoped.** Use `get(ticket_id, org_id=...)` — the unscoped `get_by_id` helper has been removed.
@@ -32,16 +33,18 @@ Does NOT own: review state (`reviewer`), workspace lifecycle, notification deliv
 |---|---|
 | (none) → `pending` | `create_from_pr` (GitHub PR intake) |
 | `pending` → `running` | `transition_on_workflow_start(...)` — via `pr_review_v1.on_start` callback, atomic with bootstrap RUNNING write |
+| `pending` → `running` | `transition_ticket_on_run_start(...)` — called directly by the run engine when a `pipeline_runs` row is promoted to `running` |
 | `running` → `done` | `complete` (PR closed/merged) |
 | `running` → `cancelled` | `abandon(reason=...)` |
 | `running` → `failed` | `fail(reason=...)` — orphan sweep (never-dispatched tickets only) |
 | `pending`/`running` → `done`/`failed`/`cancelled` | `transition_on_workflow_terminal(...)` — via `pr_review_v1.on_terminal` callback (primary path off `running`) |
+| `pending`/`running` → `done`/`failed`/`cancelled` | `transition_ticket_on_run_terminal(...)` — called directly by the run engine at every `pipeline_runs` terminal |
 
 `complete` / `abandon` / `fail` are Shape-b (own session) and go through `_transition`. `transition_on_workflow_terminal` and `transition_on_workflow_start` are Shape-a (caller's session, never commits) and are called from `workflow_callbacks.py`.
 
 ## Data owned
 
-`tickets` — canonical schema in [core_database.md](core_database.md). Includes `findings_count INT NOT NULL DEFAULT 0` and `max_severity VARCHAR NULL` — written by reviewer, read by this module. Also carries `current_run_id UUID NULL` (soft ref to `pipeline_runs`, [domain_pipelines.md](domain_pipelines.md)'s run-engine equivalent of `current_workflow_execution_id`) and `branch_name VARCHAR NULL` (per-ticket work branch; nullable while the old `pr_review_v1` path — which never populates it — coexists). Neither column is read or written by any code path yet.
+`tickets` — canonical schema in [core_database.md](core_database.md). Includes `findings_count INT NOT NULL DEFAULT 0` and `max_severity VARCHAR NULL` — written by reviewer, read by this module. Also carries `current_run_id UUID NULL` (soft ref to `pipeline_runs`, [domain_pipelines.md](domain_pipelines.md)'s run-engine equivalent of `current_workflow_execution_id`; written by `set_current_run` when the run engine promotes a run to `running`, read by `transition_ticket_on_run_start`/`transition_ticket_on_run_terminal` as the ownership guard) and `branch_name VARCHAR NULL` (per-ticket work branch; nullable while the old `pr_review_v1` path — which never populates it — coexists; exposed on the `Ticket` VO and read by the run engine's action-stage dispatch). `mint_branch_name(title, ticket_id)` is the pure minting function (`yaaos/<slug>-<ticket_id.hex[:8]>`, falling back to `yaaos/ticket-<...>` when the title yields no slug) — not yet called by any ticket-creation path; that wiring lands with the intake rewire.
 
 `pull_requests` — `(id, org_id, plugin_id, external_id, …)`. Unique on `(plugin_id, external_id)`. FK `ticket_id → tickets.id`. Implemented in `tickets/pull_request.py`; table name unchanged from previous module location.
 

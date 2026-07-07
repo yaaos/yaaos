@@ -2,8 +2,12 @@
 
 Definition CRUD (`create_pipeline` / `update_pipeline` / `delete_pipeline` /
 `get_pipeline` / `list_pipelines` / `pipeline_referenced_by_call`) is real.
-Everything run-lifecycle (`start_run`, `resolve_pause`, ...) stays a stub —
-bodies raise `NotImplementedError`; only the signatures are load-bearing.
+`start_run` and `request_cancel` are real, delegating the run-lifecycle
+mechanics (promotion, the `ROUTE_RUN`/`START_STAGE` taskiq trio, terminal
+bookkeeping) to `engine.py`. `start_rerun_from_stage`, `resolve_pause`,
+`instantiate_template`, `list_templates`, `list_runs_for_ticket`,
+`get_run_overview`, and `has_run_in_flight` stay stubs — bodies raise
+`NotImplementedError`; only the signatures are load-bearing.
 """
 
 from __future__ import annotations
@@ -17,8 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import Actor, audit_for_pipeline
 from app.core.auth import require_org_context
 from app.core.tenancy import get_membership_info
-from app.domain.pipelines.definition import PipelineDefinition, validate_definition
-from app.domain.pipelines.models import PipelineRow
+from app.domain.pipelines import engine
+from app.domain.pipelines.definition import PipelineDefinition, flatten, validate_definition
+from app.domain.pipelines.models import PipelineRow, PipelineRunRow
 from app.domain.pipelines.types import (
     Kickoff,
     PauseResolution,
@@ -28,6 +33,8 @@ from app.domain.pipelines.types import (
     RunOverview,
 )
 from app.domain.repos import pipeline_referenced_by_binding as _repo_pipeline_referenced_by_binding
+
+_TERMINAL_RUN_STATES = frozenset({"completed", "failed", "killed", "cancelled"})
 
 
 class PipelineNotFoundError(LookupError):
@@ -44,6 +51,10 @@ class PipelineReferencedError(ValueError):
 
 class RunNotFoundError(LookupError):
     """No pipeline_runs row for the given id."""
+
+
+class RunAlreadyTerminalError(ValueError):
+    """`request_cancel` called on a run already in a terminal state."""
 
 
 class PauseNotFoundError(LookupError):
@@ -282,7 +293,7 @@ async def pipeline_referenced_by_call(pipeline_id: UUID, *, session: AsyncSessio
 
 
 # ---------------------------------------------------------------------------
-# Run-lifecycle stubs (unchanged this phase)
+# Run lifecycle — start_run / request_cancel real; the rest still stubs
 # ---------------------------------------------------------------------------
 
 
@@ -295,8 +306,34 @@ async def start_run(
     session: AsyncSession,
 ) -> UUID:
     """Flatten against CURRENT definitions, pin the snapshot; queue if a run
-    is already in flight on the ticket, else attempt immediate promotion."""
-    raise NotImplementedError
+    is already in flight on the ticket, else attempt immediate promotion.
+
+    Always inserts `state='queued'` first, then calls `engine.attempt_promotion`
+    — a conditional `queued -> running` flip guarded by the
+    `ux_pipeline_runs_one_in_flight` partial unique index — so a race against
+    a concurrent terminal's own promotion of an older queued run can never
+    leave two runs `running` on the same ticket.
+    """
+    org_definitions = await _load_org_definitions(org_id, session=session)
+    definition = org_definitions.get(pipeline_id)
+    if definition is None:
+        raise PipelineNotFoundError(pipeline_id)
+    flattened = flatten(definition, org_definitions=org_definitions)
+
+    row = PipelineRunRow(
+        org_id=org_id,
+        ticket_id=ticket_id,
+        pipeline_id=pipeline_id,
+        pipeline_name=definition.name,
+        definition_snapshot={"stages": [stage.model_dump(mode="json") for stage in flattened.stages]},
+        state="queued",
+        phase="stages",
+        kickoff=kickoff.model_dump(mode="json"),
+    )
+    session.add(row)
+    await session.flush()
+    await engine.attempt_promotion(row, session=session)
+    return row.id
 
 
 async def start_rerun_from_stage(
@@ -314,8 +351,28 @@ async def start_rerun_from_stage(
 
 async def request_cancel(run_id: UUID, *, actor: Actor, session: AsyncSession) -> None:
     """Running: cancel at the next boundary. Paused: cancel immediately.
-    Queued: cancel directly. No-op on terminal runs."""
-    raise NotImplementedError
+    Queued: cancel directly. Raises `RunAlreadyTerminalError` on a run
+    already in a terminal state (mapped to 409 at HTTP)."""
+    org_id = require_org_context()
+    run = (
+        await session.execute(
+            select(PipelineRunRow).where(PipelineRunRow.id == run_id, PipelineRunRow.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        raise RunNotFoundError(run_id)
+    if run.state in _TERMINAL_RUN_STATES:
+        raise RunAlreadyTerminalError(run_id)
+    if run.state == "queued":
+        await engine.cancel_queued(run, actor=actor, session=session)
+        return
+    if run.state == "running":
+        run.cancel_requested = True
+        return
+    # `paused` cancel-immediately semantics land with the pause/resolve
+    # machinery — no pause can exist yet (boundary evaluation always
+    # proceeds), so this branch is unreachable today.
+    raise NotImplementedError("cancel of a paused run lands with the pause/resolve machinery")
 
 
 async def resolve_pause(
@@ -352,5 +409,23 @@ async def get_run_overview(ticket_id: UUID, *, session: AsyncSession) -> RunOver
 
 
 async def has_run_in_flight(ticket_id: UUID, *, session: AsyncSession) -> bool:
-    """`pr_review` batching gate."""
-    raise NotImplementedError
+    """`pr_review` batching gate.
+
+    Returns True if any `pipeline_runs` row for `ticket_id` is in a
+    non-terminal active state: `queued`, `running`, or `paused`.
+
+    `queued` is included because it means the ticket already has a `running`
+    or `paused` run holding the one-in-flight slot (the
+    `ux_pipeline_runs_one_in_flight` index guarantees this) plus at least one
+    run waiting to follow — the ticket is committed to pipeline work and
+    starting another run would be redundant.
+    """
+    row = (
+        await session.execute(
+            select(PipelineRunRow.id).where(
+                PipelineRunRow.ticket_id == ticket_id,
+                PipelineRunRow.state.in_(["queued", "running", "paused"]),
+            )
+        )
+    ).first()
+    return row is not None

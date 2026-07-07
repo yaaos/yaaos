@@ -7,8 +7,9 @@
 | GET    | `/api/pipelines/{id}` | `PIPELINES_MANAGE` — read one |
 | PUT    | `/api/pipelines/{id}` | `PIPELINES_MANAGE` — replace definition (applies to new runs only) |
 | DELETE | `/api/pipelines/{id}` | `PIPELINES_MANAGE` — delete; 409 if referenced |
+| POST   | `/api/pipelines/runs/{run_id}/cancel` | `REVIEWER_WRITE` — cancel a run; running cancels at the next boundary, queued cancels immediately, terminal 409s |
 
-Run-lifecycle endpoints (`/api/pipelines/runs/...`) land with the run engine.
+Further run-lifecycle endpoints (pause respond, rerun, run/overview reads) land with the rest of the run engine.
 
 Request bodies for create/update are the `PipelineDefinition` model itself:
 `id` (top-level and per-stage) defaults to a fresh uuid7 at parse time, so a
@@ -34,6 +35,8 @@ from app.domain.pipelines.service import (
     PipelineNameTakenError,
     PipelineNotFoundError,
     PipelineReferencedError,
+    RunAlreadyTerminalError,
+    RunNotFoundError,
 )
 from app.domain.pipelines.types import Pipeline, PipelineSummary
 
@@ -147,6 +150,20 @@ async def delete_pipeline_endpoint(pipeline_id: UUID) -> Response:
             raise _err(409, "referenced") from exc
         await s.commit()
     return Response(status_code=204)
+
+
+@router.post("/runs/{run_id}/cancel", status_code=202, dependencies=[Depends(require(Action.REVIEWER_WRITE))])
+async def cancel_run_endpoint(run_id: UUID) -> Response:
+    actor = current_actor()
+    async with db_session() as s:
+        try:
+            await pipelines.request_cancel(run_id, actor=actor, session=s)
+        except RunNotFoundError as exc:
+            raise _err(404, "not_found") from exc
+        except RunAlreadyTerminalError as exc:
+            raise _err(409, "terminal") from exc
+        await s.commit()
+    return Response(status_code=202)
 
 
 register_routes(

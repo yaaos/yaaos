@@ -21,7 +21,7 @@ the key is absent.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid7
 
 from pydantic import BaseModel, Field
@@ -122,11 +122,30 @@ class PipelineDefinition(BaseModel, frozen=True):
 
 
 class FlattenedDefinition(BaseModel, frozen=True):
-    """The call-expanded projection. Validation-only in this phase (the
-    result is discarded); the run engine pins one per run as
-    `definition_snapshot`."""
+    """The call-expanded projection. Validation-only outside the run engine
+    (the CRUD dry-run flatten discards its result); the run engine pins one
+    per run as `pipeline_runs.definition_snapshot` and reloads it via
+    `from_snapshot` on every task-body dispatch."""
 
     stages: tuple[ExecutableStage, ...]
+
+    @classmethod
+    def from_snapshot(cls, snapshot: dict[str, Any]) -> FlattenedDefinition:
+        """Reconstruct from a `pipeline_runs.definition_snapshot` JSONB dict.
+        Dispatches each stage dict by its `kind` field explicitly rather than
+        relying on `ExecutableStage`'s implicit (non-discriminated) union
+        resolution — `stages` isn't `Annotated[..., Field(discriminator=...)]`,
+        so this is the robust parse path for untyped JSON, independent of
+        Pydantic's smart-union heuristic."""
+        stages = tuple(_STAGE_KIND_TO_MODEL[raw["kind"]].model_validate(raw) for raw in snapshot["stages"])
+        return cls(stages=stages)
+
+
+_STAGE_KIND_TO_MODEL: dict[str, type[SkillStage] | type[ReviewSkillStage] | type[ActionStage]] = {
+    "skill": SkillStage,
+    "review": ReviewSkillStage,
+    "action": ActionStage,
+}
 
 
 class PipelineValidationError(ValueError):

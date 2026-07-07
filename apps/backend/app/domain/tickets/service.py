@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
@@ -44,6 +45,13 @@ class Ticket(BaseModel):
     idempotency_key: str | None = None
     payload: dict = Field(default_factory=dict)
     current_workflow_execution_id: UUID | None = None
+    # Soft ref to the pipeline_runs row currently driving this ticket — the
+    # run-engine's equivalent of current_workflow_execution_id above.
+    current_run_id: UUID | None = None
+    # Per-ticket work branch. Nullable — the old pr_review_v1 path never
+    # populates it; the run engine reads it to build an action stage's
+    # ActionContext.branch_name.
+    branch_name: str | None = None
     # Enriched fields (denormalized at read-time from the linked PR; nullable
     # because a ticket can briefly exist without its PR row in the create flow).
     pr_number: int | None = None
@@ -76,6 +84,8 @@ class Ticket(BaseModel):
             idempotency_key=row.idempotency_key,
             payload=dict(row.payload or {}),
             current_workflow_execution_id=row.current_workflow_execution_id,
+            current_run_id=row.current_run_id,
+            branch_name=row.branch_name,
             created_at=row.created_at,
             updated_at=row.updated_at,
             findings_count=row.findings_count,
@@ -556,6 +566,106 @@ async def set_workflow_execution(
         .where(TicketRow.id == ticket_id)
         .values(current_workflow_execution_id=workflow_execution_id)
     )
+
+
+async def set_current_run(ticket_id: UUID, run_id: UUID, *, session: AsyncSession) -> None:
+    """Stamp the pipeline run now driving this ticket. The run-engine
+    equivalent of `set_workflow_execution` above. Caller commits."""
+    await session.execute(update(TicketRow).where(TicketRow.id == ticket_id).values(current_run_id=run_id))
+
+
+_SLUG_INVALID = re.compile(r"[^a-z0-9]+")
+
+
+def mint_branch_name(title: str, ticket_id: UUID) -> str:
+    """Pure: `yaaos/<slugified-title ~40ch>-<uuid7[:8]>`, falling back to
+    `yaaos/ticket-<uuid7[:8]>` when the title yields no usable slug (empty,
+    or all non-alphanumeric characters). The suffix is the ticket's own id
+    (already a uuid7) rather than a freshly-minted one, so calling this
+    twice for the same ticket is idempotent."""
+    shortid = ticket_id.hex[:8]
+    slug = _SLUG_INVALID.sub("-", title.lower()).strip("-")[:40].strip("-")
+    if not slug:
+        return f"yaaos/ticket-{shortid}"
+    return f"yaaos/{slug}-{shortid}"
+
+
+async def transition_ticket_on_run_start(
+    ticket_id: UUID,
+    *,
+    org_id: UUID,
+    run_id: UUID,
+    session: AsyncSession,
+) -> bool:
+    """Flip ticket pending→running when its pipeline run starts running.
+
+    Run-engine equivalent of `transition_on_workflow_start` above, keyed on
+    `current_run_id` instead of `current_workflow_execution_id`. Called
+    directly by `domain/pipelines`' engine (a plain acyclic import) — there
+    is no `on_start`-hook indirection the way the workflow-era callback
+    needed, since the run engine calls tickets functions itself.
+
+    Returns True if flipped. Returns False (silent no-op) when:
+    - the ticket is not found,
+    - the ticket is owned by a different run,
+    - the ticket is not currently in `pending`.
+
+    Caller commits.
+    """
+    row = (
+        await session.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    if row.current_run_id != run_id:
+        return False
+    if row.status != "pending":
+        return False
+    await _apply_transition(
+        session,
+        row,
+        new_status="running",
+        reason=None,
+        org_id=org_id,
+    )
+    return True
+
+
+async def transition_ticket_on_run_terminal(
+    ticket_id: UUID,
+    *,
+    org_id: UUID,
+    run_id: UUID,
+    to_status: TicketStatus,
+    reason: str | None,
+    session: AsyncSession,
+) -> bool:
+    """Flip a ticket to a terminal status only when the calling run still
+    owns it and it is not already terminal. Run-engine equivalent of
+    `transition_on_workflow_terminal` above. Shape-a: takes the caller's
+    session, never commits.
+
+    Returns True when the transition was applied; False on any guard miss:
+    - ticket not found or wrong org
+    - `current_run_id` does not match `run_id` (a newer run has superseded
+      this one)
+    - ticket is already in a terminal state (`done`, `cancelled`, `failed`)
+
+    Never raises on guard misses — the caller (the run engine's terminal
+    handling) shares the transaction; raising would roll back the run's
+    terminal commit.
+    """
+    row = (
+        await session.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    if row.current_run_id != run_id:
+        return False
+    if row.status in ("done", "cancelled", "failed"):
+        return False
+    await _apply_transition(session, row, new_status=to_status, reason=reason, org_id=org_id)
+    return True
 
 
 async def complete(ticket_id: UUID, *, org_id: UUID) -> None:

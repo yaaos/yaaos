@@ -20,10 +20,10 @@ Owns the `Action` Protocol and its ContextVar-bound registry — the real substa
 ### Core user flows
 
 1. A plugin registers an `Action` at import time via `register_action`.
-2. The engine (once `domain/pipelines` implements action-stage dispatch) resolves `action_id` via `get_action`, builds an `ActionContext`, and calls `execute` inside a SAVEPOINT.
+2. `domain/pipelines`' run engine (`engine.py`'s `START_STAGE` task body) resolves `action_id` via `get_action` for every `kind='action'` stage, builds an `ActionContext`, and calls `execute` inside a SAVEPOINT.
 3. `execute` runs synchronous, deterministic control-plane code (no parking, no boundary control, no artifact, no confidence) and returns a typed `Result`; a raised `ActionError` fails the run.
 
-No shipped actions register yet — the registry machinery is the module's current substance.
+No shipped actions register yet — plugin-contributed actions (`github:create_pr`, `github:update_pr`, `github:reply_to_comment`) land with `plugins/github`'s contribution. Test actions exercise the dispatch path today (`domain/pipelines/test/test_run_lifecycle_service.py`, `test_run_queueing_service.py`).
 
 ### State machines
 

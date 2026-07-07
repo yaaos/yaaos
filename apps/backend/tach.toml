@@ -11,7 +11,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.core.audit_log"
-depends_on = ["app.core.database"]
+depends_on = ["app.core.database", "app.domain.tickets"]
 
 [[modules]]
 path = "app.core.auth"
@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pipelines"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.tenancy", "app.core.webserver", "app.domain.findings", "app.domain.repos"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.identity", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.domain.actions", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.pr_review"
@@ -1045,6 +1045,7 @@ expose = [
   "PipelineValidationError",
   "ReviewConfig",
   "ReviewSkillStage",
+  "RunAlreadyTerminalError",
   "RunNotFoundError",
   "RunOverview",
   "SkillStage",
@@ -1181,10 +1182,14 @@ expose = [
   "list_by_ids",
   "list_running_older_than",
   "list_tickets",
+  "mint_branch_name",
   "notify_ticket_status_change",
+  "set_current_run",
   "set_workflow_execution",
   "transition_on_workflow_start",
   "transition_on_workflow_terminal",
+  "transition_ticket_on_run_start",
+  "transition_ticket_on_run_terminal",
   "transition_ticket_on_start",
   "transition_ticket_on_terminal",
   "update_findings_summary",

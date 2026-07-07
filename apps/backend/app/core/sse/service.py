@@ -52,6 +52,7 @@ class GeneralEventKind(StrEnum):
 
     TICKET_STATUS_CHANGED = "ticket_status_changed"
     WORKFLOW_STATE_CHANGED = "workflow_state_changed"
+    RUN_STATE_CHANGED = "run_state_changed"
     REVIEW_REQUESTED = "review_requested"
     REVIEW_STARTED = "review_started"
     REVIEW_COMPLETED = "review_completed"
