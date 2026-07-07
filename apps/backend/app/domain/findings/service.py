@@ -271,8 +271,34 @@ async def find_by_external_comment(
 async def evaluate_auto_approve(
     org_id: UUID, ticket_id: UUID, *, conditions: AutoApproveConditions, session: AsyncSession
 ) -> bool:
-    """Scope: findings posted to the PR (external_comment_id set)."""
-    raise NotImplementedError
+    """Scope: findings posted to the PR (`external_comment_id` set) —
+    never-posted upstream residuals don't factor in. `no_<severity>` = zero
+    posted findings of that severity currently open; `all_confirmed_fixed` =
+    every posted, non-dismissed finding is resolved (i.e. none still open).
+    A condition that's off in `conditions` never gates — no posted findings
+    at all vacuously passes every enabled condition."""
+    rows = (
+        (
+            await session.execute(
+                select(FindingRow).where(
+                    FindingRow.org_id == org_id,
+                    FindingRow.ticket_id == ticket_id,
+                    FindingRow.external_comment_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if conditions.no_blocker and any(r.status == "open" and r.severity == "blocker" for r in rows):
+        return False
+    if conditions.no_should_fix and any(r.status == "open" and r.severity == "should_fix" for r in rows):
+        return False
+    if conditions.no_nit and any(r.status == "open" and r.severity == "nit" for r in rows):
+        return False
+    if conditions.all_confirmed_fixed and any(r.status == "open" for r in rows):
+        return False
+    return True
 
 
 async def refresh_ticket_summary(org_id: UUID, ticket_id: UUID, *, session: AsyncSession) -> None:

@@ -11,10 +11,18 @@ hands off to `maybe_start_batch_run`. `AFTER_RUN_TERMINAL` is registered
 with `domain/pipelines.register_run_terminal_hook` at import time
 (`apps/backend/app/domain/pr_review/__init__.py`) so every pipeline run
 reaching a terminal state re-evaluates whether a waiting comment batch
-should start a run.
+should start a run, and re-evaluates auto-approval.
 
-`evaluate_auto_approval` stays a stub — its wiring into `AFTER_RUN_TERMINAL`
-lands separately.
+`evaluate_auto_approval` approves an externally-authored PR once the repo's
+enabled conditions pass against posted-finding state and no approval is
+currently active — idempotent by construction, since GitHub is the source
+of truth for approval state (a dismiss-on-push cycle simply re-approves at
+the next terminal). It skips a yaaos-authored PR (GitHub forbids
+self-approval): a ticket's `branch_name` is either intake-supplied (the PR's
+own head-branch label, for a PR ticket) or minted by `tickets.mint_branch_name`
+(always `yaaos/...`, for a dev/troubleshoot/schedule ticket) — the `yaaos/`
+prefix is therefore a reliable, plugin-agnostic signal that yaaos authored
+the branch (and, transitively, the PR opened from it).
 """
 
 from __future__ import annotations
@@ -22,17 +30,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit_log import Actor, ActorKind
+from app.core.audit_log import Actor, ActorKind, audit_for_pr
 from app.core.auth import org_context
 from app.core.byok import get as byok_get
 from app.core.database import session as db_session
 from app.core.intake import parse_yaaos_command
 from app.core.tasks import TaskRef, enqueue, task
-from app.core.vcs import post_comment_reply
-from app.domain.findings import find_by_external_comment
+from app.core.vcs import approve_pr, has_active_approval, post_comment_reply
+from app.domain.findings import AutoApproveConditions, find_by_external_comment
+from app.domain.findings import evaluate_auto_approve as findings_evaluate_auto_approve
 from app.domain.findings import get as get_finding
 from app.domain.pipelines import (
     Kickoff,
@@ -45,6 +55,7 @@ from app.domain.pr_review.llm import ClassifyCommentInput, classify_comment
 from app.domain.pr_review.models import PRCommentRow
 from app.domain.pr_review.types import InboundComment, PRComment
 from app.domain.repos import find_bindings
+from app.domain.repos import get_settings as get_repo_settings
 from app.domain.tickets import get as get_ticket
 from app.domain.tickets import get_pull_request
 
@@ -272,10 +283,48 @@ async def maybe_start_batch_run(org_id: UUID, ticket_id: UUID, *, session: Async
     await session.flush()
 
 
+class _AutoApproveSkippedPayload(BaseModel):
+    reason: str
+
+
 async def evaluate_auto_approval(org_id: UUID, ticket_id: UUID, *, session: AsyncSession) -> None:
     """Enabled + conditions pass + not already approved → `vcs.approve_pr`.
-    Skips yaaos-authored PRs (GitHub forbids self-approval)."""
-    raise NotImplementedError
+    Never merges. Skips yaaos-authored PRs (GitHub forbids self-approval —
+    the same rule Renovate solves with its `renovate-approve` companion
+    app) with an audit-visible reason; a yaaos-approver companion App is a
+    separate ticket. Idempotent by construction: GitHub is the source of
+    truth for approval state, so a dismiss-on-push cycle simply re-approves
+    at the next terminal — no local marker to reconcile."""
+    ticket = await get_ticket(ticket_id, org_id=org_id)
+    if ticket.pr_id is None:
+        return
+
+    settings = await get_repo_settings(org_id, ticket.repo_external_id, session=session)
+    if not settings.auto_approve_enabled:
+        return
+
+    pr = await get_pull_request(ticket.pr_id, org_id=org_id)
+
+    if ticket.branch_name is not None and ticket.branch_name.startswith("yaaos/"):
+        await audit_for_pr(
+            pr.id,
+            "pull_request.auto_approve_skipped",
+            _AutoApproveSkippedPayload(reason="yaaos_authored_pr"),
+            actor=Actor.system(),
+            org_id=org_id,
+            session=session,
+        )
+        return
+
+    conditions = AutoApproveConditions.model_validate(settings.auto_approve_conditions)
+    passed = await findings_evaluate_auto_approve(org_id, ticket_id, conditions=conditions, session=session)
+    if not passed:
+        return
+
+    if await has_active_approval(ticket.plugin_id, org_id, pr.external_id):
+        return
+
+    await approve_pr(ticket.plugin_id, org_id, pr.external_id)
 
 
 async def list_comments_for_run(run_id: UUID, *, session: AsyncSession) -> list[PRComment]:
@@ -311,6 +360,7 @@ async def _comment_finding_ids_for_run(run_id: UUID, session: AsyncSession) -> t
 async def _after_run_terminal_task(*, org_id: str, ticket_id: str) -> None:
     async with db_session() as s:
         await maybe_start_batch_run(UUID(org_id), UUID(ticket_id), session=s)
+        await evaluate_auto_approval(UUID(org_id), UUID(ticket_id), session=s)
         await s.commit()
 
 
