@@ -202,6 +202,7 @@ class Settings(BaseSettings):
     # either would silently fake reviews. Safe default is False.
     yaaos_coding_agent_stub: bool = False  # stubs the coding-agent + workspace providers
     yaaos_reviewer_classifier_stub: bool = False  # stubs the reviewer reply classifier
+    yaaos_pr_comment_classifier_stub: bool = False  # stubs domain/pr_review's comment classifier
 
     # Service version string exposed in /api/health and OTel resource attrs.
     # Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a
@@ -235,6 +236,8 @@ class Settings(BaseSettings):
             forbidden.append("YAAOS_CODING_AGENT_STUB")
         if self.yaaos_reviewer_classifier_stub:
             forbidden.append("YAAOS_REVIEWER_CLASSIFIER_STUB")
+        if self.yaaos_pr_comment_classifier_stub:
+            forbidden.append("YAAOS_PR_COMMENT_CLASSIFIER_STUB")
         if forbidden:
             raise ValueError(
                 f"{', '.join(forbidden)} set but APP_MODE=production. These enable "

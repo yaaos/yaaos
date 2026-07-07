@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.core.intake import is_skippable_path, parse_rereview
+from app.core.intake import is_skippable_path, parse_rereview, parse_yaaos_command
 
 
 @pytest.mark.parametrize(
@@ -29,6 +29,39 @@ def test_no_match() -> None:
 def test_no_match_for_wrong_command() -> None:
     matched, _ = parse_rereview("@yaaos review")
     assert not matched
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["@yaaos re-review", "@yaaos RE-REVIEW please", "hey @yaaos re-review"],
+)
+def test_parse_yaaos_command_re_review(body: str) -> None:
+    assert parse_yaaos_command(body) == "re-review"
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["hey @yaaos rereview please", "@yaaos-architecture rereview"],
+)
+def test_parse_yaaos_command_legacy_rereview_maps_to_re_review(body: str) -> None:
+    assert parse_yaaos_command(body) == "re-review"
+
+
+def test_parse_yaaos_command_cancel() -> None:
+    assert parse_yaaos_command("@yaaos cancel") == "cancel"
+
+
+def test_parse_yaaos_command_full_review_no_longer_recognized() -> None:
+    """`full review` is retired — the token set is `re-review | cancel`."""
+    assert parse_yaaos_command("@yaaos full review") is None
+
+
+def test_parse_yaaos_command_plain_review_no_longer_recognized() -> None:
+    assert parse_yaaos_command("@yaaos review") is None
+
+
+def test_parse_yaaos_command_no_match() -> None:
+    assert parse_yaaos_command("just a regular comment") is None
 
 
 @pytest.mark.parametrize(

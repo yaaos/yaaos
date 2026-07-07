@@ -18,10 +18,14 @@ Cutoffs are chosen knowing verbalized confidence scores cluster 80-100.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from app.domain.findings import Finding
+from app.domain.pipelines.types import PriorFindingRef
 
 # < LOW_CONFIDENCE_MAX -> low; < HIGH_CONFIDENCE_MIN -> medium; else high.
 LOW_CONFIDENCE_MAX = 50
@@ -90,3 +94,32 @@ class SkillReviewReturn(BaseModel, frozen=True, extra="forbid"):
     prior_finding_verdicts: list[PriorFindingVerdict] = Field(default_factory=list)
     confidence: int = Field(ge=0, le=100)
     summary: str
+
+
+def merge_prior_findings(
+    loop_findings: Sequence[Finding],
+    ticket_open: Sequence[Finding],
+    comment_findings: Sequence[Finding] = (),
+) -> tuple[PriorFindingRef, ...]:
+    """Unified `prior_findings` rule for any review pass: this stage
+    execution's own findings (any status) union the ticket's other open
+    durable findings union — for a comment-response run only —
+    findings referenced by the batch's comments, regardless of status. A
+    disputed finding may already be resolved or dismissed by the time the
+    dispute lands; the skill still needs to see it to answer the dispute."""
+    by_id: dict[UUID, Finding] = {f.id: f for f in loop_findings}
+    for finding in ticket_open:
+        by_id.setdefault(finding.id, finding)
+    for finding in comment_findings:
+        by_id.setdefault(finding.id, finding)
+    return tuple(
+        PriorFindingRef(
+            finding_id=finding.id,
+            severity=finding.severity,
+            body=finding.body,
+            code_file=finding.code_file,
+            code_line=finding.code_line,
+            artifact_section=finding.artifact_section,
+        )
+        for finding in by_id.values()
+    )

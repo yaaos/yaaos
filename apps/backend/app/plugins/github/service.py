@@ -790,19 +790,24 @@ def bootstrap() -> None:
     from app.core.intake import IntakePoint, register_intake_point  # noqa: PLC0415
     from app.domain.actions import register_action  # noqa: PLC0415
     from app.domain.orgs import register_onboarding_contributor, register_vcs_clear_hook  # noqa: PLC0415
-    from app.plugins.github.actions import GitHubCreatePRAction, GitHubUpdatePRAction  # noqa: PLC0415
+    from app.plugins.github.actions import (  # noqa: PLC0415
+        GitHubCreatePRAction,
+        GitHubReplyToCommentAction,
+        GitHubUpdatePRAction,
+    )
 
     register_vcs_plugin(_plugin)
     register_onboarding_contributor("github_app_installed", _onboarding_github_app_installed)
     register_vcs_clear_hook(_on_vcs_cleared)
     register_action(GitHubCreatePRAction())
     register_action(GitHubUpdatePRAction())
+    register_action(GitHubReplyToCommentAction())
 
     # Trigger-binding picker entries — `domain/repos.add_binding` validates
     # `intake_point_id` against this registry; the webhook rewire in
     # `intake_type.py` resolves bindings for "github:pr_opened" and
-    # "github:pr_commits". "github:pr_comment" is registered (selectable in
-    # the Repos-page picker) though nothing consumes it yet.
+    # "github:pr_commits". "github:pr_comment" is the comment-response run
+    # target `domain/pr_review.maybe_start_batch_run` resolves.
     register_intake_point(
         IntakePoint(id="github:pr_opened", plugin_id="github", label="PR opened", kind="webhook")
     )

@@ -5,7 +5,8 @@ check passes at registration. Methods return canned defaults; tests set
 specific responses via `set_pr` / `set_diff` / `set_comments` before
 exercising the flow. Every `post_finding` call is recorded on
 `posted_findings` for assertions. Every `post_comment` call is recorded on
-`posted_comments`.
+`posted_comments`. Every `post_comment_reply` call is recorded on
+`posted_replies`.
 
 Register with `register_stub_vcs(plugin_id="github")` in a pytest fixture;
 the fixture yields the stub instance so the test can configure state and
@@ -89,6 +90,8 @@ class StubVCSPlugin:
         self.posted_findings: list[tuple[UUID, str, dict[str, object]]] = []
         # Each entry: (org_id, external_id, body)
         self.posted_comments: list[tuple[UUID, str, str]] = []
+        # Each entry: (org_id, external_id, parent_comment_external_id, body)
+        self.posted_replies: list[tuple[UUID, str, str, str]] = []
         # Recording for the PR write surface — tests assert flow side-effects.
         # Each entry: (org_id, repo_external_id, head_branch, base_branch, title, body)
         self.created_prs: list[tuple[UUID, str, str, str, str, str]] = []
@@ -201,8 +204,8 @@ class StubVCSPlugin:
     async def post_comment_reply(
         self, org_id: UUID, external_id: str, parent_comment_external_id: str, body: str
     ) -> str:
-        del org_id, external_id, parent_comment_external_id, body
-        return "stub-reply-comment-id"
+        self.posted_replies.append((org_id, external_id, parent_comment_external_id, body))
+        return f"stub-reply-comment-{len(self.posted_replies)}"
 
     async def mark_comments_outdated(
         self, org_id: UUID, external_id: str, comment_external_ids: list[str]

@@ -11,6 +11,7 @@
 
 - **`PromptRunnable` retries once on `MalformedOutput`** then raises. The audit-log line on failure is the caller's responsibility.
 - **Gateway routing is automatic** — `_build_model` reads `BRAINTRUST_API_KEY` and injects `base_url` / `api_key`. When unset, LangChain falls back to its normal env-var resolution.
+- **`PromptRunnable(prompt, schema, api_key=...)` forwards a caller-supplied key** (e.g. a per-org `core/byok` key) to `init_chat_model` when the Braintrust gateway is NOT configured. Ignored when the gateway IS configured — the gateway holds its own provider credentials server-side, so a caller-supplied key has nothing to authenticate against on that path.
 - **`base_url` has NO `/v1` suffix** — both Anthropic and OpenAI SDKs append their own canonical paths.
 - **Braintrust project is derived from the prompt path** (`apps/backend/app/domain/<module>/llm/prompts/…` → project name = `<module>`). Auto-created by Braintrust on first request; no Braintrust-side setup needed for new modules.
 - **`LLMTestCache` keys exclude `base_url` and `api_key`** — toggling the gateway does not invalidate cached responses.

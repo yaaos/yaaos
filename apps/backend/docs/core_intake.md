@@ -26,7 +26,7 @@ Does NOT own: any tables. All writes flow through other modules' services.
 
 ## Gotchas
 
-- `@yaaos rereview` is a body-parsed token, not a GitHub mention. Legacy `@yaaos-<specialty>` still matches (specialty ignored).
+- `parse_yaaos_command` recognizes the canonical `@yaaos re-review` / `@yaaos cancel` grammar (body-parsed tokens, not GitHub mentions) — returns `"re-review" | "cancel" | None`. The deprecated `@yaaos rereview` form (no hyphen; legacy `@yaaos-<specialty>` still matches, specialty ignored) also maps to `"re-review"` via `parse_rereview`, kept for backward compat.
 - The callback path for OAuth under `/api/mcp-proxy` is the only `public_route` exception; this endpoint is also exempt from session-cookie auth (`public_route` pattern).
 - Missed events recover via the plugin's catch-up poller, not replay here.
 - `POST /api/intake/{type}` stays unclassified in `core/auth`'s route-security taxonomy (relies on its own `Depends(public_route)`, not a prefix rule) so the GitHub webhook never gains an `X-Yaaos-Org-Slug`/CSRF requirement; `GET /api/intake/points` is ORG_SCOPED via a single method+path exact override (`ORG_SCOPED_METHOD_EXACT`), not a blanket `/api/intake` prefix.

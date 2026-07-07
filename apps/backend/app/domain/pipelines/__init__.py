@@ -23,6 +23,7 @@ from app.domain.pipelines.definition import (
     Stage,
 )
 from app.domain.pipelines.engine import HANDLE_AGENT_EVENT as _HANDLE_AGENT_EVENT
+from app.domain.pipelines.engine import register_comment_findings_provider, register_run_terminal_hook
 from app.domain.pipelines.service import (
     InvalidPauseResolutionError,
     MissingInheritedArtifactError,
@@ -100,6 +101,8 @@ __all__ = [
     "list_runs_for_ticket",
     "list_templates",
     "pipeline_referenced_by_call",
+    "register_comment_findings_provider",
+    "register_run_terminal_hook",
     "request_cancel",
     "resolve_pause",
     "start_rerun_from_stage",

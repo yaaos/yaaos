@@ -1,37 +1,47 @@
-"""GitHub-contributed `domain/actions.Action`s: `github:create_pr` and
-`github:update_pr`.
+"""GitHub-contributed `domain/actions.Action`s: `github:create_pr`,
+`github:update_pr`, and `github:reply_to_comment`.
 
-Both are pure control-plane calls — the stage's own exit-push already put
-the work branch on the remote; these actions only talk to the GitHub API
-and stamp durable state (`tickets.pr_id`, `pipeline_findings.external_comment_id`).
+All three are pure control-plane calls — the stage's own exit-push already
+put the work branch on the remote; these actions only talk to the GitHub
+API and stamp durable state (`tickets.pr_id`, `findings.external_comment_id`,
+`findings.defended_at`, finding status).
 
-`_post_residuals` is the posting primitive shared by both actions. It is
-externally idempotent: a mid-body crash may have already posted a comment on
-GitHub before the DB write anchoring it landed, so before posting a finding
-it reconciles against `vcs.list_yaaos_comments` — every finding's own
-`handle` (e.g. `SPEC-001`) rides verbatim in `rule_violated`, the one
-`vcs.post_finding` argument this call fully controls, so a literal substring
-match against already-posted comment bodies is exact and independent of
-whatever cosmetic label the category-derived rendering produces.
+`_post_residuals` is the posting primitive shared by `create_pr`/`update_pr`.
+It is externally idempotent: a mid-body crash may have already posted a
+comment on GitHub before the DB write anchoring it landed, so before
+posting a finding it reconciles against `vcs.list_yaaos_comments` — every
+finding's own `handle` (e.g. `SPEC-001`) rides verbatim in `rule_violated`,
+the one `vcs.post_finding` argument this call fully controls, so a literal
+substring match against already-posted comment bodies is exact and
+independent of whatever cosmetic label the category-derived rendering
+produces.
+
+`reply_to_comment` carries the deterministic dispute policy — see its own
+docstring.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import ClassVar
 from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit_log import Actor
 from app.core.vcs import create_pr, fetch_pr, list_yaaos_comments, post_comment_reply, post_finding
 from app.core.vcs import resolve_finding_thread as vcs_resolve_finding_thread
 from app.domain.actions import ActionContext, ActionError
+from app.domain.findings import FindingStatusEvent, dismiss, mark_defended, set_external_anchor
 from app.domain.findings import get as get_finding
-from app.domain.findings import set_external_anchor
+from app.domain.pr_review import list_comments_for_run
 from app.domain.tickets import attach_pr_to_ticket
 from app.domain.tickets import get as get_ticket
 from app.domain.tickets import upsert as upsert_pull_request
 from app.plugins.github.service import get_plugin as get_github_plugin
+
+_ACCEPTANCE_REPLY = "Dismissing this finding based on your feedback."
 
 
 async def _post_residuals(ctx: ActionContext, pr_external_id: str, *, session: AsyncSession) -> list[UUID]:
@@ -169,3 +179,76 @@ class GitHubUpdatePRAction:
                 reflagged.append(finding.id)
 
         return _UpdatePRResult(posted=posted, resolved=resolved, reflagged=reflagged)
+
+
+class _ReplyToCommentResult(BaseModel):
+    replies_posted: list[UUID]
+    dismissed: list[UUID]
+    defended: list[UUID]
+
+
+class GitHubReplyToCommentAction:
+    """Posts the comment-response review stage's verdict replies into each
+    finding's own comment thread, and executes the deterministic dispute
+    policy for findings a batched comment disputed:
+
+    - dispute + verdict `None` + a reply → `findings.mark_defended` (the one
+      defense — the skill answered without overriding the finding).
+    - dispute on an already-defended finding + any non-`user_overrode`
+      verdict → coerce: `findings.dismiss` + a generic acceptance reply
+      (deterministic — a second dispute always ends in dismiss regardless
+      of what the skill now asserts).
+
+    The engine has already applied `fixed`/`still_present`/`user_overrode`
+    mechanically before this action runs; a `user_overrode` verdict means
+    the finding is already dismissed, so it's excluded from the coercion
+    check by name.
+    """
+
+    action_id = "github:reply_to_comment"
+    plugin_id: str | None = "github"
+    label = "Reply to PR comments"
+    Result: ClassVar[type[BaseModel]] = _ReplyToCommentResult
+
+    async def execute(self, ctx: ActionContext, *, session: AsyncSession) -> BaseModel:
+        if ctx.pr_external_id is None:
+            raise ActionError("github:reply_to_comment requires a ticket with a bound PR")
+        pr_external_id = ctx.pr_external_id
+
+        comments = await list_comments_for_run(ctx.run_id, session=session)
+        disputed_finding_ids = {
+            c.finding_id for c in comments if c.classification == "dispute" and c.finding_id is not None
+        }
+
+        replies_posted: list[UUID] = []
+        dismissed: list[UUID] = []
+        defended: list[UUID] = []
+
+        for verdict in ctx.preceding_verdicts:
+            finding = await get_finding(verdict.finding_id, session=session)
+            reply_text = verdict.reply
+
+            if verdict.finding_id in disputed_finding_ids:
+                if verdict.status is None:
+                    if verdict.reply:
+                        await mark_defended(verdict.finding_id, session=session)
+                        defended.append(verdict.finding_id)
+                elif finding.defended_at is not None and verdict.status != "user_overrode":
+                    event = FindingStatusEvent(
+                        status="dismissed",
+                        method="user_overrode",
+                        actor=Actor.system(),
+                        run_id=ctx.run_id,
+                        at=datetime.now(UTC),
+                    )
+                    await dismiss(verdict.finding_id, event=event, session=session)
+                    dismissed.append(verdict.finding_id)
+                    reply_text = reply_text or _ACCEPTANCE_REPLY
+
+            if finding.external_comment_id is not None and reply_text:
+                await post_comment_reply(
+                    ctx.vcs_plugin_id, ctx.org_id, pr_external_id, finding.external_comment_id, reply_text
+                )
+                replies_posted.append(verdict.finding_id)
+
+        return _ReplyToCommentResult(replies_posted=replies_posted, dismissed=dismissed, defended=defended)

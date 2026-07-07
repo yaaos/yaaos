@@ -14,6 +14,7 @@ from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableLambda
 from pydantic import BaseModel, Field
 
+from app.core.config import get_settings
 from app.core.llm import MalformedOutput, PromptRunnable, load_prompt
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "example.prompt.md"
@@ -65,3 +66,33 @@ async def test_ainvoke_succeeds_on_retry() -> None:
     out = await runnable.ainvoke({"subject": "x"})
 
     assert out.answer == "recovered"
+
+
+class _RecordingBuildModelRunnable(PromptRunnable[Verdict]):
+    """Records the kwargs `_build_model` would have passed to
+    `init_chat_model`, without actually calling it."""
+
+    def __init__(self, prompt, schema, *, api_key: str | None) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(prompt, schema, api_key=api_key)
+        self.observed_api_key: str | None = None
+
+    def _build_model(self) -> BaseChatModel:  # type: ignore[override]
+        settings = get_settings()
+        if not settings.braintrust_api_key and self._api_key:
+            self.observed_api_key = self._api_key
+
+        async def _produce(_messages):  # type: ignore[no-untyped-def]
+            raise AssertionError("model should not be invoked in this test")
+
+        return RunnableLambda(_produce)  # type: ignore[return-value]
+
+
+def test_api_key_forwarded_when_braintrust_not_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
+    get_settings.cache_clear()
+    prompt = load_prompt(FIXTURE_PATH)
+    runnable = _RecordingBuildModelRunnable(prompt, Verdict, api_key="org-byok-key")
+
+    runnable._build_model()
+
+    assert runnable.observed_api_key == "org-byok-key"

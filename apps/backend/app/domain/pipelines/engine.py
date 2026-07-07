@@ -74,7 +74,7 @@ the run stays `queued`.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid7
@@ -118,12 +118,14 @@ from app.domain.findings import (
     reopen,
     resolve,
 )
+from app.domain.findings import get as get_finding
 from app.domain.pipelines.boundary import BoundaryDecision, evaluate_boundary
 from app.domain.pipelines.contracts import (
     PriorFindingVerdict,
     SkillReturn,
     SkillReviewReturn,
     bucket_confidence,
+    merge_prior_findings,
 )
 from app.domain.pipelines.definition import ActionStage, FlattenedDefinition, ReviewSkillStage, SkillStage
 from app.domain.pipelines.escalation import resolve_escalation_targets
@@ -165,6 +167,35 @@ PAUSED_RUN_WORKSPACE_GRACE_SECONDS = 1800
 _SYSTEM_STAGE_PROVISION = "provision-workspace"
 _SYSTEM_STAGE_CLEANUP = "cleanup-workspace"
 _SYSTEM_STAGE_REFRESH_AUTH = "refresh-auth"
+
+# Run-terminal hook registry — list-shaped like `core/agent_gateway`'s
+# consumer registry. Each hook gets its own outbox enqueue, inside the same
+# transaction that flips the run terminal (`_enter_terminal`). Consumed
+# today by `domain/pr_review` (comment batching).
+_run_terminal_hooks: list[TaskRef] = []
+
+
+def register_run_terminal_hook(task_ref: TaskRef) -> None:
+    """Append `task_ref` to the run-terminal hook registry. Called at
+    import time by any module that wants to react to every pipeline run
+    reaching a terminal state."""
+    _run_terminal_hooks.append(task_ref)
+
+
+# Comment-findings provider — registered once, at `domain/pr_review` import
+# time (mirrors `domain/repos.register_pipeline_lookup`'s cycle-avoidance:
+# `pr_review` already depends on `pipelines`, so the reverse edge would
+# cycle). Supplies the finding ids referenced by a comment-response run's
+# claimed batch — see `_resolve_prior_findings`.
+_CommentFindingIdsProvider = Callable[[UUID, AsyncSession], Awaitable[tuple[UUID, ...]]]
+_comment_finding_ids_provider: _CommentFindingIdsProvider | None = None
+
+
+def register_comment_findings_provider(fn: _CommentFindingIdsProvider) -> None:
+    """Registered once, at `domain/pr_review` import time. Re-registering
+    overwrites (mirrors `core/byok.register_validator`'s reload tolerance)."""
+    global _comment_finding_ids_provider
+    _comment_finding_ids_provider = fn
 
 
 def _is_auth_expired(failure_reason: str) -> bool:
@@ -750,6 +781,11 @@ async def _enter_terminal(
                 session=session,
             )
 
+    for hook in _run_terminal_hooks:
+        await enqueue(
+            hook, args={"org_id": str(run.org_id), "ticket_id": str(run.ticket_id)}, session=session
+        )
+
     await promote_oldest_queued(run.ticket_id, session=session)
 
 
@@ -1032,26 +1068,18 @@ async def _dispatch_skill_stage(
 async def _resolve_prior_findings(
     run: PipelineRunRow, stage_exec: StageExecutionRow, *, session: AsyncSession
 ) -> tuple[PriorFindingRef, ...]:
-    """Unified rule: this stage execution's own findings (any status) union
-    the ticket's open durable findings elsewhere. A comment-response run's
-    disputed-regardless-of-status findings arrive with the comment-response
-    machinery — not built here."""
+    """Unified rule (`contracts.merge_prior_findings`): this stage
+    execution's own findings (any status) union the ticket's open durable
+    findings elsewhere union — for a comment-response run — findings
+    referenced by the batch's comments regardless of status, via the
+    registered `domain/pr_review` provider (empty/no-op for any other run)."""
     loop_findings = await list_for_stage_execution(stage_exec.id, session=session)
     ticket_open = await list_open_for_ticket(run.org_id, run.ticket_id, session=session)
-    by_id: dict[UUID, Finding] = {f.id: f for f in loop_findings}
-    for finding in ticket_open:
-        by_id.setdefault(finding.id, finding)
-    return tuple(
-        PriorFindingRef(
-            finding_id=finding.id,
-            severity=finding.severity,
-            body=finding.body,
-            code_file=finding.code_file,
-            code_line=finding.code_line,
-            artifact_section=finding.artifact_section,
-        )
-        for finding in by_id.values()
-    )
+    comment_findings: list[Finding] = []
+    if _comment_finding_ids_provider is not None:
+        for finding_id in await _comment_finding_ids_provider(run.id, session):
+            comment_findings.append(await get_finding(finding_id, session=session))
+    return merge_prior_findings(loop_findings, ticket_open, comment_findings)
 
 
 def _render_findings_for_fix(findings: Sequence[Finding]) -> str:

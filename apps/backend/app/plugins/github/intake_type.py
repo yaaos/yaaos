@@ -13,7 +13,7 @@ HTTP boundary.
 | `pull_request` | `synchronize` | Refreshes PR metadata; on a bound repo also fires `github:pr_commits` (incremental review) on the same ticket. Unbound: metadata refresh only. |
 | `pull_request` | `closed` | PR state → merged/closed, ticket completed, workflows cancelled. |
 | `pull_request` | `reopened` | PR state → open. |
-| `issue_comment` / `pull_request_review_comment` | `created` | Parse yaaos commands (cancel / full review); other comments are accepted as a no-op. |
+| `issue_comment` / `pull_request_review_comment` | `created` | Pipeline-bound tickets: routed to `domain/pr_review.handle_pr_comment` (`@yaaos` grammar + free-text classification/batching). Tickets never run under pipelines: today's `@yaaos re-review` / `cancel` grammar against the old engine. |
 | `reaction` | `created` | Accepted as a no-op (`ignored_reaction_not_wired`). |
 | `installation` | `created` / `unsuspend` / `new_permissions_accepted` | Upsert install row. |
 | `installation` | `deleted` / `suspend` | Mark install inactive. |
@@ -600,6 +600,7 @@ class GithubIntakeType:
     ) -> IntakeOutcome:
         import app.domain.reviewer as reviewer  # noqa: PLC0415
         from app.core.intake import parse_yaaos_command  # noqa: PLC0415
+        from app.domain.pr_review import InboundComment, handle_pr_comment  # noqa: PLC0415
         from app.domain.tickets import get_by_external, get_by_pr  # noqa: PLC0415
 
         comment = payload.get("comment") or {}
@@ -615,8 +616,12 @@ class GithubIntakeType:
             if "pull_request" not in issue:
                 return IntakeSideEffect(detail="ignored_issue_comment")
             pr_number = issue.get("number")
+            in_reply_to_external_id = None
         else:
             pr_number = (payload.get("pull_request") or {}).get("number")
+            in_reply_to_external_id = (
+                str(comment.get("in_reply_to_id")) if comment.get("in_reply_to_id") else None
+            )
         if pr_number is None:
             return IntakeSideEffect(detail="ignored_no_pr")
         pr_external_id = f"{repo_full}#{pr_number}"
@@ -629,25 +634,44 @@ class GithubIntakeType:
             return IntakeSideEffect(detail="ignored_no_ticket")
 
         body = comment.get("body", "")
-        cmd = parse_yaaos_command(body)
-        if cmd is None and parse_rereview(body)[0]:
-            cmd = "full review"
-        if cmd is not None:
-            await audit_for_ticket(
-                ticket.id,
-                "ticket.rereview_requested",
-                _RereviewRequestedPayload(comment_external_id=str(comment.get("id", ""))),
-                actor=Actor.github_user(author_login),
-                org_id=org_id,
-                session=session,
-            )
-            if cmd == "cancel":
-                await reviewer.cancel_workflows_for_ticket(ticket.id)
-            elif cmd == "full review":
-                await reviewer.start_pr_review(ticket.id, org_id=org_id, trigger_reason="manual_full")
-            return IntakeSideEffect(detail=f"command_{cmd.replace(' ', '_')}")
+        comment_external_id = str(comment.get("id", ""))
 
-        return IntakeSideEffect(detail="comment_no_command")
+        if ticket.current_run_id is None:
+            # Coexistence fallback: this ticket has never had a pipeline run
+            # (its repo isn't bound to one, or it predates pipelines), so it
+            # stays on the old engine's own comment grammar. Removed once the
+            # old engine is deleted.
+            cmd = parse_yaaos_command(body)
+            if cmd is None and parse_rereview(body)[0]:
+                cmd = "re-review"
+            if cmd is not None:
+                await audit_for_ticket(
+                    ticket.id,
+                    "ticket.rereview_requested",
+                    _RereviewRequestedPayload(comment_external_id=comment_external_id),
+                    actor=Actor.github_user(author_login),
+                    org_id=org_id,
+                    session=session,
+                )
+                if cmd == "cancel":
+                    await reviewer.cancel_workflows_for_ticket(ticket.id)
+                elif cmd == "re-review":
+                    await reviewer.start_pr_review(ticket.id, org_id=org_id, trigger_reason="manual_full")
+                return IntakeSideEffect(detail=f"command_{cmd.replace('-', '_')}")
+            return IntakeSideEffect(detail="comment_no_command")
+
+        await handle_pr_comment(
+            org_id=org_id,
+            ticket_id=ticket.id,
+            comment=InboundComment(
+                external_id=comment_external_id,
+                author_login=author_login,
+                body=body,
+                in_reply_to_external_id=in_reply_to_external_id,
+            ),
+            session=session,
+        )
+        return IntakeSideEffect(detail="comment_processed")
 
     async def _handle_reaction(
         self,

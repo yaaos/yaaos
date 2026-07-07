@@ -23,7 +23,8 @@ Signatures in `app/core/vcs/types.py`:
 - Read: `fetch_pr`, `fetch_diff`, `list_yaaos_comments`, `is_repo_accessible`.
 - Write (findings): `post_finding(org_id, external_id, *, file, line_start, line_end, severity, category, confidence, finding_display_id, rationale, rule_violated, rule_source, suggested_fix) -> str` — posts one finding as a platform comment; returns the external comment id. When `file`/`line_start` are `None`, the plugin posts a top-level PR comment.
 - Write (plain messages): `post_comment(org_id, external_id, *, body) -> str` — plain top-level PR comment for non-finding system messages (e.g., secrets-detected warning).
-- Write (retained, unused): `post_comment_reply`, `mark_comments_outdated` — kept for future follow-up flows; no domain logic wired.
+- Write (replies): `post_comment_reply(org_id, external_id, parent_comment_external_id, body) -> str` — posts a reply into an existing thread; returns the external comment id. Wired by `github:update_pr`/`github:reply_to_comment` (verdict replies) and `domain/pr_review`'s `CLASSIFY_COMMENT` (canned `unclear` clarification).
+- Write (retained, unused): `mark_comments_outdated` — kept for a future follow-up flow; no domain logic wired.
 - Write (PR lifecycle):
   - `create_pr(org_id, repo_external_id, *, head_branch, base_branch, title, body) -> str` — opens a PR, returns its external id. Idempotent per head branch: the github plugin treats GitHub's 422 "PR already exists" response as the idempotency signal and looks up the existing open PR instead of erroring.
   - `approve_pr(org_id, external_id) -> None` — submits an approving review as the app. Never merges.

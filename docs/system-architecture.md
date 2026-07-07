@@ -13,7 +13,7 @@
 ## Runtime topology
 
 - One Docker image: FastAPI + built SPA + background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops start in FastAPI's `lifespan`.
-- Claude Code CLI runs inside the WorkspaceAgent container (customer-deployed); spawned once per review by the agent. The CLI owns all LLM calls — the backend makes zero direct LLM calls and never execs the CLI in-process.
+- Claude Code CLI runs inside the WorkspaceAgent container (customer-deployed); spawned once per review by the agent. The backend never execs the CLI in-process. It does make its own direct, single-shot LLM calls for text-only reasoning that doesn't need code access — `core/llm` (mechanics) + a calling domain module's `<module>/llm/` (prompts + schemas), e.g. `domain/pr_review`'s inbound-comment classifier.
 - Postgres holds all state. Single DB; each module owns its tables by convention.
 - OTel collector optional; backend `core/observability` attaches OTLP exporters only when `YAAOS_DASH0_ENDPOINT`, `YAAOS_DASH0_DATASET`, and `YAAOS_BACKEND_DASH0_BEARER_TOKEN` are all set. The web SPA also runs an OTel SDK (`core/observability`); export is triple-gated on `VITE_OTEL_COLLECTOR_ENDPOINT` + `VITE_DASH0_AUTH_TOKEN` + `VITE_DASH0_DATASET`.
 

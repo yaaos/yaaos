@@ -138,6 +138,7 @@ services:
       # to end against the real Go agent + fake-claude. The Anthropic key is
       # seeded fake by seed_github_install; fake-claude never validates it.
       YAAOS_REVIEWER_CLASSIFIER_STUB: "1"
+      YAAOS_PR_COMMENT_CLASSIFIER_STUB: "1"
       YAAOS_REVIEW_DEBOUNCE_SECONDS: "0"
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
       YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"
@@ -196,6 +197,7 @@ services:
       # No YAAOS_CODING_AGENT_STUB — see the web service block. The worker runs
       # the real claude_code review path against the agent + fake-claude.
       YAAOS_REVIEWER_CLASSIFIER_STUB: "1"
+      YAAOS_PR_COMMENT_CLASSIFIER_STUB: "1"
       YAAOS_REVIEW_DEBOUNCE_SECONDS: "0"
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
       YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"

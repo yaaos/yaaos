@@ -135,7 +135,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pr_review"
-depends_on = ["app.core.database"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.byok", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.tasks", "app.core.vcs", "app.domain.findings", "app.domain.pipelines", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.repos"
@@ -155,7 +155,7 @@ depends_on = ["app.core.auth", "app.core.byok", "app.core.coding_agent", "app.co
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.actions", "app.domain.findings", "app.domain.orgs", "app.domain.pipelines", "app.domain.repos", "app.domain.reviewer", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.observability", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.core.workflow", "app.domain.actions", "app.domain.findings", "app.domain.orgs", "app.domain.pipelines", "app.domain.pr_review", "app.domain.repos", "app.domain.reviewer", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.linear"
@@ -1078,6 +1078,8 @@ expose = [
   "list_runs_for_ticket",
   "list_templates",
   "pipeline_referenced_by_call",
+  "register_comment_findings_provider",
+  "register_run_terminal_hook",
   "request_cancel",
   "resolve_pause",
   "start_rerun_from_stage",

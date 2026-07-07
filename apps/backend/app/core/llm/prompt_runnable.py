@@ -60,11 +60,22 @@ def _project_for_prompt(prompt: FilePrompt, default: str) -> str:
 
 
 class PromptRunnable[OutputT: BaseModel]:
-    """Single-shot, structured LLM call. Stateless after construction."""
+    """Single-shot, structured LLM call. Stateless after construction.
 
-    def __init__(self, prompt: FilePrompt, output_schema: type[OutputT]) -> None:
+    `api_key`, when given, is forwarded to `init_chat_model` so a caller can
+    run the call under a per-org BYOK key (`core/byok.get`) instead of the
+    process-wide provider key LangChain would otherwise resolve from env.
+    Ignored when the Braintrust gateway is configured — the gateway holds
+    its own provider credentials server-side, so a caller-supplied key has
+    nothing to authenticate against on that path.
+    """
+
+    def __init__(
+        self, prompt: FilePrompt, output_schema: type[OutputT], *, api_key: str | None = None
+    ) -> None:
         self._prompt = prompt
         self._schema = output_schema
+        self._api_key = api_key
 
     def _build_model(self) -> BaseChatModel:
         # No `user`/`metadata.user_id` passthrough — langchain's
@@ -74,6 +85,8 @@ class PromptRunnable[OutputT: BaseModel]:
         # is already covered by the cache key + structured logs.
         kwargs: dict[str, Any] = dict(self._prompt.model_params)
         settings = get_settings()
+        if not settings.braintrust_api_key and self._api_key:
+            kwargs["api_key"] = self._api_key
         if settings.braintrust_api_key:
             # Route through the Braintrust gateway. base_url + api_key are
             # whitelisted out of `LLMTestCache`'s key derivation (see

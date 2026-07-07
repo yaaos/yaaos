@@ -27,6 +27,12 @@ def env_snapshot() -> Iterator[None]:
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+    # These tests clear the `get_settings` LRU cache mid-test to pick up a
+    # monkeypatched `BRAINTRUST_API_KEY`; monkeypatch reverts the env var on
+    # teardown but the cache itself stays stale (still holding a Settings
+    # instance built under the patched env) until something clears it again —
+    # leaking a truthy `braintrust_api_key` into whichever test runs next.
+    get_settings.cache_clear()
 
 
 def _reset_settings_cache() -> None:
