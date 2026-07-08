@@ -125,7 +125,7 @@ _register_agent_event_consumer(_HANDLE_AGENT_EVENT)
 _register_pipeline_lookup(_lookup_pipeline_ref)
 
 # First-party schedule intake point — `domain/repos` trigger bindings target
-# this id for cron-fired pipeline runs. No firing tick consumes it yet; the
+# this id for cron-fired pipeline runs (`pipeline_schedule_tick`); the
 # point is registered so it's selectable in the Repos-page trigger picker and
 # passes `add_binding`'s intake_point_id check.
 register_intake_point(IntakePoint(id="schedule", plugin_id=None, label="Schedule", kind="schedule"))

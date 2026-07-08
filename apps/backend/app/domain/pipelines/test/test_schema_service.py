@@ -11,9 +11,9 @@ via their Row classes (intra-module test-dir carve-out — see patterns.md
 `pr_comments`) are seeded via raw SQL — the sanctioned test-file mechanism
 for seeding cross-module state without a `*Row` cross-module import
 (patterns.md § Module boundaries in tests; `bin/check_table_access` exempts
-test files from the raw-SQL ownership scan for exactly this reason). None of
-those modules' service functions exist yet (stubs raise
-`NotImplementedError`), so there is no public API path to drive instead.
+test files from the raw-SQL ownership scan for exactly this reason) — the
+minimal-insert schema assertions here stay independent of the sibling
+modules' service APIs.
 """
 
 from __future__ import annotations
