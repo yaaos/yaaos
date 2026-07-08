@@ -4,6 +4,7 @@
 
 | Term | Meaning |
 |---|---|
+| **Software factory** | The product category yaaos belongs to: an agentic system that receives work signals (PRs, tickets) and autonomously produces reviewed, tested, shipped software, with humans supervising at the intent/review level and a learning loop (lessons) improving it over time. yaaos is a coding-agent-agnostic software factory — the customer brings the coding agent; yaaos owns the pipeline around it. |
 | **Org** | Tenant boundary. UUID PK + immutable `slug`. Every non-user row is `org_id`-scoped. Soft-deleted via `archived_at`. |
 | **Ticket** | yaaos unit of work. References a PR; flows `open → in_review → complete / abandoned`. |
 | **PR** | VCS-side artefact mirrored into `pull_requests`. Owned by `domain/tickets` (a property of a ticket; table `pull_requests` unchanged). |
