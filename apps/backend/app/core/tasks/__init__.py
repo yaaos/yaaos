@@ -2,11 +2,11 @@
 
 Public surface:
 
-    @task("route_workflow", queue="workflow", max_retries=3)
-    async def route_workflow(exec_id: str, ...): ...
+    @task("pipelines.route_run", queue="pipelines", max_retries=3)
+    async def route_run(run_id: str, ...): ...
 
     async with db_session() as s:
-        await tasks.enqueue(route_workflow, args={...}, session=s)
+        await tasks.enqueue(route_run, args={...}, session=s)
         await s.commit()
 
 `enqueue(session=)` writes an `outbox_entries` row in the caller's

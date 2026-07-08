@@ -4,7 +4,7 @@
 
 ## Scope
 
-Lets an org connect its Linear workspace so the reviewer agent can fetch issue context via hosted MCP. Implements `domain/integrations.IntegrationProvider`: declares `ProviderConfig` (OAuth + MCP URLs + tool catalogue) and a thin `validate(access_token)` that hits Linear's `/api/me`. No HTTP routes — proxy + OAuth callback live in [`domain/integrations`](domain_integrations.md).
+Lets an org connect its Linear workspace so a coding-agent invocation can fetch issue context via hosted MCP. Implements `domain/integrations.IntegrationProvider`: declares `ProviderConfig` (OAuth + MCP URLs + tool catalogue) and a thin `validate(access_token)` that hits Linear's `/api/me`. No HTTP routes — proxy + OAuth callback live in [`domain/integrations`](domain_integrations.md).
 
 ## Module architecture
 

@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns the `pipeline_findings` table — every finding a review stage reports, from the moment it's first seen, including findings the fix loop resolves a minute later. One source of truth for finding content; the engine's `stage_executions.loop_state` holds only references + verdicts. Replaces reviewer-owned finding rows (`domain/reviewer`'s `findings` table, which stays alive during coexistence — see § Data owned for the table-name collision this creates). `record_findings`, the four transition functions (`resolve`/`reopen`/`dismiss`/`reflag`), `mark_defended`, `get`, the four list/lookup reads, `set_external_anchor`, `refresh_ticket_summary`, and `evaluate_auto_approve` are all real.
+Owns the `pipeline_findings` table — every finding a review stage reports, from the moment it's first seen, including findings the fix loop resolves a minute later. One source of truth for finding content; the engine's `stage_executions.loop_state` holds only references + verdicts. `record_findings`, the four transition functions (`resolve`/`reopen`/`dismiss`/`reflag`), `mark_defended`, `get`, the four list/lookup reads, `set_external_anchor`, `refresh_ticket_summary`, and `evaluate_auto_approve` are all real.
 
 ## Public interface
 
@@ -28,7 +28,7 @@ Owns the `pipeline_findings` table — every finding a review stage reports, fro
 - **Every transition + `mark_defended` audits** — `audit_for_finding` writes `finding.resolved` / `finding.reopened` / `finding.dismissed` / `finding.reflagged` / `finding.defended`, payload = the `FindingStatusEvent` (or a small stamp payload for `mark_defended`, which has no event input). `mark_defended` stamps `defended_at` once — idempotent, no-op on a second call.
 - **Reads** — `get` (fetch one finding by id — the `github:update_pr` action resolves a `StageVerdict.finding_id` this way), `list_open_for_ticket` (ticket-wide, `status='open'` only — what a later review pass and the ticket summary read) and `list_for_stage_execution` (one stage execution's own findings, **any** status — the residual computation and the review-loop's own prior-findings union both read this). `find_by_external_comment` resolves a posted PR comment back to the finding it anchors.
 - **Anchor a posted comment** — `set_external_anchor` stamps `external_comment_id` once a posting action (`plugins/github`'s `github:create_pr`/`github:update_pr`) posts the finding to the PR. Metadata only — no status transition, no audit row; idempotent (a posting action's own reconciliation against the VCS provider's existing comments guarantees it never anchors two different ids).
-- **Ticket summary rollup** — `refresh_ticket_summary` counts this ticket's currently-`open` findings and the highest severity among them (`blocker > should_fix > nit`), and writes both onto `tickets.findings_count` / `tickets.max_severity` via `domain/tickets.update_findings_summary` — the same denormalized pair `domain/reviewer`'s own refresher feeds, during coexistence.
+- **Ticket summary rollup** — `refresh_ticket_summary` counts this ticket's currently-`open` findings and the highest severity among them (`blocker > should_fix > nit`), and writes both onto `tickets.findings_count` / `tickets.max_severity` via `domain/tickets.update_findings_summary`.
 - **Auto-approve evaluation** — `evaluate_auto_approve(org_id, ticket_id, *, conditions, session)` scopes to findings *posted to the PR* (`external_comment_id` set) — a never-posted upstream residual doesn't factor in. `no_<severity>` passes iff zero posted findings of that severity are currently `open`; `all_confirmed_fixed` passes iff every posted, non-dismissed finding is `resolved` (i.e. none still `open`). A condition left off in `AutoApproveConditions` never gates, and no posted findings at all vacuously passes every enabled condition. Called by `domain/pr_review.evaluate_auto_approval` — see [domain_pr_review.md](domain_pr_review.md#core-user-flows).
 
 ### State machines
@@ -39,7 +39,7 @@ Finding status: `open → resolved` · `open → dismissed` · `resolved → ope
 
 - `pipeline_findings` — one row per durable finding. `id` is app-minted (engine's uuid7 at first report, no `server_default`). `CHECK` constraints on `severity` and `status`. `UNIQUE(ticket_id, display_id)` backs the `<prefix>-<NNN>` handle.
 
-**Table name note:** the table is `pipeline_findings`, not `findings` — `domain/reviewer` still owns a `findings` table for the coexistence period (both engines run side by side until `core/workflow` + `domain/reviewer` are deleted). Renames to `findings` once that table is retired.
+**Table name note:** the table is `pipeline_findings`, not `findings` — a rename to `findings` is a separate follow-up migration, not yet applied.
 
 ## How it's tested
 

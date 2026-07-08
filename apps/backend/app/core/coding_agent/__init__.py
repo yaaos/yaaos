@@ -8,9 +8,6 @@ mapping, and stdout parsing. `dispatch_invocation` (Layer 3) calls
 `plugin.compile_invocation`, builds an `InvokeClaudeCodeCommand`, delegates to
 `dispatch_via_workspace` (Layer 2) with `claim_workspace=True` for the atomic
 enqueue + pin + claim, then inserts a `coding_agent_runs` row.
-
-`CodingAgentCommand` is the abstract base for workflow commands that invoke a
-coding-agent plugin; concrete impls live in `domain/<consumer>/commands/`.
 """
 
 from __future__ import annotations
@@ -30,7 +27,6 @@ from app.core.coding_agent.byok import (
     _register_byok_on_change,
     build_byok_secrets_for_org,
 )
-from app.core.coding_agent.commands_base import CodingAgentCommand
 from app.core.coding_agent.run_service import (
     create_run,
     get_step_activity,
@@ -67,7 +63,6 @@ __all__ = [
     "ACTIVITY_EVENT_KINDS",
     "ActivityEvent",
     "ActivityLog",
-    "CodingAgentCommand",
     "CodingAgentError",
     "CodingAgentPlugin",
     "Effort",

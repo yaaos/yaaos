@@ -8,7 +8,7 @@ Stubs:
     resolves to a canned JSON-RPC response without network I/O.
 
 Asserts the broken_creds path also records via
-`record_broken_creds(review_id, provider)` for the reviewer's review-output
+`record_broken_creds(review_id, provider)` for a future review-output
 yellow warning block.
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -26,10 +26,8 @@ from sqlalchemy import select
 
 from app.core.audit_log import list_for_org
 from app.core.auth import AuthMiddleware
-from app.core.identity import create_user
 from app.core.oauth import ProviderConfig
 from app.core.secrets import encrypt
-from app.core.vcs import VCSPullRequest
 from app.domain.integrations import create_credential, set_providers_for_tests
 from app.domain.mcp_proxy import (
     consume_broken_creds,
@@ -41,14 +39,6 @@ from app.domain.mcp_proxy import (
 )
 from app.domain.mcp_proxy.models import McpReviewTokenRow
 from app.domain.orgs import insert_org
-from app.domain.reviewer import (
-    PRReviewAggregate,
-    ReviewScope,
-    ReviewTrigger,
-    SqlAlchemyAggregateRepository,
-)
-from app.domain.tickets import create_from_pr as create_ticket
-from app.domain.tickets import upsert as upsert_pr
 
 # Every test in this file drives the MCP proxy end-to-end (real Postgres via
 # `db_session`, stub IntegrationProvider via `set_providers_for_tests`, stub
@@ -137,57 +127,20 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=_app()), base_url="http://test")
 
 
-async def _seed_review(db_session):  # type: ignore[no-untyped-def]
-    from app.domain.reviewer import Review  # noqa: PLC0415
+@dataclass(frozen=True)
+class _ReviewRef:
+    """Stand-in for a review identity — `review_id` is a soft reference (no
+    DB constraint); any UUID scopes a token, so tests don't need a real
+    backing row."""
 
+    id: UUID
+    org_id: UUID
+
+
+async def _seed_review(db_session):  # type: ignore[no-untyped-def]
     org = await insert_org(db_session, slug=f"mcp-disp-{uuid4().hex[:8]}")
-    await create_user(db_session, display_name="U")
-    ext_id = f"pr-{uuid4()}"
-    ticket_id, _ = await create_ticket(
-        org_id=org.org_id,
-        source_external_id=ext_id,
-        title="t",
-        description=None,
-        repo_external_id="owner/repo",
-        plugin_id="github",
-        idempotency_key=ext_id,
-        payload={},
-        session=db_session,
-    )
-    pr = await upsert_pr(
-        VCSPullRequest(
-            plugin_id="github",
-            repo_external_id="owner/repo",
-            external_id=ext_id,
-            number=1,
-            title="t",
-            body=None,
-            author_login="a",
-            author_type="user",
-            base_branch="main",
-            head_branch="b",
-            base_sha="0",
-            head_sha="1",
-            is_draft=False,
-            is_fork=False,
-            state="open",
-            html_url="http://test",
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-        ),
-        ticket_id=ticket_id,
-        org_id=org.org_id,
-        session=db_session,
-    )
-    agg = PRReviewAggregate(pr_id=pr.id, org_id=org.org_id)
-    review: Review = agg.start_review(
-        trigger=ReviewTrigger.MANUAL_FULL,
-        scope=ReviewScope.full(base_sha="0", head_sha="1"),
-        commit_sha="1",
-    )
-    repo = SqlAlchemyAggregateRepository(db_session)
-    await repo.save(agg)
-    raw_token = await mint_token(review.id, org_id=org.org_id, session=db_session)
+    review = _ReviewRef(id=uuid4(), org_id=org.org_id)
+    raw_token = await mint_token(review.id, org_id=review.org_id, session=db_session)
     await db_session.commit()
     return review, raw_token
 
@@ -393,10 +346,10 @@ async def test_token_lifecycle_round_trip_revokes(db_session, stub_provider) -> 
 
 @pytest.mark.asyncio
 async def test_proxy_reads_org_from_token_row(db_session, stub_provider, stub_upstream) -> None:
-    """Proxy resolves org_id from the token row — no reviewer back-lookup.
+    """Proxy resolves org_id from the token row — no back-lookup elsewhere.
 
     The credential is seeded against the review's org_id. The proxy must
-    find it without calling into the reviewer module, proving the token
+    find it without any lookup beyond the token row, proving the token
     row's org_id is the sole tenancy signal.
     """
     del stub_provider, stub_upstream

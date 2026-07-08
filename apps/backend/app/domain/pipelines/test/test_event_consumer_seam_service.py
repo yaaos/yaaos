@@ -1,14 +1,8 @@
 """Service test: the `core/agent_gateway` agent-event consumer registry —
-one `record_agent_event` call reaches both the old engine's and this
-engine's registered `HANDLE_AGENT_EVENT`; each ignores a `workflow_execution_id`
-it doesn't own; the old engine's flow still resumes through the shared
-registry (the coexistence bridge between the two engines).
-
-Drives two independent parked flows in parallel — an old-engine `Workflow`
-(cloned from `core/workflow/test/test_workspace_dispatch_service.py`'s
-`_DispatchingWs` pattern) and a pipelines run parked on its
-`provision-workspace` system stage — then fires each flow's terminal event
-in turn, asserting the OTHER flow's row is untouched.
+`record_agent_event` enqueues `domain/pipelines.handle_agent_event` for
+every terminal event; an event whose `workflow_execution_id` doesn't
+correspond to a `pipeline_runs` row is a safe no-op (not an error), and the
+matching run resumes off its own terminal event.
 """
 
 from __future__ import annotations
@@ -30,16 +24,6 @@ from app.core.audit_log import Actor, ActorKind
 from app.core.auth import Role, org_context
 from app.core.identity import create_user
 from app.core.tenancy import create_membership, create_org
-from app.core.workflow import (
-    AgentDispatchCommand,
-    Empty,
-    Outcome,
-    TerminalAction,
-    Workflow,
-    WorkflowState,
-    get_execution_summary,
-    step,
-)
 from app.core.workspace import is_workspace_provider_registered, register_workspace_providers
 from app.domain.pipelines import (
     BoundaryControl,
@@ -53,84 +37,8 @@ from app.domain.pipelines.models import PipelineRunRow
 from app.domain.pipelines.test.drain import drain
 from app.domain.tickets import create_from_pr
 from app.testing.stub_vcs import register_stub_vcs
-from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = [pytest.mark.service, pytest.mark.usefixtures("redis_or_skip")]
-
-
-# ── Old-engine flow — cloned from test_workspace_dispatch_service.py ────
-
-
-class _DispatchingWs(AgentDispatchCommand):
-    kind = "SeamTestDispatchingWs"
-    Inputs = Empty
-    Outputs = Empty
-    _org_id: UUID = UUID("00000000-0000-0000-0000-000000000000")
-    dispatched_command_id: UUID | None = None
-
-    async def execute(self, inputs: Empty, ctx) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx
-        return Outcome.success()
-
-    async def dispatch(self, inputs: Empty, ctx, *, session) -> UUID:  # type: ignore[no-untyped-def]
-        del inputs
-        command_id = uuid7()
-        cmd = CleanupWorkspaceCommand(
-            command_id=command_id, workspace_id=uuid4(), traceparent=ctx.traceparent or ""
-        )
-        await enqueue_command(
-            org_id=type(self)._org_id,
-            command=cmd,
-            session=session,
-            workflow_execution_id=UUID(ctx.workflow_execution_id),
-        )
-        type(self).dispatched_command_id = command_id
-        return command_id
-
-
-class _NoopLocal:
-    kind = "SeamTestDispatchingWsTerminal"
-    Inputs = Empty
-    Outputs = Empty
-
-    async def execute(self, inputs: Empty, ctx, *, session=None) -> Outcome:  # type: ignore[no-untyped-def]
-        del inputs, ctx, session
-        return Outcome.success()
-
-
-async def _start_old_engine_flow(eng, db_session) -> tuple[str, UUID]:
-    """Returns `(workflow_execution_id, dispatched_command_id)`, parked AWAITING_AGENT."""
-    org_id = uuid4()
-    _DispatchingWs._org_id = org_id
-    _DispatchingWs.dispatched_command_id = None
-
-    dispatch_step = step(_DispatchingWs)
-    terminal_step = step(_NoopLocal)
-    workflow = Workflow(
-        name="event-consumer-seam-test",
-        version=1,
-        steps=(dispatch_step, terminal_step),
-        entry=dispatch_step,
-        transitions={
-            dispatch_step: {"success": terminal_step},
-            terminal_step: {"success": TerminalAction.COMPLETE_WORKFLOW},
-        },
-    )
-    eng.register_workflow(workflow)
-    wfx_id = await eng.start(
-        workflow_name="event-consumer-seam-test", ticket_id=str(uuid4()), session=db_session
-    )
-    await db_session.commit()
-    await drain(db_session)
-
-    wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-    assert wfx is not None
-    assert wfx.state == WorkflowState.AWAITING_AGENT.value
-    assert _DispatchingWs.dispatched_command_id is not None
-    return wfx_id, _DispatchingWs.dispatched_command_id
-
-
-# ── Pipelines-engine flow — parked on its provision system stage ───────
 
 
 def _one_skill_stage_definition() -> PipelineDefinition:
@@ -213,40 +121,41 @@ def _success_event(command_id: UUID) -> AgentEvent:
 
 
 @pytest.mark.asyncio
-async def test_one_event_reaches_both_consumers_and_each_ignores_foreign_ids(db_session) -> None:
-    with set_engine_for_tests() as eng:
-        old_wfx_id, old_command_id = await _start_old_engine_flow(eng, db_session)
-        pipe_org_id, run_id, provision_command_id = await _start_pipelines_flow(db_session)
+async def test_foreign_run_id_is_a_no_op_and_the_real_run_still_resumes(db_session) -> None:
+    """A terminal event whose `workflow_execution_id` doesn't correspond to
+    any `pipeline_runs` row is a no-op that leaves a parked run untouched;
+    the parked run's own terminal event still resumes it normally."""
+    pipe_org_id, run_id, provision_command_id = await _start_pipelines_flow(db_session)
 
-        # Fire the OLD engine's terminal event. Both consumers receive it —
-        # the pipelines consumer must ignore `old_wfx_id` (not a pipeline_runs
-        # id) and leave the still-parked pipelines run untouched.
-        async with org_context(uuid4(), ActorKind.WORKSPACE, actor_id=None):
-            await record_agent_event(_success_event(old_command_id), session=db_session)
-        await db_session.commit()
-        await drain(db_session)
+    # Enqueue a real command stamped with a `workflow_execution_id` that
+    # isn't any `pipeline_runs.id` — `handle_agent_event` sees an id it
+    # doesn't own and no-ops.
+    foreign_command_id = uuid7()
+    foreign_run_id = uuid4()
+    await enqueue_command(
+        org_id=pipe_org_id,
+        command=CleanupWorkspaceCommand(command_id=foreign_command_id, workspace_id=uuid4(), traceparent=""),
+        session=db_session,
+        workflow_execution_id=foreign_run_id,
+    )
+    await db_session.commit()
 
-        old_wfx = await get_execution_summary(UUID(old_wfx_id), session=db_session)
-        assert old_wfx is not None
-        assert old_wfx.state == WorkflowState.DONE.value  # old engine resumed to completion
+    async with org_context(pipe_org_id, ActorKind.WORKSPACE, actor_id=None):
+        await record_agent_event(_success_event(foreign_command_id), session=db_session)
+    await db_session.commit()
+    await drain(db_session)
 
-        pipe_run = await db_session.get(PipelineRunRow, run_id)
-        assert pipe_run is not None
-        assert pipe_run.phase == "provision"  # untouched by the foreign event
-        assert pipe_run.pending_agent_command_id == provision_command_id
+    pipe_run = await db_session.get(PipelineRunRow, run_id)
+    assert pipe_run is not None
+    assert pipe_run.phase == "provision"  # untouched by the foreign event
+    assert pipe_run.pending_agent_command_id == provision_command_id
 
-        # Fire the PIPELINES engine's terminal event. Both consumers receive
-        # it — the old engine's consumer must ignore `run_id` (not a
-        # WorkflowExecutionRow id) and leave the already-DONE row untouched.
-        async with org_context(pipe_org_id, ActorKind.WORKSPACE, actor_id=None):
-            await record_agent_event(_success_event(provision_command_id), session=db_session)
-        await db_session.commit()
-        await drain(db_session)
+    # The run's own terminal event resumes it.
+    async with org_context(pipe_org_id, ActorKind.WORKSPACE, actor_id=None):
+        await record_agent_event(_success_event(provision_command_id), session=db_session)
+    await db_session.commit()
+    await drain(db_session)
 
-        pipe_run = await db_session.get(PipelineRunRow, run_id)
-        assert pipe_run is not None
-        assert pipe_run.phase == "stages"  # pipelines engine resumed
-
-        old_wfx = await get_execution_summary(UUID(old_wfx_id), session=db_session)
-        assert old_wfx is not None
-        assert old_wfx.state == WorkflowState.DONE.value  # unaffected by the foreign event
+    pipe_run = await db_session.get(PipelineRunRow, run_id)
+    assert pipe_run is not None
+    assert pipe_run.phase == "stages"  # resumed

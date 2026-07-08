@@ -6,18 +6,6 @@
 # registers its sink here).
 from app.core.agent_gateway import register_report_sink as _register_report_sink
 from app.core.workspace.agent_report import WorkspaceAgentReportSinkImpl
-from app.core.workspace.commands import (
-    CleanupWorkspace,
-    CleanupWorkspaceInputs,
-    CleanupWorkspaceOutputs,
-    ProvisionWorkspace,
-    ProvisionWorkspaceInputs,
-    ProvisionWorkspaceOutputs,
-    RefreshWorkspaceAuth,
-    RefreshWorkspaceAuthInputs,
-    RefreshWorkspaceAuthOutputs,
-)
-from app.core.workspace.commands_base import WorkspaceOpCommand
 from app.core.workspace.dispatch import (
     ProvisionWorkspaceSpec,
     dispatch_auth_refresh,
@@ -73,20 +61,11 @@ from app.core.workspace.types import (
 _register_report_sink(WorkspaceAgentReportSinkImpl())
 
 __all__ = [
-    "CleanupWorkspace",
-    "CleanupWorkspaceInputs",
-    "CleanupWorkspaceOutputs",
     "CodingAgentCliResult",
     "HealthStatus",
     "NetworkPolicy",
     "OnStreamLine",
-    "ProvisionWorkspace",
-    "ProvisionWorkspaceInputs",
-    "ProvisionWorkspaceOutputs",
     "ProvisionWorkspaceSpec",
-    "RefreshWorkspaceAuth",
-    "RefreshWorkspaceAuthInputs",
-    "RefreshWorkspaceAuthOutputs",
     "RepoRefForSpec",
     "ResourceCaps",
     "Workspace",
@@ -100,7 +79,6 @@ __all__ = [
     "WorkspaceExpiredError",
     "WorkspaceInfo",
     "WorkspaceNotFoundError",
-    "WorkspaceOpCommand",
     "WorkspaceOwner",
     "WorkspaceProvider",
     "WorkspaceProvisionError",

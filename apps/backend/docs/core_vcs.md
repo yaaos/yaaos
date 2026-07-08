@@ -6,15 +6,15 @@
 
 Owns: abstract transport types (`VCSPullRequest`, `Diff`, `Comment`, `VCSEvent` discriminated union), `VCSPlugin` Protocol, plugin registry, typed exception hierarchy.
 
-Does NOT own: finding taxonomy (lives in `domain/reviewer`), business logic, filtering, LLM calls, HTTP, PR mirror state (`domain/tickets` — `pull_requests` table). Webhook routing is not on the Protocol — plugins register their own routes via `core/webserver.register_routes`.
+Does NOT own: finding taxonomy (lives in `domain/findings`), business logic, filtering, LLM calls, HTTP, PR mirror state (`domain/tickets` — `pull_requests` table). Webhook routing is not on the Protocol — plugins register their own routes via `core/webserver.register_routes`.
 
 ## Why / invariants
 
-- **No finding value object crosses the boundary.** `post_finding` takes named primitive args; each plugin renders a platform-appropriate body. Finding taxonomy (severity, confidence, category) lives entirely in `domain/reviewer`.
+- **No finding value object crosses the boundary.** `post_finding` takes named primitive args; each plugin renders a platform-appropriate body. Finding taxonomy (severity, code location) lives entirely in `domain/findings`.
 - **Every async method takes `org_id: UUID` as the first positional arg.** The plugin uses `org_id` to look up its installation credentials; `external_id: str` (GitHub: `"owner/repo#123"`) identifies the PR or repo within that installation. Conversion from internal IDs to `external_id` happens at the call site.
 - **`get_installation_token` is short-lived; callers use once** (e.g., `git clone` via `GIT_ASKPASS`) and forget. Never cached.
 - **Status-not-raise for transient errors:** a thin retry wrapper at the plugin call site retries `VCSTransientError` and `VCSRateLimitError` with backoff. Other `VCSError` subclasses propagate to the background-task wrapper or HTTP middleware.
-- **Lives in `core/`** because after finding taxonomy moved to `domain/reviewer`, the module is pure transport infrastructure — no business decisions. `plugins/github → core/vcs` and `domain/* → core/vcs` are both legal downward imports.
+- **Lives in `core/`** because finding taxonomy lives in `domain/findings` — this module is pure transport infrastructure, no business decisions. `plugins/github → core/vcs` and `domain/* → core/vcs` are both legal downward imports.
 
 ## `VCSPlugin` Protocol
 

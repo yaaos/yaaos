@@ -5,9 +5,9 @@ local-dev seeding) to drive yaaos into known states without resorting to a
 batch seed script run at container startup.
 
 Routes (all `POST`, all return 404 in prod — gated on `is_non_prod`):
-  - `/api/testing/reset` — truncate every table, then re-run the structural
-    seed (`ensure_builtin_agents`). After this call: data tables empty; the
-    three built-in reviewer agents exist.
+  - `/api/testing/reset` — truncate every table, flush agent-identity-exchange
+    rate-limit keys in Redis, and clear the email inbox. After this call:
+    every data table is empty.
   - `/api/testing/seed/credentials_and_install` — populate yaaos with valid
     GitHub + Anthropic credentials and an active installation row pointing
     at fake-github's seeded org. Body: `{"org_login": "acme"}` (optional).

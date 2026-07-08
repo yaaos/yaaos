@@ -4,7 +4,7 @@
 
 ## Purpose
 
-`stub_coding_agent` wraps an already-registered real plugin (e2e stack). `fake_coding_agent` is the opposite: a self-contained `CodingAgentPlugin` impl that tests register on the fly under any `plugin_id`. Used by service tests driving workflows through reviewer Workspace commands (`CodeReview`) when no real plugin is bootstrapped.
+`stub_coding_agent` wraps an already-registered real plugin (e2e stack). `fake_coding_agent` is the opposite: a self-contained `CodingAgentPlugin` impl that tests register on the fly under any `plugin_id`. Used by `core/coding_agent` service tests driving `dispatch_invocation` when no real plugin is bootstrapped.
 
 ## Public interface
 
@@ -27,4 +27,4 @@ None. In-memory return-value attributes per instance; restored on context-manage
 
 ## How it's tested
 
-Exercised indirectly by reviewer service tests (`app/domain/reviewer/test/test_pr_review_v1_e2e_service.py`).
+Exercised indirectly by `core/coding_agent` service tests (`test_dispatch_invocation_service.py`, `test_sink_uses_parse_result_service.py`).

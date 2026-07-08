@@ -51,7 +51,6 @@ class GeneralEventKind(StrEnum):
     """Closed set of kinds carried on the general org-scoped SSE channel."""
 
     TICKET_STATUS_CHANGED = "ticket_status_changed"
-    WORKFLOW_STATE_CHANGED = "workflow_state_changed"
     RUN_STATE_CHANGED = "run_state_changed"
     STAGE_STATE_CHANGED = "stage_state_changed"
     ARTIFACT_STORED = "artifact_stored"

@@ -73,7 +73,7 @@ class Action(StrEnum):
     INTEGRATIONS_READ = "integrations.read"
     INTEGRATIONS_WRITE = "integrations.write"
 
-    # Org-scoped tickets / lessons / reviewer. Builder reads + mutates;
+    # Org-scoped tickets / lessons / pipeline runs. Builder reads + mutates;
     # Admin/Owner inherit via Role.covers().
     TICKETS_READ = "tickets.read"
     LESSONS_READ = "lessons.read"
@@ -210,10 +210,9 @@ ORG_SCOPED_PREFIXES: tuple[str, ...] = (
     "/api/mcp-proxy",
     # Workspace connection status + activity SSE stream.
     "/api/workspaces",
-    # Org-scoped tickets / lessons / reviewer.
+    # Org-scoped tickets / lessons.
     "/api/tickets",
     "/api/lessons",
-    "/api/reviewer",
     # SSE routes mounted at core/sse/web.py — org-scoped per-workflow streams.
     "/api/sse",
     # Pipeline-definition CRUD.

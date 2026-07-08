@@ -8,7 +8,7 @@ Implements `CodingAgentPlugin` — four methods (`compile_invocation`, `byok_req
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
-Does NOT own: `ReviewContext`, `ReportedFindingShape`, `CodeReviewResponse`, or review output validation — those live in `domain/reviewer`. `parse_result` extracts the structured response from stream-json; validation against `CodeReviewResponse` happens in `CodingAgentCommand.handle_response`.
+Does NOT own skill-specific prompt content — every skill file (`.claude/skills/<skill>/SKILL.md` in the checkout) owns its own instructions. This plugin only renders the generic stage context (`domain/pipelines.StageInvocationContext`) every invocation carries, plus the engine-injected output schema; it has no per-skill knowledge and no skill allowlist.
 
 ## Module architecture
 
@@ -16,7 +16,7 @@ Singleton `_plugin = ClaudeCodePlugin()` holds no decrypted credentials — sett
 
 ### `compile_invocation`
 
-Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Supports only `skill="pr_review"`. Validates `context` carries required keys (`org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`). Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --allowed-tools=…`), and a review prompt (with base/head SHA + strict JSON output directive). Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.byok_secrets["anthropic"]` and injected as `ANTHROPIC_API_KEY` at subprocess exec time. Raises `CodingAgentError` on unknown skills or missing context keys.
+Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Works for any skill name — `invocation.skill` is untyped, resolved against the checkout by the agent's pre-spawn stat, not validated here. Validates `context` carries the fields every stage invocation supplies (`stage_name`, `input`, `artifact_path`); raises `CodingAgentError` when they're missing. `_render_stage_prompt` renders the full `StageInvocationContext` (input text, PR diff pointers, upstream artifacts, revision/re-entry text, prior findings, artifact write path) plus a strict-JSON-output directive built from the engine-injected `output_schema`, and tells the model which named skill to use. Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --permission-mode=bypassPermissions`) — no `--allowed-tools` restriction; `bypassPermissions` already grants the full toolset, and tool scoping (e.g. a review skill staying read-only) is the skill file's own discipline, not a backend policy. Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.byok_secrets["anthropic"]` and injected as `ANTHROPIC_API_KEY` at subprocess exec time.
 
 ### `byok_requirement`
 
@@ -73,6 +73,7 @@ All under `/api/claude_code/`:
 
 Unit tests in `app/plugins/claude_code/test/`:
 - `test_stream_parsing.py` — `_parse_stream_events` + `_parse_usage` + `_render_activity_log` private helpers: well-formed streams, garbage interleaved with valid JSON, partial streams (timeout case).
+- `test_build_invocation_method.py` — `compile_invocation`: any skill name compiles, prompt renders the stage-invocation-context fields (input, PR pointers, strict-JSON-output directive), missing required context keys raise `CodingAgentError`.
 - `test_settings_schema.py` — settings round-trip on `{mcp_proxy_ids}`.
 - `test_defaults_endpoint.py` — auth gate + response shape for `GET /api/claude_code/defaults`.
 - `test_set_claude_code_plugin_for_tests.py` — `set_claude_code_plugin_for_tests` swaps and restores the singleton for the block.

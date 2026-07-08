@@ -4,9 +4,9 @@ WorkspaceAgent via `core/agent_gateway`.
 This provider does **not** spawn anything in-process. Each operation
 (`provision`, `run_coding_agent_cli`, `destroy`, etc.) enqueues an
 AgentCommand durably in `agent_commands` via `core/agent_gateway.enqueue_command`.
-The workflow engine's Workspace branch parks in `awaiting_agent` after dispatch;
-the terminal AgentEvent arrives at `/api/v1/commands/{id}/events` and the
-engine's `handle_agent_event` resumes the workflow.
+`domain/pipelines`' run engine parks a run's stage on `pending_agent_command_id`
+after dispatch; the terminal AgentEvent arrives at `/api/v1/commands/{id}/events`
+and the engine's `handle_agent_event` resumes the run.
 
 Exposes:
 - Provider registration under id `remote_agent`.
@@ -15,15 +15,15 @@ Exposes:
 - `provision()` / `destroy()` that hand control to the agent via
   `ProvisionWorkspace` / `CleanupWorkspace` AgentCommands.
 
-Cleanup and post-provision dispatch (Cleanup, RefreshWorkspaceAuth, CodeReview)
+Cleanup and post-provision dispatch (Cleanup, RefreshWorkspaceAuth, InvokeClaudeCode)
 routes through `core/workspace.dispatch_via_workspace` (Layer 2), which handles
 enqueue + pin + optional claim for any command that operates on an existing
 workspace row.
 
 The synchronous-shaped Workspace Protocol methods (`run_coding_agent_cli`
 returning a `CodingAgentCliResult`) don't fit the async event-driven
-model — the reviewer commands enqueue AgentCommands that the engine's
-`handle_agent_event` consumes instead.
+model — the run engine enqueues AgentCommands and awaits terminal events via
+`handle_agent_event` instead.
 """
 
 from __future__ import annotations
@@ -60,16 +60,16 @@ class RemoteAgentWorkspaceProvider:
     The Protocol shape was designed for in-process providers — its
     `provision/run/destroy` methods read like a synchronous call/return
     cycle. For the remote path the methods enqueue AgentCommands durably
-    and the workflow engine handles awaits via the `handle_agent_event` flow.
-    The dispatch entry points enqueue commands; the reviewer workflows
-    drive the full integration through their command bodies."""
+    and the run engine handles awaits via the `handle_agent_event` flow.
+    The dispatch entry points enqueue commands; the run engine's stage
+    dispatch drives the full integration."""
 
     plugin_id = "remote_agent"
 
     async def provision(self, spec: WorkspaceSpec) -> dict[str, Any]:
         # Provisioning runs through the dispatch helpers, not this
         # synchronous Protocol method: they enqueue a `ProvisionWorkspace`
-        # AgentCommand and the workflow engine awaits the
+        # AgentCommand and the run engine awaits the
         # `completed_success` event.
         raise WorkspaceProvisionError(
             "RemoteAgentWorkspaceProvider.provision is not a synchronous call; "
@@ -86,12 +86,12 @@ class RemoteAgentWorkspaceProvider:
         on_stream_line: OnStreamLine | None = None,
     ) -> CodingAgentCliResult:
         del argv, env, stdin, timeout_seconds, on_stream_line
-        # The reviewer commands enqueue `InvokeClaudeCode` AgentCommands
-        # and the workflow engine awaits the terminal event. Calling this
-        # method directly is a programming error against the remote provider.
+        # The run engine enqueues `InvokeClaudeCode` AgentCommands and awaits
+        # the terminal event. Calling this method directly is a programming
+        # error against the remote provider.
         raise WorkspaceProvisionError(
             "RemoteAgentWorkspaceProvider has no synchronous run_coding_agent_cli; "
-            "Workspace WorkflowCommands enqueue AgentCommands and await events."
+            "the run engine enqueues AgentCommands and awaits events."
         )
 
     async def read_text(self, path: str) -> str | None:
@@ -111,9 +111,9 @@ class RemoteAgentWorkspaceProvider:
         )
 
     async def destroy(self) -> None:
-        # Destruction runs through the engine's CleanupWorkspace
-        # WorkflowCommand, which enqueues a CleanupWorkspace AgentCommand;
-        # that is the proper invocation path, not this method.
+        # Destruction runs through `core/workspace.dispatch_cleanup`, which
+        # enqueues a CleanupWorkspace AgentCommand; that is the proper
+        # invocation path, not this method.
         return
 
     async def health_check(self) -> HealthStatus:
@@ -204,10 +204,10 @@ def register_workspace_providers() -> None:
     when registration happens.
     `RemoteAgentWorkspaceProvider` is the only shipped implementation: it
     dispatches every workspace operation to a customer-deployed WorkspaceAgent
-    via `core/agent_gateway`. `ProvisionWorkspace.dispatch` requires at least
-    one registered provider, so this call is load-bearing for the review +
-    enumerate workflows. Called exactly once per process; the registry raises
-    loudly on a duplicate, which is the intended signal for a wiring bug."""
+    via `core/agent_gateway`. `dispatch_provision` requires at least one
+    registered provider, so this call is load-bearing for every pipeline run.
+    Called exactly once per process; the registry raises loudly on a
+    duplicate, which is the intended signal for a wiring bug."""
     from app.core.workspace.service import register_workspace_provider  # noqa: PLC0415
 
     register_workspace_provider(RemoteAgentWorkspaceProvider())

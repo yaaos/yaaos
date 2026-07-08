@@ -116,9 +116,9 @@ async def seed_repo_skill(*, org_slug: str, repo_external_id: str, skill_name: s
     """Write `skill_name` for a connected repo via the direct service-layer call.
 
     Used by e2e specs that render the Code Connect settings page and expect a
-    non-null skill_name for the repo. The reviewer dispatch flow does NOT consume
-    this — it hardcodes skill='pr_review'. The seed exists for SPA read-back
-    assertions, not review correctness.
+    non-null skill_name for the repo. No pipeline dispatch path reads this
+    field today — a pipeline stage's own `skill_name` is the mechanism that
+    picks a skill. The seed exists for SPA read-back assertions only.
     """
     from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
     from app.plugins.claude_code import set_repo_skill  # noqa: PLC0415
@@ -184,12 +184,12 @@ async def seed_paused_run(
     is compiled, no workspace is provisioned, no real agent is involved).
 
     Lets e2e specs exercise the ticket page's Overview attention block and
-    `POST /api/pipelines/runs/pauses/{id}/respond` without a live coding-agent
-    completing a real skill invocation (`ClaudeCodePlugin.compile_invocation`
-    only supports the legacy `pr_review` skill today — a generic pipeline
-    skill stage can't yet run against the real agent). `escalation_user_ids`
-    is left empty; the responding org admin/owner authorizes via
-    `is_pause_responder`'s admin-union clause, not escalation membership.
+    `POST /api/pipelines/runs/pauses/{id}/respond` without depending on a
+    live coding-agent completing a real skill invocation — faster and
+    deterministic for specs that only need a paused-run fixture.
+    `escalation_user_ids` is left empty; the responding org admin/owner
+    authorizes via `is_pause_responder`'s admin-union clause, not escalation
+    membership.
 
     Row shapes mirror exactly what the engine itself writes on a real
     always-HITL pause (see `domain/pipelines/test/test_boundary_pause_service.py`

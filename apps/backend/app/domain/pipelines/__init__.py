@@ -1,10 +1,9 @@
 """domain/pipelines — the run engine: data-defined pipelines, run + stage
 lifecycle, HITL pauses.
 
-Replaces `core/workflow` + `domain/reviewer`'s workflow-engine role: one
-`PipelineDefinition` (discriminated `skill | review | action | call` stages)
-per org pipeline, executed by a generic run/stage dispatcher instead of
-per-step command classes. See `apps/backend/docs/domain_pipelines.md`.
+One `PipelineDefinition` (discriminated `skill | review | action | call`
+stages) per org pipeline, executed by a generic run/stage dispatcher.
+See `apps/backend/docs/domain_pipelines.md`.
 """
 
 # Side-effect imports: registers /api/pipelines/* routes, and registers the
@@ -114,8 +113,9 @@ __all__ = [
     "update_pipeline",
 ]
 
-# Register into the shared agent-event consumer registry — the coexistence
-# bridge with `core/workflow` (see `core/agent_gateway.register_agent_event_consumer`).
+# Register into the shared agent-event consumer registry (see
+# `core/agent_gateway.register_agent_event_consumer`) — keeps `core/agent_gateway`
+# free of any import on `domain/pipelines`.
 _register_agent_event_consumer(_HANDLE_AGENT_EVENT)
 
 # `domain/repos` can't import this module directly (it already depends on

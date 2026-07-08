@@ -449,6 +449,29 @@ class AgentRef(BaseModel):
     instance_id: str
 
 
+# ── Dispatch context ─────────────────────────────────────────────────────
+
+
+class DispatchContext(BaseModel):
+    """Correlation context passed to every dispatch helper in
+    `core/coding_agent` and `core/workspace` (`dispatch_invocation`,
+    `dispatch_provision`, `dispatch_cleanup`, `dispatch_auth_refresh`,
+    `dispatch_push`, `dispatch_via_workspace`).
+
+    Lives here (not in `domain/pipelines`) so the two `core` modules that
+    consume it never import a `domain` module — `core/coding_agent` and
+    `core/workspace` sit below `domain/pipelines` in the layer graph.
+    `domain/pipelines`' run engine is the sole production constructor.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    run_id: UUID
+    ticket_id: UUID
+    stage_execution_id: UUID
+    attempt: int
+    traceparent: str | None = None
+
+
 # ── Errors ─────────────────────────────────────────────────────────────
 
 

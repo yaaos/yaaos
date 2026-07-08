@@ -9,12 +9,12 @@ and that wire format.
 Usage:
 
     # Side A: about to enqueue a downstream task.
-    args = {"workflow_execution_id": ..., "traceparent": current_traceparent()}
-    await enqueue(START_STEP, args=args, session=s)
+    args = {"run_id": ..., "traceparent": current_traceparent()}
+    await enqueue(START_STAGE, args=args, session=s)
 
     # Side B: inside the task body.
-    tracer = tracer_for("core.workflow")
-    with start_child_span_with_traceparent(tracer, "start_step", traceparent):
+    tracer = trace.get_tracer("domain.pipelines")
+    with with_remote_parent_span(tracer, "start_stage", traceparent):
         ...
 
 Both helpers no-op gracefully when no OTel SDK is configured (current span

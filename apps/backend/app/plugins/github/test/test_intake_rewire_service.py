@@ -1,14 +1,15 @@
 """Service test: the intake rewire — `github:pr_opened`/`github:pr_commits`
 resolve `domain/repos` trigger bindings and route bound repos into
-`pipelines.start_run`; unbound repos keep today's `pr_review_v1` fallback.
+`pipelines.start_run`; unbound repos are a 2xx no-op.
 
 Covers:
 - bound `pull_request.opened` → ticket (with PR-derived `branch_name`) +
   `pipeline_runs` row.
-- unbound `pull_request.opened` → `pr_review_v1` workflow start, unchanged.
+- unbound `pull_request.opened` → 2xx no-op — no ticket, no run.
 - bound `pull_request.synchronize` → a second run on the same ticket via
   `github:pr_commits`.
-- unbound `pull_request.synchronize` → metadata refresh only, no run.
+- unbound `pull_request.synchronize` on an unknown PR → no-op (there is no
+  ticket to refresh).
 - a `start_run` config-problem exception (`PipelineNotFoundError` /
   `PipelineValidationError`) surfaces as a 2xx-with-detail outcome plus a
   `ticket.pipeline_start_failed` audit row — webhooks never retry-loop on
@@ -17,7 +18,6 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,52 +26,11 @@ from app.core.audit_log import Actor
 from app.core.audit_log import list_for_entity as list_audit_for_entity
 from app.core.auth import Role
 from app.core.identity import create_user
-from app.core.workflow import (
-    CommandContext,
-    Empty,
-    Outcome,
-    TerminalAction,
-    Workflow,
-    step,
-)
 from app.domain.orgs import create_membership, create_org
 from app.domain.pipelines import ActionStage, PipelineDefinition, create_pipeline
 from app.domain.repos import TriggerBinding, TriggerBindingSpec, add_binding
 from app.domain.tickets import TicketFilter, list_tickets
 from app.plugins.github.intake_type import GithubIntakeType
-from app.testing.workflow_harness import set_engine_for_tests
-
-
-class _NoopLocal:
-    kind: Literal["NoopIntakeRewire"] = "NoopIntakeRewire"
-    Inputs = Empty
-    Outputs = Empty
-    restart_safe = True
-
-    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
-        del inputs, ctx, session
-        return Outcome.success()
-
-
-_noop_step = step(_NoopLocal)
-
-
-@pytest.fixture
-def _stub_pr_review_engine():  # type: ignore[no-untyped-def]
-    """Register a one-step `pr_review_v1` workflow so the unbound fallback's
-    `engine.start(...)` resolves without pulling in the full reviewer command
-    set."""
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(
-            Workflow(
-                name="pr_review_v1",
-                version=1,
-                steps=(_noop_step,),
-                entry=_noop_step,
-                transitions={_noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
-            )
-        )
-        yield eng
 
 
 def _pr_payload(*, number: int, head_ref: str, head_sha: str, action: str = "opened") -> dict:
@@ -172,9 +131,9 @@ async def test_bound_pr_opened_starts_pipeline_run_with_branch_name(db_session) 
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_unbound_pr_opened_still_starts_pr_review_v1(db_session, _stub_pr_review_engine) -> None:
-    """No binding for `github:pr_opened` on this repo → the coexistence
-    fallback (`pr_review_v1`) fires exactly as it did before the rewire."""
+async def test_unbound_pr_opened_is_a_no_op(db_session) -> None:
+    """No binding for `github:pr_opened` on this repo → 2xx no-op: no ticket
+    is created, no run starts."""
     org_id = await _seed_org(db_session)
 
     outcome = await GithubIntakeType()._prepare_review_or_run(
@@ -185,14 +144,10 @@ async def test_unbound_pr_opened_still_starts_pr_review_v1(db_session, _stub_pr_
     )
     await db_session.commit()
 
-    assert outcome.detail == "pr_review_started"
+    assert outcome.detail == "unbound_repo"
 
-    ticket = await _only_ticket(db_session, org_id)
-    # branch_name still gets set (intake-supplied — the PR's own head branch)
-    # even on the unbound path, since ticket creation is shared.
-    assert ticket.branch_name == "feat-unbound"
-    assert ticket.current_workflow_execution_id is not None
-    assert ticket.current_run_id is None
+    tickets = await list_tickets(TicketFilter(), org_id=org_id)
+    assert tickets == []
 
 
 @pytest.mark.service
@@ -238,26 +193,20 @@ async def test_bound_synchronize_starts_pr_commits_run_on_same_ticket(db_session
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_unbound_synchronize_refreshes_metadata_only(db_session, _stub_pr_review_engine) -> None:
+async def test_unbound_synchronize_on_unknown_pr_is_a_no_op(db_session) -> None:
+    """An unbound repo never creates a ticket on `opened`, so a later
+    `synchronize` for the same PR finds no ticket to refresh — a no-op."""
     org_id = await _seed_org(db_session)
 
     intake = GithubIntakeType()
-    await intake._prepare_review_or_run(
-        payload=_pr_payload(number=4, head_ref="feat-unbound-sync", head_sha="head1"),
-        delivery=f"evt-{uuid4().hex}",
-        org_id=org_id,
-        session=db_session,
-    )
-    await db_session.commit()
-
     detail = await intake._handle_synchronize(
         payload=_pr_payload(number=4, head_ref="feat-unbound-sync", head_sha="head2", action="synchronize"),
         org_id=org_id,
     )
-    assert detail == "synchronize"
+    assert detail == "synchronize_unknown_pr"
 
-    ticket = await _only_ticket(db_session, org_id)
-    assert ticket.current_run_id is None
+    tickets = await list_tickets(TicketFilter(), org_id=org_id)
+    assert tickets == []
 
 
 @pytest.mark.service

@@ -1364,86 +1364,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/reviewer/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Cancel Jobs
-         * @description Cancel any non-terminal workflow_executions for this ticket.
-         */
-        post: operations["cancel_jobs_api_reviewer_cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/findings/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Findings By Ticket
-         * @description List findings for the ticket's PR in the canonical schema.
-         */
-        get: operations["findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/metrics": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Metrics
-         * @description Aggregate review counters.
-         */
-        get: operations["metrics_api_reviewer_metrics_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reviewer/reviews/by-ticket/{ticket_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Reviews By Ticket
-         * @description Per-review timeline metadata.
-         */
-        get: operations["reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/sse/general": {
         parameters: {
             query?: never;
@@ -1683,38 +1603,8 @@ export interface paths {
          *     - `builder: {kind, user_id?, display_name, avatar_url?}` — `kind="user"`
          *        when the ticket's PR has an `author_login`; `kind="system"` when
          *        yaaos triggered the run with no human attribution.
-         *
-         *     Workflow-run data is served by the dedicated
-         *     `GET /api/tickets/{id}/workflow-runs` endpoint.
          */
         get: operations["detail_api_tickets__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Step Activity
-         * @description Return the persisted `ActivityLog` for one workflow step.
-         *
-         *     `activity` is `null` when either the step never ran a coding-agent
-         *     invocation (non-`InvokeClaudeCode`) or the weekly partition holding its
-         *     activity row has aged out (4-week TTL).
-         *
-         *     Cross-tenant safety: 404s when the execution does not belong to the
-         *     ticket (and therefore not to the caller's org).
-         */
-        get: operations["step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1735,82 +1625,6 @@ export interface paths {
          * @description Aggregated timeline: ticket events + PR events for the ticket's PR.
          */
         get: operations["audit_api_tickets__ticket_id__audit_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/hitl/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Hitl History
-         * @description List past HITL exchanges (prompt + response + timestamps) for the
-         *     ticket per E2a.4 HITL tab "History" subsection.
-         *
-         *     Joins `pending_human_decisions` against the ticket's
-         *     `workflow_executions` rows. Newest exchange first.
-         */
-        get: operations["hitl_history_api_tickets__ticket_id__hitl_history_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/hitl/respond": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Hitl Respond
-         * @description Submit a HITL response. Resolves the open `PendingHumanDecisionRow`
-         *     for the ticket's most recent awaiting-human workflow execution and
-         *     re-enqueues the routing step via `core.workflow.resume_hitl`.
-         *
-         *     Request body: opaque dict — passes through to the workflow engine's
-         *     `resume_hitl(response=...)`. The SPA's HITL renderer shapes this
-         *     per the prompt's discriminated-union schema (E2a.4).
-         *
-         *     Returns `{stage, next_state}` where `next_state` is the workflow
-         *     state immediately after the resume.
-         */
-        post: operations["hitl_respond_api_tickets__ticket_id__hitl_respond_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/workflow-runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Workflow Runs
-         * @description All workflow runs for the ticket, oldest first, with their step lists.
-         *
-         *     Each step's `state` is pending | running | done | failed | skipped. Pure
-         *     workflow vocabulary — no AgentCommand references.
-         */
-        get: operations["workflow_runs_api_tickets__ticket_id__workflow_runs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3506,6 +3320,17 @@ export interface components {
             /** Status */
             status: string;
         };
+        /**
+         * StepActivityResponse
+         * @description Persisted coding-agent activity blob for one stage execution.
+         *
+         *     `activity` is null when the stage ran no coding-agent invocation (an
+         *     `action`/`system` stage) or the weekly partition holding its row has
+         *     aged out (4-week TTL).
+         */
+        StepActivityResponse: {
+            activity: components["schemas"]["ActivityLog"] | null;
+        };
         /** TemplateResponse */
         TemplateResponse: {
             /** Description */
@@ -3594,55 +3419,6 @@ export interface components {
             settings: {
                 [key: string]: unknown;
             };
-        };
-        /**
-         * WorkflowRunView
-         * @description One workflow execution for a ticket, with its ordered step list.
-         */
-        WorkflowRunView: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Current Step Id */
-            current_step_id: string | null;
-            /** Failure Reason */
-            failure_reason: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** State */
-            state: string;
-            /** Steps */
-            steps: components["schemas"]["WorkflowStepEntry"][];
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /** Workflow Name */
-            workflow_name: string;
-            /** Workflow Version */
-            workflow_version: number;
-        };
-        /**
-         * WorkflowStepEntry
-         * @description One step in a workflow run, projected for the ticket Activity tab.
-         */
-        WorkflowStepEntry: {
-            /** Command Kind */
-            command_kind: string;
-            /** Completed At */
-            completed_at: string | null;
-            /** Started At */
-            started_at: string | null;
-            /** State */
-            state: string;
-            /** Step Id */
-            step_id: string;
         };
         /** WorkspaceEvent */
         WorkspaceEvent: {
@@ -3783,27 +3559,6 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
-        };
-        /**
-         * StepActivityResponse
-         * @description Persisted coding-agent activity blob for one stage execution.
-         *
-         *     `activity` is null when the stage ran no coding-agent invocation (an
-         *     `action`/`system` stage) or the weekly partition holding its row has
-         *     aged out (4-week TTL).
-         */
-        app__domain__pipelines__web__StepActivityResponse: {
-            activity: components["schemas"]["ActivityLog"] | null;
-        };
-        /**
-         * StepActivityResponse
-         * @description Persisted coding-agent activity blob for one workflow step.
-         *
-         *     `activity` is null when the step ran no coding-agent invocation or the
-         *     weekly partition holding its row has aged out.
-         */
-        app__domain__tickets__web__StepActivityResponse: {
-            activity: components["schemas"]["ActivityLog"] | null;
         };
     };
     responses: never;
@@ -6299,7 +6054,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["app__domain__pipelines__web__StepActivityResponse"];
+                    "application/json": components["schemas"]["StepActivityResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6623,154 +6378,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cancel_jobs_api_reviewer_cancel_post: {
-        parameters: {
-            query: {
-                ticket_id: string;
-            };
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: {
-                include_terminal?: boolean;
-            };
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    metrics_api_reviewer_metrics_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
                 };
             };
             /** @description Validation Error */
@@ -7174,43 +6781,6 @@ export interface operations {
             };
         };
     };
-    step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-                execution_id: string;
-                step_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["app__domain__tickets__web__StepActivityResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     audit_api_tickets__ticket_id__audit_get: {
         parameters: {
             query?: {
@@ -7237,121 +6807,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    hitl_history_api_tickets__ticket_id__hitl_history_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    hitl_respond_api_tickets__ticket_id__hitl_respond_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    workflow_runs_api_tickets__ticket_id__workflow_runs_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkflowRunView"][];
                 };
             };
             /** @description Validation Error */

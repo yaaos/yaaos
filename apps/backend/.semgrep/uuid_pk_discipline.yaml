@@ -36,15 +36,3 @@ rules:
           - metavariable-regex:
               metavariable: $ROW
               regex: .*Row$
-    paths:
-      # `**/`-anchored (Semgrepignore v2 "permanently unanchored"): matches the
-      # file wherever it lands in the scanned path. A bare `app/...` prefix is
-      # wrong — `bin/ci` scans the `app` target, so semgrep matches excludes
-      # against the target-relative path (`domain/reviewer/...`, no `app/`).
-      exclude:
-        - "**/reviewer/aggregate.py"
-        # `publish.py` is the canonical aggregate-write path that mints
-        # `Review`/`Finding` PKs via `uuid7()` to FK them inside the caller's
-        # transaction without a round-trip flush — same carve-out as
-        # `aggregate.py`, same rationale (app-side identity ownership).
-        - "**/reviewer/publish.py"

@@ -50,9 +50,9 @@
 
 **`GET /api/intake/points` is `ORG_SCOPED`, not unclassified** — the `/api/intake` prefix itself stays unclassified (`POST /api/intake/{type}`, the GitHub webhook, must never gain an `X-Yaaos-Org-Slug`/CSRF requirement). One method+path pair overrides the fall-through via `ORG_SCOPED_METHOD_EXACT`, the same tier `USER_SCOPED_METHOD_EXACT` uses.
 
-**`org_context(org_id, actor_kind, actor_id)`** — async context manager for background jobs. Sets the four identity vars + `route_security_resolved = "background"` + OTel attrs on the current span + structlog `bind_contextvars`. Resets on exit. Does NOT set `workflow_execution_id_var` or `command_id_var` — those are set by workflow task bodies.
+**`org_context(org_id, actor_kind, actor_id)`** — async context manager for background jobs. Sets the four identity vars + `route_security_resolved = "background"` + OTel attrs on the current span + structlog `bind_contextvars`. Resets on exit. Does NOT set `workflow_execution_id_var` or `command_id_var`.
 
-**`workflow_execution_id_var` + `command_id_var`** — workflow-scope contextvars. None outside an active workflow task body. Set/reset by `core/workflow` task bodies (`start_step`, `handle_agent_event`, `route_workflow`) so every span and log record in scope carries `yaaos.workflow_id` and `yaaos.command_id` via the span processor and `_YaaosLogDimsFilter`. Not set in background work or HTTP requests.
+**`workflow_execution_id_var` + `command_id_var`** — run/command-scope contextvars, read by the span processor and `_YaaosLogDimsFilter` to stamp `yaaos.workflow_id`/`yaaos.command_id` on every span and log record when set. No production setter today — always unset.
 
 **Standard dims on every span** — `YaaosDimensionsSpanProcessor` (in `core/observability`) reads all six identity/workflow contextvars on `on_start` and stamps `yaaos.org_id`, `yaaos.user_id`, `yaaos.actor_kind`, `yaaos.workflow_id`, `yaaos.command_id` on every new span. Dims are only stamped when the var is set — background spans carry org+actor but no `user_id`; non-workflow spans carry no `workflow_id`/`command_id`. The middleware's previous inline `set_attribute` calls are removed; the processor makes dims universal without per-span code.
 

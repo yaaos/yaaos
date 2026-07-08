@@ -17,11 +17,8 @@ import { getCurrentOrgSlug } from "./org-context";
 export type Lesson = components["schemas"]["Lesson"];
 
 /** `GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity` —
- *  persisted coding-agent activity blob for one stage execution. Name is
- *  FastAPI's collision-disambiguated schema name (a same-named response
- *  model also lives on the legacy `domain/tickets` workflow-activity route). */
-export type StageActivityResponse =
-  components["schemas"]["app__domain__pipelines__web__StepActivityResponse"];
+ *  persisted coding-agent activity blob for one stage execution. */
+export type StageActivityResponse = components["schemas"]["StepActivityResponse"];
 
 // ── Activity event — shared by live stream + persisted step blob ──────────
 

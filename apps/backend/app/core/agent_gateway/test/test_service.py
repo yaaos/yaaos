@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4, uuid7
 
 import pytest
+from sqlalchemy import select
 
 from app.core.agent_gateway import (
     AgentEvent,
@@ -25,45 +26,9 @@ from app.core.agent_gateway import (
     record_heartbeat,
     record_workspace_event,
 )
+from app.core.audit_log import Actor
 from app.core.tasks import drain_once
-from app.core.workflow import (
-    AgentDispatchCommand,
-    Empty,
-    Outcome,
-    TerminalAction,
-    Workflow,
-    WorkflowState,
-    get_execution_summary,
-    step,
-)
-from app.core.workspace import register_workspace_provider
 from app.testing.e2e_setup import seed_workspace as _seed_workspace_for_tests
-from app.testing.workflow_harness import set_engine_for_tests
-
-
-class _MinimalWorkspaceProvider:
-    """Stub WorkspaceProvider so `list_workspace_providers()` returns exactly
-    one entry when Workspace commands dispatch through the engine in tests."""
-
-    plugin_id = "gw_test_stub"
-
-    async def provision(self, spec):  # type: ignore[no-untyped-def]
-        return {}
-
-    async def destroy(self) -> None:  # type: ignore[no-untyped-def]
-        return None
-
-    async def health_check(self) -> None:  # type: ignore[no-untyped-def]
-        return None
-
-    async def run_coding_agent_cli(self, argv, **kwargs):  # type: ignore[no-untyped-def]
-        raise NotImplementedError
-
-    async def read_text(self, path):  # type: ignore[no-untyped-def]
-        return None
-
-    async def write_text(self, path, content):  # type: ignore[no-untyped-def]
-        return None
 
 
 def _make_provision_command() -> ProvisionWorkspaceCommand:
@@ -157,229 +122,183 @@ async def test_heartbeat_with_no_workspaces_returns_empty_forget_list(db_session
 # ── Event routing + stale-claim guard ──────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_terminal_event_advances_workflow_to_done(db_session, workspace_providers_isolation) -> None:
-    """A terminal AgentEvent for a Workspace step causes the workflow to
-    advance: record_agent_event enqueues handle_agent_event, and draining
-    that task drives the workflow to DONE."""
-    from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
-    from app.core.tasks import get_broker  # noqa: PLC0415
+async def _pending_command_for_org(db_session, org_id: UUID) -> UUID:
+    """Read the single `pending` AgentCommand row for `org_id`.
 
-    test_org_id = uuid4()
+    Intra-module read of `core/agent_gateway`'s own `agent_commands` table —
+    the test asserts on this module's own durable state, never on
+    `domain/pipelines`' internal run/stage rows."""
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
-    class _NoopWs(AgentDispatchCommand):
-        kind = "NoopWs"
-        Inputs = Empty
-        Outputs = Empty
-        restart_safe = True
-
-        async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
-            del inputs, ctx
-            return Outcome.success()
-
-        async def dispatch(self, inputs: Empty, ctx, *, session):  # type: ignore[no-untyped-def]
-            del inputs
-            cmd = _make_provision_command()
-            await enqueue_command(
-                org_id=test_org_id,
-                command=cmd,
-                session=session,
-                workflow_execution_id=UUID(ctx.workflow_execution_id),
-            )
-            return cmd.command_id
-
-    _noop_ws = step(_NoopWs)
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(
-            Workflow(
-                name="gw-terminal-test",
-                version=1,
-                steps=(_noop_ws,),
-                entry=_noop_ws,
-                transitions={_noop_ws: {"success": TerminalAction.COMPLETE_WORKFLOW}},
+    return (
+        await db_session.execute(
+            select(AgentCommandRow.id).where(
+                AgentCommandRow.org_id == org_id, AgentCommandRow.status == "pending"
             )
         )
+    ).scalar_one()
 
-        register_workspace_provider(_MinimalWorkspaceProvider())
 
-        exec_id = await eng.start(
-            workflow_name="gw-terminal-test",
-            ticket_id=str(uuid4()),
+async def _start_parked_pipeline_run(db_session) -> tuple[UUID, UUID]:
+    """Start a real one-skill-stage pipeline run and drain it to the point
+    where it's parked on its `provision-workspace` system stage — returns
+    `(org_id, pending_agent_command_id)`. Shared setup for the two
+    `record_agent_event` consumer-registry tests below."""
+    from app.core.auth import Role  # noqa: PLC0415
+    from app.core.identity import create_user  # noqa: PLC0415
+    from app.core.tenancy import create_membership, create_org  # noqa: PLC0415
+    from app.core.workspace import (  # noqa: PLC0415
+        is_workspace_provider_registered,
+        register_workspace_providers,
+    )
+    from app.domain.pipelines import (  # noqa: PLC0415
+        BoundaryControl,
+        Kickoff,
+        PipelineDefinition,
+        SkillStage,
+        create_pipeline,
+        start_run,
+    )
+    from app.domain.tickets import create_from_pr  # noqa: PLC0415
+    from app.testing.stub_vcs import register_stub_vcs  # noqa: PLC0415
+
+    if not is_workspace_provider_registered("remote_agent"):
+        register_workspace_providers()
+
+    org = await create_org(db_session, slug=f"gw-test-{uuid4().hex[:8]}", display_name="GW Test Org")
+    user = await create_user(db_session, display_name="GW Test User")
+    await create_membership(
+        db_session, user_id=user.id, org_id=org.org_id, role=Role.BUILDER, handle="gwtest"
+    )
+    ticket_id, _ = await create_from_pr(
+        org_id=org.org_id,
+        source_external_id=f"ext-{uuid4().hex[:8]}",
+        title="gw test ticket",
+        description=None,
+        repo_external_id="acme/repo",
+        plugin_id="github",
+        idempotency_key=f"key-{uuid4().hex}",
+        payload={},
+        session=db_session,
+    )
+    await db_session.flush()
+
+    with register_stub_vcs(plugin_id="github"):
+        pipeline_id = await create_pipeline(
+            org_id=org.org_id,
+            definition=PipelineDefinition(
+                name=f"gw-pipe-{uuid4().hex[:8]}",
+                stages=(
+                    SkillStage(
+                        name="write-spec",
+                        skill_name="write-spec",
+                        coding_agent_plugin_id="claude_code",
+                        model="sonnet",
+                        effort="medium",
+                        boundary=BoundaryControl(),
+                    ),
+                ),
+            ),
+            actor=Actor.system(),
+            session=db_session,
+        )
+        await db_session.flush()
+
+        kickoff = Kickoff(intake_point_id="test", actor=Actor.user(user_id=user.id), input_text="go")
+        await start_run(
+            org_id=org.org_id,
+            ticket_id=ticket_id,
+            pipeline_id=pipeline_id,
+            kickoff=kickoff,
             session=db_session,
         )
         await db_session.commit()
+        await _drain_pipeline_outbox(db_session)
 
-        # Drain start_step → workspace stub dispatch → AWAITING_AGENT.
-        async def _dispatcher(kind: str, payload: dict) -> None:
-            assert kind == "taskiq_enqueue"
-            decorated = get_broker().find_task(payload["task_name"])
-            assert decorated is not None
-            await decorated.original_func(**payload["args"])
+    command_id = await _pending_command_for_org(db_session, org.org_id)
+    return org.org_id, command_id
 
-        for _ in range(10):
-            n = await drain_once(db_session, dispatcher=_dispatcher)
-            await db_session.commit()
-            if n == 0:
-                break
 
-        wfx = await get_execution_summary(UUID(exec_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.AWAITING_AGENT.value
-        cmd_id = wfx.pending_agent_command_id
-        assert cmd_id is not None
+async def _drain_pipeline_outbox(db_session, *, max_iters: int = 20) -> None:
+    from app.core.tasks import get_broker, get_pending_task_names  # noqa: PLC0415
 
-        # Seed a workspace row so the terminal event's `workspace_id` output
-        # references a real row. Workflow correlation is independent — the
-        # engine stamps `workflow_execution_id` on the agent_commands row at
-        # dispatch time, and `record_agent_event` resolves the workflow via
-        # that column rather than via the workspace.
-        from app.testing.e2e_setup import seed_agent as _seed_agent  # noqa: PLC0415
+    async def _dispatcher(kind: str, payload: dict) -> None:
+        assert kind == "taskiq_enqueue"
+        decorated = get_broker().find_task(payload["task_name"])
+        assert decorated is not None
+        await decorated.original_func(**payload["args"])
 
-        _ws_org_id = uuid4()
-        _ws_agent = await _seed_agent(org_id=_ws_org_id)
-        seeded_ws_id = await _seed_workspace_for_tests(
-            org_id=_ws_org_id,
-            provider_id="remote_agent",
-            sha="deadbeef",
-            current_command_id=cmd_id,
-            agent_id=_ws_agent["id"],
-        )
-
-        event = AgentEvent(
-            command_id=cmd_id,
-            kind=AgentEventKind.COMPLETED_SUCCESS,
-            outcome_label="success",
-            outputs={"workspace_id": seeded_ws_id},
-            reported_at=datetime.now(UTC),
-            traceparent="00-aabbccdd-1122-01",
-        )
-        # The ownership guard reads the org contextvar, so wrap in org_context
-        # (mirrors the agent_gateway event endpoint).
-        from app.core.audit_log import ActorKind  # noqa: PLC0415
-        from app.core.auth import org_context  # noqa: PLC0415
-
-        async with org_context(test_org_id, ActorKind.WORKSPACE):
-            await record_agent_event(event, session=db_session)
+    for _ in range(max_iters):
+        pending = await get_pending_task_names(db_session)
+        if not pending:
+            return
+        delivered = await drain_once(db_session, dispatcher=_dispatcher)
         await db_session.commit()
-
-        # Drain handle_agent_event + route_workflow → workflow reaches DONE.
-        for _ in range(10):
-            n = await drain_once(db_session, dispatcher=_dispatcher)
-            await db_session.commit()
-            if n == 0:
-                break
-
-        wfx = await get_execution_summary(UUID(exec_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.DONE.value
-        assert wfx.pending_agent_command_id is None
+        if delivered == 0:
+            return
 
 
 @pytest.mark.asyncio
-async def test_progress_event_does_not_advance_workflow(db_session, workspace_providers_isolation) -> None:
-    """A PROGRESS AgentEvent does not advance the workflow — the execution
-    stays in AWAITING_AGENT after the event is processed."""
-    from app.core.agent_gateway import enqueue_command  # noqa: PLC0415
-    from app.core.tasks import get_broker  # noqa: PLC0415
+@pytest.mark.usefixtures("redis_or_skip")
+async def test_terminal_event_advances_pipeline_run(db_session) -> None:
+    """A terminal AgentEvent for the parked `provision-workspace` command
+    causes the registered `domain/pipelines` consumer to resume the run:
+    `record_agent_event` enqueues `handle_agent_event`, and draining that
+    task advances the run past the provision phase — observable here as
+    the original command retiring to `done` (the run's own next-stage
+    dispatch is `domain/pipelines`' concern, exercised in its own tests)."""
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
 
-    ws_org_id = uuid4()
+    org_id, command_id = await _start_parked_pipeline_run(db_session)
 
-    class _NoopWs2(AgentDispatchCommand):
-        kind = "NoopWs2"
-        Inputs = Empty
-        Outputs = Empty
-        restart_safe = True
+    event = AgentEvent(
+        command_id=command_id,
+        kind=AgentEventKind.COMPLETED_SUCCESS,
+        outcome_label="success",
+        outputs={},
+        reported_at=datetime.now(UTC),
+        traceparent="00-aabbccdd-1122-01",
+    )
+    async with org_context(org_id, ActorKind.WORKSPACE, actor_id=None):
+        await record_agent_event(event, session=db_session)
+    await db_session.commit()
+    await _drain_pipeline_outbox(db_session)
 
-        async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
-            del inputs, ctx
-            return Outcome.success()
+    original = await db_session.get(AgentCommandRow, command_id)
+    assert original is not None
+    assert original.status == "done", "the provision command must retire once the run resumes"
 
-        async def dispatch(self, inputs: Empty, ctx, *, session):  # type: ignore[no-untyped-def]
-            del inputs
-            cmd = _make_provision_command()
-            await enqueue_command(
-                org_id=ws_org_id,
-                command=cmd,
-                session=session,
-                workflow_execution_id=UUID(ctx.workflow_execution_id),
-            )
-            return cmd.command_id
 
-    _noop_ws2 = step(_NoopWs2)
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(
-            Workflow(
-                name="gw-progress-test",
-                version=1,
-                steps=(_noop_ws2,),
-                entry=_noop_ws2,
-                transitions={_noop_ws2: {"success": TerminalAction.COMPLETE_WORKFLOW}},
-            )
-        )
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("redis_or_skip")
+async def test_progress_event_does_not_advance_pipeline_run(db_session) -> None:
+    """A PROGRESS AgentEvent does not advance the run — it stays parked on
+    the same pending command after the event is processed."""
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
 
-        register_workspace_provider(_MinimalWorkspaceProvider())
+    org_id, command_id = await _start_parked_pipeline_run(db_session)
 
-        exec_id = await eng.start(
-            workflow_name="gw-progress-test",
-            ticket_id=str(uuid4()),
-            session=db_session,
-        )
-        await db_session.commit()
+    event = AgentEvent(
+        command_id=command_id,
+        kind=AgentEventKind.PROGRESS,
+        reported_at=datetime.now(UTC),
+        traceparent="00-aabbccdd-1122-01",
+    )
+    async with org_context(org_id, ActorKind.WORKSPACE, actor_id=None):
+        await record_agent_event(event, session=db_session)
+    await db_session.commit()
+    await _drain_pipeline_outbox(db_session)
 
-        async def _dispatcher(kind: str, payload: dict) -> None:
-            assert kind == "taskiq_enqueue"
-            decorated = get_broker().find_task(payload["task_name"])
-            assert decorated is not None
-            await decorated.original_func(**payload["args"])
+    original = await db_session.get(AgentCommandRow, command_id)
+    assert original is not None
+    assert original.status == "pending", "progress event must not retire the command"
 
-        for _ in range(10):
-            n = await drain_once(db_session, dispatcher=_dispatcher)
-            await db_session.commit()
-            if n == 0:
-                break
-
-        wfx = await get_execution_summary(UUID(exec_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.AWAITING_AGENT.value
-        cmd_id = wfx.pending_agent_command_id
-        assert cmd_id is not None
-
-        from app.testing.e2e_setup import seed_agent as _seed_agent2  # noqa: PLC0415
-
-        _ws_agent2 = await _seed_agent2(org_id=ws_org_id)
-        await _seed_workspace_for_tests(
-            org_id=ws_org_id,
-            provider_id="remote_agent",
-            sha="deadbeef",
-            current_command_id=cmd_id,
-            agent_id=_ws_agent2["id"],
-        )
-
-        # Post a PROGRESS event — workflow must stay in AWAITING_AGENT.
-        # Progress events call require_org_context(), so wrap in org_context.
-        from app.core.audit_log import ActorKind  # noqa: PLC0415
-        from app.core.auth import org_context  # noqa: PLC0415
-
-        event = AgentEvent(
-            command_id=cmd_id,
-            kind=AgentEventKind.PROGRESS,
-            reported_at=datetime.now(UTC),
-            traceparent="00-aabbccdd-1122-01",
-        )
-        async with org_context(ws_org_id, ActorKind.WORKSPACE):
-            await record_agent_event(event, session=db_session)
-        await db_session.commit()
-
-        # Drain anything that was enqueued (should be nothing for a progress event).
-        for _ in range(5):
-            n = await drain_once(db_session, dispatcher=_dispatcher)
-            await db_session.commit()
-            if n == 0:
-                break
-
-        wfx = await get_execution_summary(UUID(exec_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.AWAITING_AGENT.value, "progress event must not advance the workflow"
+    still_pending_id = await _pending_command_for_org(db_session, org_id)
+    assert still_pending_id == command_id, "progress event must not advance the run"
 
 
 @pytest.mark.asyncio

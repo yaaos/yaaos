@@ -7,10 +7,9 @@ calls it on each reaper tick.
 
 Event ingestion (`record_agent_event`) delegates the stale-claim guard lookup
 to the registered `WorkspaceAgentReportSink` (owned by `core/workspace`), then
-enqueues every task registered via `register_agent_event_consumer` — the
-list-shaped registry both `core/workflow` and `domain/pipelines` register
-into during coexistence — via the outbox in the same transaction when the
-event is terminal.
+enqueues every task registered via `register_agent_event_consumer` — a
+list-shaped registry so `core/agent_gateway` never imports the run engine
+directly — via the outbox in the same transaction when the event is terminal.
 
 `received` is a non-terminal event: when the agent POSTs it for a claimed
 command the lease is cancelled (`claimed → delivered`). Terminal events retire
@@ -73,20 +72,20 @@ LEASE_SECONDS: int = 30
 # ── Agent-event consumer registry ───────────────────────────────────────
 #
 # List-shaped (like the web/worker shutdown registries in
-# `app.core.shutdown_registry`) so multiple engines can independently resume
-# off the same terminal AgentEvent during coexistence. `record_agent_event`
-# enqueues the SAME args to every registered consumer; each consumer's task
-# body owns deciding whether it recognizes `workflow_execution_id` (a
-# no-op/return when it doesn't is the coexistence bridge — see
-# `core/workflow.handle_agent_event` and `domain/pipelines.handle_agent_event`).
+# `app.core.shutdown_registry`) so `core/agent_gateway` never imports the run
+# engine directly — `domain/pipelines` registers itself at import time.
+# `record_agent_event` enqueues the SAME args to every registered consumer;
+# each consumer's task body owns deciding whether it recognizes
+# `workflow_execution_id` (a no-op/return when it doesn't — see
+# `domain/pipelines.handle_agent_event`).
 _agent_event_consumers: list[TaskRef] = []
 
 
 def register_agent_event_consumer(task_ref: TaskRef) -> None:
     """Append `task_ref` to the agent-event consumer registry.
 
-    Called at import time by every engine that resumes off terminal
-    AgentEvents (`core/workflow` and `domain/pipelines` during coexistence).
+    Called at import time by the run engine (`domain/pipelines`), which
+    resumes off terminal AgentEvents.
     """
     _agent_event_consumers.append(task_ref)
 
@@ -229,14 +228,15 @@ async def enqueue_command(
 ) -> None:
     """Insert an AgentCommand row in `pending` status.
 
-    Called by the workflow engine's Workspace branch (via
-    `WorkflowCommand.dispatch`) inside `start_step`'s transaction — the insert
-    is atomic with the engine's state transition to `awaiting_agent`.
+    Called by the dispatch helpers (`core/workspace/dispatch.py`,
+    `core/coding_agent.dispatch_invocation`) inside the run engine's
+    `START_STAGE` transaction — the insert is atomic with the engine's
+    parking on `pending_agent_command_id`.
 
     `workflow_execution_id` is stamped on the row so the terminal-event
-    ingestion path can resolve `command_id → workflow` directly, without a
+    ingestion path can resolve `command_id → run` directly, without a
     workspace-row lookup. NULL only for agent-scoped commands that do not
-    correlate to a workflow (e.g. `ConfigUpdate`).
+    correlate to a run (e.g. `ConfigUpdate`).
 
     The caller-supplied command_id becomes the row PK; it serves as the
     idempotency key and the FIFO sort key (`claim_next` orders by `id`). Producers
@@ -997,9 +997,10 @@ async def record_agent_event(
     agent_id: UUID | None = None,
     session: AsyncSession,
 ) -> None:
-    """Resolve the workflow correlation directly from `agent_commands.workflow_execution_id`,
-    then — if the event is terminal — enqueue `workflow.handle_agent_event` via
-    the outbox in the same transaction.
+    """Resolve the run correlation directly from `agent_commands.workflow_execution_id`,
+    then — if the event is terminal — enqueue every registered agent-event
+    consumer (`pipelines.handle_agent_event`) via the outbox in the same
+    transaction.
 
     A `received` non-terminal event flips the command row from
     `claimed` to `delivered`, cancelling the lease requeue.
@@ -1201,7 +1202,7 @@ async def enqueue_agent_event(
     entry point for callers that synthesize a terminal event without an
     inbound `AgentEvent` (e.g. `core/workspace`'s agent-loss failsafe,
     which resolves `workflow_execution_id` from `agent_commands` directly
-    and needs the same fan-out both engines rely on).
+    and needs the same fan-out the run engine relies on).
     """
     consumer_args = {
         "workflow_execution_id": str(workflow_execution_id),

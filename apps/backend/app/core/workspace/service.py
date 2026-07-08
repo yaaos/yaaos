@@ -420,12 +420,11 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     sibling pods keep their bearers and their workspaces untouched.
 
     For each expired workspace that holds an in-flight `current_command_id`,
-    the owning workflow execution is resolved from `agent_commands.workflow_execution_id`
+    the owning run is resolved from `agent_commands.workflow_execution_id`
     (the durable correlation column). A synthetic terminal-failure event is enqueued
     via `agent_gateway.enqueue_agent_event` — the same agent-event consumer
-    registry `record_agent_event` uses — so whichever engine owns the
-    correlation id (`core/workflow` or `domain/pipelines`) resumes (fails the
-    step) rather than hanging in `AWAITING_AGENT`/`running` indefinitely.
+    registry `record_agent_event` uses — so `domain/pipelines` resumes (fails
+    the stage) rather than hanging in `running` indefinitely.
 
     Workspaces with a NULL `owning_agent_id` (legacy rows) are skipped — they
     carry no owning pod to declare lost.
@@ -653,9 +652,9 @@ async def get_workspace_owner(
     """Return the `(org_id, owning_agent_id)` projection for `workspace_id`,
     or None if the row is missing.
 
-    Used by Workspace WorkflowCommand `dispatch` bodies that need to enqueue
-    an AgentCommand pinned to the workspace's owning agent without crossing
-    the module boundary via a raw Row.
+    Used by workspace dispatch helpers that need to enqueue an AgentCommand
+    pinned to the workspace's owning agent without crossing the module
+    boundary via a raw Row.
     """
     row = (
         await session.execute(

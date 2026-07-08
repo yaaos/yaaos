@@ -1,6 +1,6 @@
 """Abstract VCS types used by every plugin and consumer.
 
-Finding taxonomy lives in `domain/reviewer`, not here. This module owns
+Finding taxonomy lives in `domain/findings`, not here. This module owns
 transport types (PR, diff, comment, events) and the `VCSPlugin` Protocol.
 `post_finding` and `post_comment` are the two write operations; plugins
 render per-platform from named primitive args.
@@ -83,7 +83,7 @@ class PullRequestSynchronized(VCSEventBase):
     kind: Literal["pr_synchronized"] = "pr_synchronized"
     new_head_sha: str
     # `before` SHA from the GitHub webhook payload. Populated for `synchronize`
-    # events; the reviewer uses it as the `prev_sha` boundary for incremental
+    # events; a caller can use it as the `prev_sha` boundary for incremental
     # review scoping. None when the upstream event didn't carry it.
     prev_head_sha: str | None = None
     force_push: bool = False
@@ -107,9 +107,8 @@ class CommentCreated(VCSEventBase):
     author_type: Literal["user", "bot"]
     in_reply_to_comment_external_id: str | None = None
     # GitHub review-thread id (from `pull_request_review_comment.pull_request_review_id`
-    # or the threaded `in_reply_to_id` lineage). Used by reviewer.handle_developer_reply
-    # to resolve external thread → internal CommentThread without a fallback
-    # parent-message lookup.
+    # or the threaded `in_reply_to_id` lineage). Lets a caller resolve external
+    # thread → internal CommentThread without a fallback parent-message lookup.
     external_thread_id: str | None = None
 
 

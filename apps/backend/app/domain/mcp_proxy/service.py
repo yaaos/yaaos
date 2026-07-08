@@ -4,7 +4,7 @@
 32 URL-safe random bytes returned to the caller once, sha256-hashed and
 persisted with `expires_at = created_at + 2h`. `lookup_token(raw)` reverses
 the dance — returns the row if not expired, None otherwise. `revoke_token`
-deletes by review_id (reviewer calls it at review-end). `sweep_expired`
+deletes by review_id (the caller invokes it at review-end). `sweep_expired`
 drops anything past TTL (called hourly by the `@scheduled` worker task).
 
 Raw tokens never persist. Lookups are constant-time-safe because the hash
@@ -58,7 +58,8 @@ async def mint_token(
 ) -> str:
     """Issue a fresh bearer for a review. Returns the raw token exactly once;
     the DB sees only the sha256 hash. `org_id` is stored on the row so the
-    proxy reads tenancy directly without a back-lookup into reviewer."""
+    proxy reads tenancy directly without a back-lookup into whatever module
+    owns `review_id`."""
     raw = secrets.token_urlsafe(32)
     row = McpReviewTokenRow(
         token_hash=hash_token(raw),
@@ -118,15 +119,15 @@ async def revoke_token(
 
 # `record_broken_creds` is called here (producer-side) by the MCP proxy
 # dispatcher on every broken-creds / not-connected response. `consume_broken_creds`
-# exists but has no production caller in the reviewer — the reviewer does not
-# yet drain the tracker or pass its output to `prefix_broken_creds_warning`
-# at review-end. Observations accumulate in the dict and are cleared only by
-# the in-process tests that call `consume_broken_creds` directly.
+# exists but has no production caller today — no consumer yet drains the
+# tracker to prefix a warning onto review output at review-end. Observations
+# accumulate in the dict and are cleared only by the in-process tests that
+# call `consume_broken_creds` directly.
 #
-# Per-review tracker for broken_creds / not_connected observations. The
-# reviewer drains this at review-end to prefix the PR comment with a yellow
-# warning block listing affected providers. Process-local — reviews finish
-# within minutes and a restart kills the in-flight reviewer task anyway.
+# Per-review tracker for broken_creds / not_connected observations, intended
+# to be drained at review-end to prefix the PR comment with a yellow warning
+# block listing affected providers. Process-local — reviews finish within
+# minutes and a restart kills the in-flight review task anyway.
 _broken_creds_observed: dict[UUID, set[str]] = {}
 
 

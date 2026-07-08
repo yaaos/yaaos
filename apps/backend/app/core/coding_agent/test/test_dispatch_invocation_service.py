@@ -16,14 +16,13 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from app.core.agent_gateway import get_command_org_and_payload
+from app.core.agent_gateway import DispatchContext, get_command_org_and_payload
 from app.core.coding_agent import (
     Invocation,
     dispatch_invocation,
 )
 from app.core.coding_agent.models import CodingAgentRunRow
 from app.core.coding_agent.run_service import get_run_id_for_command
-from app.core.workflow import CommandContext
 from app.core.workspace import WorkspaceClaimFailed, WorkspaceNotFoundError
 from app.testing.e2e_setup import seed_agent, seed_workspace
 from app.testing.fake_coding_agent import FakeCodingAgentPlugin
@@ -32,11 +31,11 @@ from app.web import app as _web_app  # noqa: F401 — registers all models so FK
 pytestmark = pytest.mark.service
 
 
-def _ctx(wfe_id: uuid.UUID, step_id: str = "review") -> CommandContext:
-    return CommandContext(
-        workflow_execution_id=str(wfe_id),
-        ticket_id=str(uuid.uuid4()),
-        step_id=step_id,
+def _ctx(run_id: uuid.UUID, stage_execution_id: uuid.UUID | None = None) -> DispatchContext:
+    return DispatchContext(
+        run_id=run_id,
+        ticket_id=uuid.uuid4(),
+        stage_execution_id=stage_execution_id or uuid.uuid4(),
         attempt=1,
         traceparent=None,
     )
@@ -45,7 +44,7 @@ def _ctx(wfe_id: uuid.UUID, step_id: str = "review") -> CommandContext:
 def _invocation(workspace_id: UUID) -> Invocation:
     return Invocation(
         workspace_id=workspace_id,
-        skill="pr_review",
+        skill="code-review",
         model="opus",
         effort="medium",
         context={"repo": "test-repo"},
@@ -130,16 +129,12 @@ async def test_dispatch_invocation_run_row_correlates_via_get_run_id_for_command
 
 @pytest.mark.asyncio
 async def test_dispatch_invocation_run_row_step_id(db_session) -> None:
-    """`step_id` on the run row matches the CommandContext's step_id."""
+    """`step_id` on the run row matches the DispatchContext's stage_execution_id."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
+    stage_execution_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
-    ctx = CommandContext(
-        workflow_execution_id=str(wfe_id),
-        ticket_id=str(uuid.uuid4()),
-        step_id="code_review",
-        attempt=1,
-    )
+    ctx = _ctx(wfe_id, stage_execution_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
@@ -155,7 +150,7 @@ async def test_dispatch_invocation_run_row_step_id(db_session) -> None:
         )
     ).scalar_one_or_none()
     assert row is not None
-    assert row.step_id == "code_review"
+    assert row.step_id == str(stage_execution_id)
 
 
 @pytest.mark.asyncio
@@ -249,17 +244,24 @@ async def test_dispatch_invocation_sets_skill_path_from_convention(db_session) -
 
 
 @pytest.mark.asyncio
-async def test_dispatch_invocation_skill_path_empty_for_legacy_pr_review(db_session) -> None:
-    """The legacy `pr_review` skill identifier has no on-disk file convention
-    (the review prompt is rendered inline) — `skill_path` is left empty so the
-    agent's pre-spawn skill-stat check never fires against an arbitrary
-    third-party reviewed repo."""
+async def test_dispatch_invocation_skill_path_follows_convention_for_any_skill(db_session) -> None:
+    """No hardcoded skill exemption — every skill name (including a name that
+    happens to be `pr_review`) gets the same `.claude/skills/<skill>/SKILL.md`
+    convention; the agent's pre-spawn skill-stat check is the only gate."""
     org_id = uuid.uuid4()
     wfe_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
+    invocation = Invocation(
+        workspace_id=ws_id,
+        skill="pr_review",
+        model="opus",
+        effort="medium",
+        context={"repo": "test-repo"},
+        wallclock_seconds=300,
+    )
 
     command_id = await dispatch_invocation(
-        invocation=_invocation(ws_id),
+        invocation=invocation,
         plugin=FakeCodingAgentPlugin(),
         ctx=_ctx(wfe_id),
         command_id=uuid.uuid7(),
@@ -269,7 +271,7 @@ async def test_dispatch_invocation_skill_path_empty_for_legacy_pr_review(db_sess
     result = await get_command_org_and_payload(command_id, session=db_session)
     assert result is not None
     _, payload = result
-    assert payload["skill_path"] == ""
+    assert payload["skill_path"] == ".claude/skills/pr_review/SKILL.md"
 
 
 @pytest.mark.asyncio

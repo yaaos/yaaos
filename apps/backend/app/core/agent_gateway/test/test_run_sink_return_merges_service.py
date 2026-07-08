@@ -202,13 +202,10 @@ async def test_sink_return_dict_merged_into_task_args(db_session) -> None:
 
     payloads = await get_pending_outbox_payloads(db_session)
     # The HANDLE_AGENT_EVENT enqueue and the seeding enqueue are both in
-    # outbox — filter to HANDLE_AGENT_EVENT by task_name.
-    # The coexistence bridge enqueues to every registered consumer
-    # (core/workflow AND domain/pipelines); filter to the old engine's own
-    # task name — this module tests `core/workflow`'s consumption path.
-    handle_payloads = [p for p in payloads if p.get("task_name") == "workflow.handle_agent_event"]
+    # outbox — filter to the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
     assert len(handle_payloads) == 1, (
-        f"expected exactly one workflow.handle_agent_event; got {handle_payloads}"
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
     )
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
@@ -245,7 +242,7 @@ async def test_sink_return_overrides_same_key_in_event_outputs(db_session) -> No
         await record_agent_event(event, session=db_session)
 
     payloads = await get_pending_outbox_payloads(db_session)
-    handle_payloads = [p for p in payloads if p.get("task_name") == "workflow.handle_agent_event"]
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
     assert len(handle_payloads) == 1
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
@@ -281,7 +278,7 @@ async def test_sink_returning_none_leaves_outputs_unchanged(db_session) -> None:
         await record_agent_event(event, session=db_session)
 
     payloads = await get_pending_outbox_payloads(db_session)
-    handle_payloads = [p for p in payloads if p.get("task_name") == "workflow.handle_agent_event"]
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
     assert len(handle_payloads) == 1
 
     task_outputs = handle_payloads[0]["args"]["outputs"]

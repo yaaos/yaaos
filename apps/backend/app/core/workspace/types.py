@@ -187,10 +187,10 @@ class WorkspaceClaimState(BaseModel):
 class WorkspaceOwner(BaseModel):
     """Projection returned by `get_workspace_owner`.
 
-    Carries the two identifiers a Workspace WorkflowCommand's `dispatch` needs
-    to enqueue an AgentCommand pinned to the workspace's owning agent: the
-    `org_id` (for `enqueue_command`) and the `owning_agent_id` (for
-    `pin_command_to_agent`). No ORM Row crosses the module boundary.
+    Carries the two identifiers a workspace dispatch helper needs to enqueue
+    an AgentCommand pinned to the workspace's owning agent: the `org_id` (for
+    `enqueue_command`) and the `owning_agent_id` (for `pin_command_to_agent`).
+    No ORM Row crosses the module boundary.
     """
 
     workspace_id: UUID

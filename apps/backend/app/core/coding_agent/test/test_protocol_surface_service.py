@@ -13,8 +13,6 @@ import pytest
 
 EXPECTED_ALL = frozenset(
     [
-        # ABC for coding-agent workflow commands
-        "CodingAgentCommand",
         # Protocol + types
         "CodingAgentPlugin",
         "Invocation",
@@ -45,6 +43,7 @@ EXPECTED_ALL = frozenset(
 
 # Names that were deleted from the Protocol — importing any of them must fail.
 RETIRED_NAMES = [
+    "CodingAgentCommand",
     "review",
     "incremental_review",
     "verify_fix",

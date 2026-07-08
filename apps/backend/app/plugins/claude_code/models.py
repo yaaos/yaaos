@@ -33,8 +33,8 @@ class ClaudeCodeRepoRow(Base):
 
     Tracks the mapping between an org and a repository. `skill_name` is the
     customer-authored SKILL.md handle stored for the Code Connect settings UI's
-    round-trip; the review dispatch hardcodes `skill="pr_review"` and does not
-    read this column.
+    round-trip; no pipeline dispatch path reads this column today — a
+    pipeline stage's own `skill_name` picks the skill.
     """
 
     __tablename__ = "claude_code_repos"

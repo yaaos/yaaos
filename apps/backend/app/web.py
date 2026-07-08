@@ -27,9 +27,7 @@ from app.core import webserver  # noqa: E402
 # 4. Core modules whose plugins are domain-facing.
 from app.core import audit_log, coding_agent, vcs, workspace  # noqa: F401, E402
 
-# 4a. workflow engine + agent gateway. Workflow engine registers the
-# three taskiq task names at import; agent_gateway registers `/v1/*` routes.
-from app.core import workflow as _core_workflow  # noqa: F401, E402
+# 4a. agent_gateway registers `/v1/*` routes.
 from app.core import agent_gateway as _core_agent_gateway  # noqa: F401, E402
 
 # 4b. Intake router — pure infrastructure; no domain imports.
@@ -47,11 +45,10 @@ from app.core import sessions  # noqa: F401, E402
 #    then domain modules that depend on others.
 from app.domain import lessons  # noqa: F401, E402
 from app.domain import tickets  # noqa: F401, E402
-from app.domain import reviewer  # noqa: F401, E402
 
-# 5a-pipelines. Run-engine modules, coexisting with core/workflow +
-# domain/reviewer (the predecessor engine). Types-first: findings/artifacts/repos carry no dependencies on the others;
-# pipelines imports findings; actions/pr_review import pipelines + findings.
+# 5a-pipelines. Run-engine modules. Types-first: findings/artifacts/repos
+# carry no dependencies on the others; pipelines imports findings;
+# actions/pr_review import pipelines + findings.
 from app.domain import findings as _domain_findings  # noqa: F401, E402
 from app.domain import artifacts as _domain_artifacts  # noqa: F401, E402
 from app.domain import repos as _domain_repos  # noqa: F401, E402

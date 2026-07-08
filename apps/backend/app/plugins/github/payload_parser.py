@@ -104,7 +104,7 @@ def parse_webhook(event_type: str, source_event_id: str, payload: dict[str, Any]
                     new_head_sha=pr.get("head", {}).get("sha", "") or payload.get("after", ""),
                     # GitHub's `synchronize` event carries `before` + `after`
                     # at the top level of the payload. Plumb `before` through
-                    # so the reviewer's incremental-review scope is real.
+                    # so a caller's incremental-review scope is real.
                     prev_head_sha=payload.get("before") or None,
                     # Default false; the webhook handler enriches via the
                     # github `/compare` API before dispatching to intake.
@@ -168,8 +168,8 @@ def parse_webhook(event_type: str, source_event_id: str, payload: dict[str, Any]
         # review batch; for replies, the canonical thread root is the
         # earliest `in_reply_to_id` ancestor — for the typical reply
         # case the parent comment id is sufficient since CommentMessage
-        # rows index `external_comment_id` and the reviewer's resolver
-        # walks back via `in_reply_to_external_id`.
+        # rows index `external_comment_id` and a resolver can walk back
+        # via `in_reply_to_external_id`.
         external_thread_id = (
             str(comment.get("pull_request_review_id")) if comment.get("pull_request_review_id") else None
         )

@@ -1,7 +1,6 @@
 """`classify_comment` — direct LLM call classifying a free-text PR comment.
 
-Adapted from `domain/reviewer/llm/classifier.py`'s five reply-intents,
-narrowed to the three intents an LLM actually asserts here. `unclear` is
+Narrowed to the three intents an LLM actually asserts here. `unclear` is
 never an LLM-asserted label — it's the system-applied fallback for a
 low-confidence classification or a comment with no finding anchor (see
 `CLASSIFY_COMMENT` in `service.py`).

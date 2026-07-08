@@ -4,13 +4,13 @@
 
 ## Scope
 
-Owns: `lessons` table, CRUD, retrieval for `reviewer` during prompt assembly, audit-log writes on every mutation.
+Owns: `lessons` table, CRUD, audit-log writes on every mutation. No current caller retrieves lessons for prompt injection — a pipeline skill stage's prompt does not read this module today.
 
-Does NOT own: prompt assembly (that's `reviewer`), lesson versioning (history in `audit_log`), relevance filtering (all lessons for a repo are always included).
+Does NOT own: prompt assembly, lesson versioning (history in `audit_log`), relevance filtering (all lessons for a repo are always included, when a caller does read them).
 
 ## Why / invariants
 
-- **No versioning table.** Edits overwrite in place; `audit_log` is the history. `review_jobs.lessons_applied` records UUIDs for UI chip resolution — content at review time is not frozen.
+- **No versioning table.** Edits overwrite in place; `audit_log` is the history.
 - **Scoped by `(plugin_id, repo_external_id)`.** No yaaos-side `repos` table; the GitHub App install governs access scope.
 - **`title` ≤200 chars, `body` ≤1000 chars**, both non-blank. `LessonValidationError` → HTTP 400.
 - Audit: `lesson.created` / `lesson.updated` (only when a field changed; body tracked by 16-char SHA-256 prefix) / `lesson.deleted`.

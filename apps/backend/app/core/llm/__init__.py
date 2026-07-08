@@ -3,7 +3,7 @@
 Owns prompt-file parsing, jinja2 templating, LangChain runnable construction,
 structured-output validation, retries, and Braintrust gateway routing. Does
 *not* own prompts or schemas — those live in the calling domain module
-(e.g. `domain/reviewer/llm/prompts/`).
+(e.g. `domain/pr_review/llm/prompts/`).
 
 Code that needs to *look at code* (read files, walk diffs, run searches) goes
 through `domain/coding_agent`, not here. core/llm is for text-only reasoning.

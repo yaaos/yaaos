@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -332,7 +333,8 @@ class GitHubPlugin:
     ) -> list[str]:
         """Commit messages between `prev_sha` and `head_sha` via compare API.
 
-        Used by reviewer.handle_push to detect base-branch merges. The
+        No production caller today — this Protocol method has no wired
+        consumer since the reviewer's push-merge detection was deleted. The
         compare API returns up to 250 commits in `commits`; for incremental
         review windows that's plenty.
         """
@@ -691,6 +693,36 @@ async def mark_installation_inactive(*, install_external_id: str, status: str) -
         await s.commit()
 
 
+# Category → short prefix for the rendered comment-body handle, e.g. "sec-1".
+_CATEGORY_PREFIX: dict[str, str] = {
+    "security": "sec",
+    "architecture": "arch",
+    "performance": "perf",
+    "correctness": "bug",
+    "testing": "test",
+    "documentation": "doc",
+    "style": "style",
+}
+
+
+def _category_prefix(category: str) -> str:
+    """Derive the short prefix string for a category.
+
+    Known categories map to fixed short codes. Unknown categories are
+    slugified (lowercase alnum, max 8 chars).
+    """
+    key = category.lower().strip()
+    if key in _CATEGORY_PREFIX:
+        return _CATEGORY_PREFIX[key]
+    slug = re.sub(r"[^a-z0-9]", "", key)[:8] or "find"
+    return slug
+
+
+def _finding_handle(category: str, finding_display_id: int) -> str:
+    """Render the display handle for a comment body, e.g. `sec-1`."""
+    return f"{_category_prefix(category)}-{finding_display_id}"
+
+
 def _format_finding_body(
     *,
     finding_display_id: int,
@@ -707,10 +739,7 @@ def _format_finding_body(
     Uses the canonical named primitive args from `VCSPlugin.post_finding`.
     No value object crosses this boundary.
     """
-    # Category prefix for the handle, e.g. "sec-1".
-    from app.domain.reviewer import finding_handle  # noqa: PLC0415
-
-    handle = finding_handle(category, finding_display_id)
+    handle = _finding_handle(category, finding_display_id)
     parts = [
         f"**[{handle}] {rule_violated}**",
         "",

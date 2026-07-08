@@ -26,7 +26,6 @@ Modules are organized in four layers — **core · domain · plugins · testing*
 | [core_tenancy](core_tenancy.md) | IAM access graph — `orgs` + `memberships` tables; `resolve_auth_org`, membership VOs. |
 | [core_redis](core_redis.md) | The single seam in front of Redis — client stays private; JSON pub/sub bus, sliding-window counter, health ping. |
 | [core_tasks](core_tasks.md) | `@task` decorator + atomic-in-session `enqueue()` over taskiq + Redis; owns the outbox table and worker process. |
-| [core_workflow](core_workflow.md) | Workflow engine — typed workflows + WorkflowCommand categories (skeleton). |
 | [core_agent_gateway](core_agent_gateway.md) | Wire protocol to customer-deployed WorkspaceAgents (skeleton). |
 | [core_vcs](core_vcs.md) | Abstract VCS types + `VCSPlugin` Protocol + registry. |
 | [core_sse](core_sse.md) | Redis pub/sub for ActivityEvent fanout to SSE subscribers; declares `/api/sse` as org-scoped. |
@@ -41,7 +40,6 @@ Modules are organized in four layers — **core · domain · plugins · testing*
 |---|---|
 | [domain_lessons](domain_lessons.md) | Per-repo lessons CRUD + prompt retrieval. |
 | [domain_tickets](domain_tickets.md) | Ticket lifecycle + PR mirror (`pull_requests` table). |
-| [domain_reviewer](domain_reviewer.md) | Review workflow orchestrator + canonical findings + `publish_findings`. |
 | [domain_orgs](domain_orgs.md) | Orgs, memberships, roles, invitations, SSO config, onboarding-status aggregator (). |
 | [domain_pipelines](domain_pipelines.md) | Run engine: data-defined pipelines, run + stage lifecycle, HITL pauses, send-back/instruct/rerun re-entry. |
 | [domain_artifacts](domain_artifacts.md) | Produced-document storage; one row per artifact version. |

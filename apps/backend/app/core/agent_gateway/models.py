@@ -158,11 +158,10 @@ class AgentCommandRow(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     # workspace_id is NULL for org-scoped commands (ConfigUpdate, ProvisionWorkspace).
     workspace_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
-    # workflow_execution_id is the workflow whose terminal event this command
-    # resumes. NULL only for agent-scoped commands (e.g. ConfigUpdate) — every
-    # workflow-driven dispatch stamps it inside the engine's `start_step`
-    # transaction so reconciliation can resolve command_id → workflow without
-    # a workspace row.
+    # workflow_execution_id is the pipeline run whose terminal event this
+    # command resumes. NULL only for agent-scoped commands (e.g. ConfigUpdate)
+    # — every run-driven dispatch stamps it at enqueue time so reconciliation
+    # can resolve command_id → run without a workspace row.
     workflow_execution_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     # command_kind discriminates ProvisionWorkspace (org-scoped) from workspace-pinned commands.
     command_kind: Mapped[str] = mapped_column(String, nullable=False)

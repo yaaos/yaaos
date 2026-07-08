@@ -35,10 +35,8 @@ class FindingRow(Base):
     """One durable finding. `id` is app-minted (engine's uuid7 at first
     report) — no server_default. `severity` is immutable after creation.
 
-    Table name is `pipeline_findings`, not `findings` — `domain/reviewer`
-    still owns a `findings` table for the coexistence period (both engines
-    run side by side until `core/workflow` + `domain/reviewer` are deleted).
-    Renames to `findings` once that table is retired.
+    Table name is `pipeline_findings`, not `findings` — a rename to
+    `findings` is a separate follow-up migration, not yet applied.
     """
 
     __tablename__ = "pipeline_findings"

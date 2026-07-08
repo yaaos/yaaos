@@ -18,8 +18,8 @@ from app.core.coding_agent.types import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.agent_gateway import DispatchContext
     from app.core.coding_agent.types import Invocation
-    from app.core.workflow import CommandContext
 
 log = structlog.get_logger("coding_agent")
 
@@ -121,19 +121,17 @@ async def dispatch_invocation(
     *,
     invocation: Invocation,
     plugin: CodingAgentPlugin,
-    ctx: CommandContext,
+    ctx: DispatchContext,
     command_id: UUID,
     session: AsyncSession,
 ) -> UUID:
     """Build an `InvokeClaudeCode` AgentCommand, dispatch via the workspace
     (Layer 3 → Layer 2 → Layer 1), and insert a run row.
 
-    `command_id` is caller-minted — required, no default. The one shipped
-    caller inside this codebase (`CodingAgentCommand.@final dispatch`) mints
-    it immediately before calling this function; `domain/pipelines` mints it
-    earlier still, before `command_id` also has to appear in the skill's
-    `artifact_path`. Minting here would make that ordering impossible for
-    callers that need the id before dispatch.
+    `command_id` is caller-minted — required, no default. `domain/pipelines`
+    mints it before calling this function, since `command_id` also has to
+    appear in the skill's `artifact_path`. Minting here would make that
+    ordering impossible.
 
     `workspace_id` is read from `invocation.workspace_id`. Calls
     `plugin.compile_invocation(invocation)` to get the exec block, builds
@@ -171,16 +169,7 @@ async def dispatch_invocation(
     # stats this before spawning claude and fails deterministically
     # (`completed_failure`, reason "skill not found: <path>") when it's
     # absent — zero agent policy, the convention lives here.
-    #
-    # `pr_review` is exempt: it is the legacy reviewer's hardcoded skill
-    # identifier (`ClaudeCodePlugin.compile_invocation` only ever accepts
-    # `invocation.skill == "pr_review"`) and has no on-disk file — the whole
-    # review prompt is rendered inline, and the reviewed repo is an arbitrary
-    # third-party checkout that was never expected to carry a yaaos skill
-    # file. Left empty here, which `filepath.Join`s to the workspace root on
-    # the agent side (always present), so the pre-spawn check always succeeds
-    # for it. Goes away once the legacy reviewer's dispatch path is removed.
-    skill_path = "" if invocation.skill == "pr_review" else f".claude/skills/{invocation.skill}/SKILL.md"
+    skill_path = f".claude/skills/{invocation.skill}/SKILL.md"
 
     # Build the typed command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
     # the `exec` wrapper is required — a flat argv dict leaves `inv.Exec.Argv`
@@ -213,8 +202,8 @@ async def dispatch_invocation(
 
     await create_run(
         org_id=owner.org_id,
-        workflow_execution_id=UUID(ctx.workflow_execution_id),
-        step_id=ctx.step_id,
+        workflow_execution_id=ctx.run_id,
+        step_id=str(ctx.stage_execution_id),
         agent_command_id=command_id,
         command_kind="InvokeClaudeCode",
         plugin_id=plugin.plugin_id,

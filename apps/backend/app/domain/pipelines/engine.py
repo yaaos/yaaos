@@ -1,8 +1,6 @@
 """The run engine — `ROUTE_RUN`/`START_STAGE`/`HANDLE_AGENT_EVENT` taskiq task
-bodies driving one `PipelineRun` end to end, mirroring the
-`route_workflow`/`start_step`/`handle_agent_event` trio in
-`apps/backend/app/core/workflow/service.py:540,113,426`: outbox-atomic
-enqueue, SAVEPOINT-wrapped command execution, exception→failure mapping,
+bodies driving one `PipelineRun` end to end: outbox-atomic enqueue,
+SAVEPOINT-wrapped command execution, exception→failure mapping,
 `awaiting_agent` parking with a stale-command guard.
 
 `action` stages dispatch synchronously inside `START_STAGE`. `skill` stages
@@ -85,13 +83,13 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_gateway import DispatchContext
 from app.core.audit_log import Actor, audit
 from app.core.coding_agent import Invocation, dispatch_invocation, get_plugin
 from app.core.database import session as db_session
 from app.core.notifications import create as create_notification
 from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import TaskRef, enqueue, task
-from app.core.workflow import CommandContext
 from app.core.workspace import (
     ProvisionWorkspaceSpec,
     WorkspaceNotFoundError,
@@ -789,11 +787,11 @@ async def _enter_terminal(
     await promote_oldest_queued(run.ticket_id, session=session)
 
 
-def _system_command_context(run: PipelineRunRow, stage_exec: StageExecutionRow) -> CommandContext:
-    return CommandContext(
-        workflow_execution_id=str(run.id),
-        ticket_id=str(run.ticket_id),
-        step_id=str(stage_exec.id),
+def _system_command_context(run: PipelineRunRow, stage_exec: StageExecutionRow) -> DispatchContext:
+    return DispatchContext(
+        run_id=run.id,
+        ticket_id=run.ticket_id,
+        stage_execution_id=stage_exec.id,
         attempt=0,
         traceparent=run.otel_trace_context,
     )
@@ -1432,8 +1430,7 @@ async def _run_action_stage(
 
     # ActionError path: the SAVEPOINT rolled back the action's own writes;
     # refresh stage_exec (session-wide expiry on nested rollback) before
-    # writing the failure onto it — same idiom as
-    # `core/workflow/service.py`'s LocalCommand exception handling.
+    # writing the failure onto it.
     await session.refresh(stage_exec)
     stage_exec.status = "failed"
     stage_exec.failure_reason = failure_reason
@@ -1454,14 +1451,12 @@ async def _run_action_stage(
 # HANDLE_AGENT_EVENT — resume a run off a terminal AgentEvent
 # ---------------------------------------------------------------------------
 #
-# Same signature as `core/workflow.handle_agent_event` — both engines are
-# registered as `core/agent_gateway` consumers and receive the identical
-# args dict per terminal event (see `register_agent_event_consumer` in
-# `apps/backend/app/core/agent_gateway/service.py`). `workflow_execution_id`
+# Registered as a `core/agent_gateway` consumer (see
+# `register_agent_event_consumer` in `apps/backend/app/core/agent_gateway/service.py`)
+# and receives the args dict for every terminal event. `workflow_execution_id`
 # here is a `pipeline_runs.id` (stringified UUID); an id this engine doesn't
-# own (an old-engine `WorkflowExecutionRow` id, or vice-versa) is the normal
-# coexistence case, not an error — `session.get` returning `None` is the
-# no-op signal.
+# own (e.g. a stale/foreign id) is a no-op, not an error — `session.get`
+# returning `None` is the signal.
 
 
 @task("pipelines.handle_agent_event", queue="pipelines", max_retries=1)

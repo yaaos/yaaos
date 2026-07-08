@@ -217,7 +217,7 @@ async def test_delete_identity_expires_held_workspaces_and_synthesizes_failure(d
 
     async with get_session2() as s:
         pending = await get_pending_task_names(s)
-    assert "workflow.handle_agent_event" in pending
+    assert "pipelines.handle_agent_event" in pending
 
 
 @pytest.mark.asyncio

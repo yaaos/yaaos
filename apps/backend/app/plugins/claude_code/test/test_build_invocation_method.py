@@ -19,18 +19,19 @@ def _plugin() -> ClaudeCodePlugin:
     return ClaudeCodePlugin()
 
 
-def _pr_review_invocation(**overrides) -> Invocation:  # type: ignore[no-untyped-def]
+def _stage_invocation(**overrides) -> Invocation:  # type: ignore[no-untyped-def]
     base: dict = {
         "workspace_id": _STUB_WORKSPACE_ID,
-        "skill": "pr_review",
+        "skill": "requirements",
         "model": "opus",
         "effort": "medium",
         "context": {
-            "org_id": "00000000-0000-0000-0000-000000000001",
-            "repo_external_id": "acme/web",
-            "pr_external_id": "acme/web#42",
-            "head_sha": "deadbeef",
-            "base_sha": "cafebabe",
+            "ticket_id": "00000000-0000-0000-0000-0000000000aa",
+            "stage_name": "requirements",
+            "branch_name": "yaaos/feature-abc123",
+            "input": "Add a widget.",
+            "artifact_path": "$TMPDIR/00000000-0000-0000-0000-0000000000bb.md",
+            "output_schema": {"type": "object", "properties": {"outcome": {"type": "string"}}},
         },
         "wallclock_seconds": 300,
     }
@@ -39,18 +40,18 @@ def _pr_review_invocation(**overrides) -> Invocation:  # type: ignore[no-untyped
 
 
 def test_returns_invoke_coding_agent_instance() -> None:
-    result = _plugin().compile_invocation(_pr_review_invocation())
+    result = _plugin().compile_invocation(_stage_invocation())
     assert isinstance(result, InvokeCodingAgent)
 
 
 def test_argv_non_empty() -> None:
-    result = _plugin().compile_invocation(_pr_review_invocation())
+    result = _plugin().compile_invocation(_stage_invocation())
     assert len(result.argv) > 0
     assert result.argv[0] == "claude"
 
 
 def test_argv_contains_model_and_effort() -> None:
-    result = _plugin().compile_invocation(_pr_review_invocation(model="sonnet", effort="high"))
+    result = _plugin().compile_invocation(_stage_invocation(model="sonnet", effort="high"))
     argv = result.argv
     i = argv.index("--model")
     assert argv[i + 1] == "sonnet"
@@ -59,42 +60,79 @@ def test_argv_contains_model_and_effort() -> None:
 
 
 def test_wallclock_seconds_propagated() -> None:
-    result = _plugin().compile_invocation(_pr_review_invocation(wallclock_seconds=600))
+    result = _plugin().compile_invocation(_stage_invocation(wallclock_seconds=600))
     assert result.wallclock_seconds == 600
 
 
 def test_env_does_not_carry_anthropic_api_key() -> None:
     """ANTHROPIC_API_KEY is never in InvokeCodingAgent.env — it is delivered via
     ConfigUpdate.byok_secrets and injected by the agent at exec time."""
-    result = _plugin().compile_invocation(_pr_review_invocation())
+    result = _plugin().compile_invocation(_stage_invocation())
     assert "ANTHROPIC_API_KEY" not in result.env
 
 
 def test_env_is_empty_dict() -> None:
     """compile_invocation always produces an empty env dict — no secrets inline."""
-    result = _plugin().compile_invocation(_pr_review_invocation())
+    result = _plugin().compile_invocation(_stage_invocation())
     assert result.env == {}
 
 
-def test_unknown_skill_raises_coding_agent_error() -> None:
-    inv = _pr_review_invocation(skill="unknown_skill")
-    with pytest.raises(CodingAgentError, match="unknown_skill"):
-        _plugin().compile_invocation(inv)
+def test_any_skill_name_compiles() -> None:
+    """No hardcoded skill allowlist — the named skill file (resolved and
+    stat'd agent-side) is the only gate on what skill can run."""
+    result = _plugin().compile_invocation(_stage_invocation(skill="code-review"))
+    assert 'Use the "code-review" skill' in (result.stdin or "")
 
 
 def test_missing_required_context_key_raises() -> None:
-    inv = _pr_review_invocation()
+    inv = _stage_invocation()
     ctx = dict(inv.context)
-    del ctx["head_sha"]
-    with pytest.raises(CodingAgentError, match="head_sha"):
+    del ctx["artifact_path"]
+    with pytest.raises(CodingAgentError, match="artifact_path"):
         _plugin().compile_invocation(Invocation(**{**inv.model_dump(), "context": ctx}))
 
 
+def test_prompt_includes_input_and_artifact_path() -> None:
+    result = _plugin().compile_invocation(_stage_invocation())
+    assert "Add a widget." in (result.stdin or "")
+    assert "$TMPDIR/00000000-0000-0000-0000-0000000000bb.md" in (result.stdin or "")
+
+
+def test_prompt_includes_pr_context_when_present() -> None:
+    inv = _stage_invocation(
+        skill="code-review",
+        context={
+            "ticket_id": "00000000-0000-0000-0000-0000000000aa",
+            "stage_name": "code-review",
+            "branch_name": "yaaos/feature-abc123",
+            "input": "Review the diff.",
+            "artifact_path": "$TMPDIR/cmd.md",
+            "output_schema": {},
+            "pr": {
+                "pr_external_id": "acme/web#42",
+                "head_sha": "deadbeef",
+                "base_sha": "cafebabe",
+                "prev_reviewed_head_sha": None,
+            },
+        },
+    )
+    result = _plugin().compile_invocation(inv)
+    stdin = result.stdin or ""
+    assert "acme/web#42" in stdin
+    assert "git diff cafebabe..deadbeef" in stdin
+
+
+def test_prompt_includes_strict_json_instruction() -> None:
+    result = _plugin().compile_invocation(_stage_invocation())
+    stdin = result.stdin or ""
+    assert "Respond with EXACTLY a JSON object" in stdin
+
+
 def test_argv_includes_stream_json_flag() -> None:
-    result = _plugin().compile_invocation(_pr_review_invocation())
+    result = _plugin().compile_invocation(_stage_invocation())
     assert "--output-format=stream-json" in result.argv
 
 
 def test_argv_includes_bypass_permissions() -> None:
-    result = _plugin().compile_invocation(_pr_review_invocation())
+    result = _plugin().compile_invocation(_stage_invocation())
     assert "--permission-mode=bypassPermissions" in result.argv

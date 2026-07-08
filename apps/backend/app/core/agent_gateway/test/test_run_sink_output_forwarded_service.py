@@ -188,12 +188,11 @@ async def test_real_sink_forwards_output_and_strips_stdout(db_session) -> None:
         await record_agent_event(event, session=db_session)
 
     payloads = await get_pending_outbox_payloads(db_session)
-    # The coexistence bridge enqueues to every registered consumer
-    # (core/workflow AND domain/pipelines); filter to the old engine's own
-    # task name — this module tests `core/workflow`'s consumption path.
-    handle_payloads = [p for p in payloads if p.get("task_name") == "workflow.handle_agent_event"]
+    # `record_agent_event` also enqueues the seeding outbox row; filter to
+    # the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
     assert len(handle_payloads) == 1, (
-        f"expected exactly one workflow.handle_agent_event; got {handle_payloads}"
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
     )
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
@@ -235,12 +234,11 @@ async def test_agent_event_artifact_fields_forwarded_to_outbox_payload(db_sessio
         await record_agent_event(event, session=db_session)
 
     payloads = await get_pending_outbox_payloads(db_session)
-    # The coexistence bridge enqueues to every registered consumer
-    # (core/workflow AND domain/pipelines); filter to the old engine's own
-    # task name — this module tests `core/workflow`'s consumption path.
-    handle_payloads = [p for p in payloads if p.get("task_name") == "workflow.handle_agent_event"]
+    # `record_agent_event` also enqueues the seeding outbox row; filter to
+    # the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
     assert len(handle_payloads) == 1, (
-        f"expected exactly one workflow.handle_agent_event; got {handle_payloads}"
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
     )
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
@@ -275,12 +273,11 @@ async def test_agent_event_artifact_error_forwarded_to_outbox_payload(db_session
         await record_agent_event(event, session=db_session)
 
     payloads = await get_pending_outbox_payloads(db_session)
-    # The coexistence bridge enqueues to every registered consumer
-    # (core/workflow AND domain/pipelines); filter to the old engine's own
-    # task name — this module tests `core/workflow`'s consumption path.
-    handle_payloads = [p for p in payloads if p.get("task_name") == "workflow.handle_agent_event"]
+    # `record_agent_event` also enqueues the seeding outbox row; filter to
+    # the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
     assert len(handle_payloads) == 1, (
-        f"expected exactly one workflow.handle_agent_event; got {handle_payloads}"
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
     )
 
     task_outputs = handle_payloads[0]["args"]["outputs"]

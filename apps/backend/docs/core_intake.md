@@ -13,7 +13,7 @@ Does NOT own: any tables. All writes flow through other modules' services.
 - **HMAC verification** happens inside each `IntakeType.handle()` before any state mutation. `IntakeRejectedError(kind="bad_signature")` → 401. Never trust the body before the signature clears.
 - **All handlers return `IntakeSideEffect`.** There is no `IntakePrepared` branch — ticket creation + run dispatch happen inside each plugin's `handle()`. The endpoint handler is a thin wrapper that calls `handle()` and returns the side-effect.
 - **Filtering audit trail:** every dropped event writes `webhook_event.filtered` with `{reason, event_kind, source_event_id}` — the log shows why nothing happened.
-- `is_skippable_path` is the single source of truth for the trivial-diff skip list; `domain/reviewer` re-imports it.
+- `is_skippable_path` is the single source of truth for the trivial-diff skip list.
 - **Registry is the standard ContextVar pattern** (production rides the import-time default; `set_intake_for_tests` is the sole test seam) — holds both `IntakeType`s (keyed by `name`) and `IntakePoint`s (keyed by `id`). `IntakePoint(id, plugin_id, label, kind)` is a plugin-contributed trigger source; `domain/repos.add_binding` validates its `intake_point_id` against `list_intake_points()`, and `TriggerBinding.schedule` must be present iff the point's `kind == "schedule"`.
 
 ## Registered handlers

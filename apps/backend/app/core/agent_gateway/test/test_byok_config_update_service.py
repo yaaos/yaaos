@@ -305,15 +305,13 @@ def test_compile_invocation_does_not_emit_anthropic_api_key() -> None:
 
     inv = Invocation(
         workspace_id="00000000-0000-0000-0000-000000000099",
-        skill="pr_review",
+        skill="code-review",
         model="opus",
         effort="medium",
         context={
-            "org_id": "00000000-0000-0000-0000-000000000001",
-            "repo_external_id": "acme/web",
-            "pr_external_id": "acme/web#42",
-            "head_sha": "deadbeef",
-            "base_sha": "cafebabe",
+            "stage_name": "code-review",
+            "input": "review the diff",
+            "artifact_path": "/tmp/artifact.md",
         },
         wallclock_seconds=300,
     )

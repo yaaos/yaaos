@@ -43,7 +43,7 @@ def _project_for_prompt(prompt: FilePrompt, default: str) -> str:
     `apps/backend/app/domain/<module>/llm/prompts/<name>.prompt.md`.
     The third path segment after `domain/` is the owning module — that's
     what we use as the project name so Braintrust's Logs tab segregates
-    calls by which module made them (`reviewer`, future `memory`, etc.).
+    calls by which module made them (`pr_review`, future `memory`, etc.).
     Projects are auto-created on first request, so adding a new caller
     needs no Braintrust-side setup.
 

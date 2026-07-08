@@ -27,8 +27,7 @@ from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import WorkspaceClaimFailed, WorkspaceNotFoundError
 
 if TYPE_CHECKING:
-    from app.core.agent_gateway import AgentCommand
-    from app.core.workflow import CommandContext
+    from app.core.agent_gateway import AgentCommand, DispatchContext
 
 log = structlog.get_logger("core.workspace.dispatch")
 
@@ -110,7 +109,7 @@ async def dispatch_via_workspace(
     *,
     command: AgentCommand,
     workspace_id: UUID,
-    ctx: CommandContext,
+    ctx: DispatchContext,
     session: AsyncSession,
     claim_workspace: bool = False,
 ) -> UUID:
@@ -136,7 +135,7 @@ async def dispatch_via_workspace(
         org_id=ws_row.org_id,
         command=command,
         session=session,
-        workflow_execution_id=UUID(ctx.workflow_execution_id),
+        workflow_execution_id=ctx.run_id,
     )
     if ws_row.owning_agent_id is not None:
         await pin_command_to_agent(command.command_id, ws_row.owning_agent_id, session=session)
@@ -145,7 +144,7 @@ async def dispatch_via_workspace(
         claimed = await try_claim(
             workspace_id,
             command_id=command.command_id,
-            workflow_execution_id=UUID(ctx.workflow_execution_id),
+            workflow_execution_id=ctx.run_id,
             session=session,
         )
         if not claimed:
@@ -156,12 +155,11 @@ async def dispatch_via_workspace(
 
 # ---------------------------------------------------------------------------
 # Plain dispatch functions — extracted from the lifecycle commands' enqueue
-# bodies (`commands/provision.py`, `cleanup.py`, `refresh_auth.py`) so a
-# caller that isn't a `WorkflowCommand` instance (`domain/pipelines`) can
-# dispatch the same operations. `ctx: CommandContext` for now — both engines
-# share the type during coexistence (see architecture's dispatch-plumbing
-# note); it carries only the generic correlation fields (`workflow_execution_id`,
-# `ticket_id`, `step_id`, `attempt`, `traceparent`) either engine needs.
+# bodies (`commands/provision.py`, `cleanup.py`, `refresh_auth.py`, since
+# deleted) so `domain/pipelines`' run engine can dispatch the same
+# operations. `ctx: DispatchContext` carries only the generic correlation
+# fields (`run_id`, `ticket_id`, `stage_execution_id`, `attempt`,
+# `traceparent`) the dispatch layer needs.
 # ---------------------------------------------------------------------------
 
 
@@ -187,16 +185,14 @@ class ProvisionWorkspaceSpec(BaseModel):
 
 async def dispatch_provision(
     spec: ProvisionWorkspaceSpec,
-    ctx: CommandContext,
+    ctx: DispatchContext,
     *,
     session: AsyncSession,
 ) -> UUID:
     """Fetch install credentials and enqueue a `ProvisionWorkspace`
-    AgentCommand for `spec.workspace_id`. Extracted from
-    `core.workspace.commands.provision.ProvisionWorkspace.dispatch` so a
-    caller without a `WorkflowCommand` instance can dispatch provisioning.
-    The `workspaces` row itself is still created lean on the agent's first
-    workspace event — this function only enqueues the command.
+    AgentCommand for `spec.workspace_id`. The `workspaces` row itself is
+    still created lean on the agent's first workspace event — this
+    function only enqueues the command.
 
     Raises `VcsInstallNotFound` when the org has no active VCS App
     installation; `RuntimeError` when no workspace provider is registered.
@@ -226,15 +222,14 @@ async def dispatch_provision(
         auth=auth,
         traceparent=ctx.traceparent or "",
         session=session,
-        workflow_execution_id=UUID(ctx.workflow_execution_id),
+        workflow_execution_id=ctx.run_id,
     )
     return result.command_id
 
 
-async def dispatch_cleanup(workspace_id: UUID, ctx: CommandContext, *, session: AsyncSession) -> UUID:
-    """Enqueue a `CleanupWorkspace` AgentCommand for `workspace_id`. Extracted
-    from `CleanupWorkspace.build_command`; never claims (cleanup runs
-    regardless of who currently holds the workspace)."""
+async def dispatch_cleanup(workspace_id: UUID, ctx: DispatchContext, *, session: AsyncSession) -> UUID:
+    """Enqueue a `CleanupWorkspace` AgentCommand for `workspace_id`. Never
+    claims (cleanup runs regardless of who currently holds the workspace)."""
     from app.core.agent_gateway import CleanupWorkspaceCommand  # noqa: PLC0415
 
     cmd = CleanupWorkspaceCommand(
@@ -245,10 +240,9 @@ async def dispatch_cleanup(workspace_id: UUID, ctx: CommandContext, *, session: 
     )
 
 
-async def dispatch_auth_refresh(workspace_id: UUID, ctx: CommandContext, *, session: AsyncSession) -> UUID:
-    """Enqueue the auth-refresh recovery AgentCommand for `workspace_id`.
-    Extracted from `RefreshWorkspaceAuth.build_command` — dispatches a
-    placeholder `CleanupWorkspaceCommand` wire payload; a real
+async def dispatch_auth_refresh(workspace_id: UUID, ctx: DispatchContext, *, session: AsyncSession) -> UUID:
+    """Enqueue the auth-refresh recovery AgentCommand for `workspace_id` —
+    dispatches a placeholder `CleanupWorkspaceCommand` wire payload; a real
     `RefreshWorkspaceAuth` AgentCommand type doesn't exist yet."""
     from app.core.agent_gateway import CleanupWorkspaceCommand  # noqa: PLC0415
 
@@ -260,7 +254,7 @@ async def dispatch_auth_refresh(workspace_id: UUID, ctx: CommandContext, *, sess
     )
 
 
-async def dispatch_push(workspace_id: UUID, ctx: CommandContext, *, session: AsyncSession) -> UUID:
+async def dispatch_push(workspace_id: UUID, ctx: DispatchContext, *, session: AsyncSession) -> UUID:
     """Enqueue a bare `PushBranch` re-push AgentCommand for `workspace_id` —
     push-failure recovery only: a re-push of the workspace's current HEAD
     after a `refresh-auth` credential rotation, so claude is never re-run

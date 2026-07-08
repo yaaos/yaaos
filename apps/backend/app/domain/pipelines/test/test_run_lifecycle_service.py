@@ -2,8 +2,7 @@
 `ROUTE_RUN`/`START_STAGE` taskiq trio (Acceptance) — plus the `ActionError`
 failure path with terminal notification.
 
-Uses the shared `drain` outbox-dispatch helper (`test/drain.py`, cloned from
-`apps/backend/app/core/workflow/test/test_cancel_service.py:149`) and test
+Uses the shared `drain` outbox-dispatch helper (`test/drain.py`) and test
 actions registered via `domain/actions.set_actions_for_tests`.
 """
 

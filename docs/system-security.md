@@ -119,7 +119,7 @@ W3C trace context is a required field on every AgentCommand and AgentEvent (it i
 ## Cross-references
 
 - [`apps/backend/docs/core_agent_gateway.md`](../apps/backend/docs/core_agent_gateway.md) — wire protocol mechanics.
-- [`apps/backend/docs/core_workspace.md`](../apps/backend/docs/core_workspace.md) — single-flight claim + recovery registry + cleanup failsafes.
-- [`apps/backend/docs/core_workflow.md`](../apps/backend/docs/core_workflow.md) — engine + state machine.
+- [`apps/backend/docs/core_workspace.md`](../apps/backend/docs/core_workspace.md) — single-flight claim + cleanup failsafes.
+- [`apps/backend/docs/domain_pipelines.md`](../apps/backend/docs/domain_pipelines.md) — run engine + state machine.
 - [`apps/backend/docs/core_audit_log.md`](../apps/backend/docs/core_audit_log.md) — audit shape + retention.
 - [`apps/agent/docs/README.md`](../apps/agent/docs/README.md) — agent deployment + IAM role.

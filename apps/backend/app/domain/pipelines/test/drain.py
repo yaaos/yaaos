@@ -1,8 +1,7 @@
 """Shared `_drain` outbox-dispatch helper for `domain/pipelines` service
-tests — cloned from the pattern in
-`apps/backend/app/core/workflow/test/test_cancel_service.py:149`. Every
-service test in this module that exercises the ROUTE_RUN/START_STAGE
-taskiq trio reuses this rather than re-defining its own dispatcher.
+tests. Every service test in this module that exercises the
+ROUTE_RUN/START_STAGE taskiq trio reuses this rather than re-defining its
+own dispatcher.
 
 Intra-module test helper — reached via direct submodule import from
 sibling test files in this same `test/` directory, per

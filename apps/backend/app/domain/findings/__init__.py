@@ -1,5 +1,4 @@
-"""domain/findings — durable ticket-level findings; replaces reviewer-owned
-finding rows.
+"""domain/findings — durable ticket-level findings.
 
 A finding is materialized the moment a review iteration reports it and
 carries a `open → resolved / dismissed` lifecycle with a full status-event

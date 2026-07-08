@@ -14,8 +14,9 @@ Lean workspace row creation: when the agent reports a `created` or `ready`
 workspace event and no `workspaces` row exists yet, this module creates the
 row with `status='active'`, `owning_agent_id` from the reporting bearer, and
 `org_id`/`spec` resolved from the originating `agent_commands` row
-(by `command_id`). The `workspace_id` is minted up front in
-`ProvisionWorkspace.dispatch`; the row materialises only once an agent owns it.
+(by `command_id`). The `workspace_id` is minted up front by the caller of
+`core/workspace.dispatch_provision`; the row materialises only once an agent
+owns it.
 """
 
 from __future__ import annotations
@@ -219,7 +220,7 @@ class WorkspaceAgentReportSinkImpl:
     ) -> None:
         """Release the single-flight claim on whichever workspace holds
         `command_id` by clearing `current_command_id`. Called on every
-        terminal agent event before the workflow engine is resumed —
+        terminal agent event before the run engine is resumed —
         failure-report-precedes-disposal ordering.
 
         No-op when no workspace holds the command (e.g. `ProvisionWorkspace`

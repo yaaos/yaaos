@@ -44,13 +44,10 @@ class Ticket(BaseModel):
     type: str = "pr_review"
     idempotency_key: str | None = None
     payload: dict = Field(default_factory=dict)
-    current_workflow_execution_id: UUID | None = None
-    # Soft ref to the pipeline_runs row currently driving this ticket — the
-    # run-engine's equivalent of current_workflow_execution_id above.
+    # Soft ref to the pipeline_runs row currently driving this ticket.
     current_run_id: UUID | None = None
-    # Per-ticket work branch. Nullable — the old pr_review_v1 path never
-    # populates it; the run engine reads it to build an action stage's
-    # ActionContext.branch_name.
+    # Per-ticket work branch. Nullable for tickets predating branch minting;
+    # the run engine reads it to build an action stage's ActionContext.branch_name.
     branch_name: str | None = None
     # Enriched fields (denormalized at read-time from the linked PR; nullable
     # because a ticket can briefly exist without its PR row in the create flow).
@@ -83,7 +80,6 @@ class Ticket(BaseModel):
             type=row.type,
             idempotency_key=row.idempotency_key,
             payload=dict(row.payload or {}),
-            current_workflow_execution_id=row.current_workflow_execution_id,
             current_run_id=row.current_run_id,
             branch_name=row.branch_name,
             created_at=row.created_at,
@@ -185,7 +181,6 @@ async def _insert_ticket_atomic(
             type=type,
             idempotency_key=idempotency_key,
             payload=payload,
-            current_workflow_execution_id=None,
             branch_name=branch_name,
         )
         .on_conflict_do_nothing(index_elements=list(conflict_target))
@@ -400,20 +395,6 @@ async def notify_ticket_status_change(
         )
 
 
-async def attach_workflow_execution(
-    ticket_id: UUID,
-    workflow_execution_id: UUID,
-    *,
-    session: AsyncSession,
-) -> None:
-    """Stamp the canonical workflow execution onto the ticket. Caller commits."""
-    await session.execute(
-        update(TicketRow)
-        .where(TicketRow.id == ticket_id)
-        .values(current_workflow_execution_id=workflow_execution_id)
-    )
-
-
 async def attach_pr_to_ticket(
     ticket_id: UUID,
     *,
@@ -472,59 +453,12 @@ async def get(ticket_id: UUID, *, org_id: UUID) -> Ticket:
 
 async def get_payload(ticket_id: UUID, *, session: AsyncSession) -> dict[str, Any]:
     """Return the ticket's intake payload dict. Required session — read-only,
-    no commits. reviewer commands read admission signals (`is_draft`,
-    `is_fork`, `labels`, etc.) from here without re-fetching from GitHub."""
+    no commits. Callers read admission signals (`is_draft`, `is_fork`,
+    `labels`, etc.) from here without re-fetching from GitHub."""
     row = (await session.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
     if row is None:
         raise TicketNotFoundError(str(ticket_id))
     return dict(row.payload or {})
-
-
-class TicketWorkflowContext:
-    """Minimal ticket fields needed to build a TicketSnapshot for workflow start.
-
-    A plain value object (not a Pydantic model) — callers access attributes
-    directly. Returned by `get_workspace_ticket_context` for use in
-    `domain/reviewer.start_pr_review` which builds the typed `TicketSnapshot`
-    from these fields.
-    """
-
-    __slots__ = ("org_id", "payload", "plugin_id", "pr_id", "repo_external_id")
-
-    def __init__(
-        self,
-        *,
-        org_id: UUID,
-        plugin_id: str,
-        repo_external_id: str,
-        payload: dict,  # type: ignore[type-arg]
-        pr_id: UUID | None = None,
-    ) -> None:
-        self.org_id = org_id
-        self.plugin_id = plugin_id
-        self.repo_external_id = repo_external_id
-        self.payload = payload
-        self.pr_id = pr_id
-
-
-async def get_workspace_ticket_context(ticket_id: UUID) -> TicketWorkflowContext | None:
-    """Read the ticket fields needed to build a `TicketSnapshot` for workflow start.
-
-    Returns `None` when the ticket is missing. Owns its session (read-only, no
-    commits). Called by `domain/reviewer.start_pr_review` which constructs the
-    typed `TicketSnapshot` from the returned fields.
-    """
-    async with db_session() as s:
-        row = (await s.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one_or_none()
-    if row is None:
-        return None
-    return TicketWorkflowContext(
-        org_id=row.org_id,
-        plugin_id=row.plugin_id or "github",
-        repo_external_id=row.repo_external_id or "",
-        payload=dict(row.payload or {}),
-        pr_id=row.pr_id,
-    )
 
 
 async def get_by_pr(pr_id: UUID, *, org_id: UUID) -> Ticket | None:
@@ -544,7 +478,7 @@ async def update_findings_summary(
 ) -> None:
     """Write the denormalized findings rollup onto the ticket row.
 
-    Called by reviewer after each review run and on ack/push-back.
+    Called by `domain/findings` after each finding report or verdict.
     Caller commits. No-op when the ticket is missing (defensive).
     """
     await session.execute(
@@ -583,7 +517,7 @@ async def list_tickets(
     """List tickets for the org, applying the requested filters + sort.
 
     `findings_count` + `max_severity` are read directly from the ticket row
-    — reviewer writes the rollup after each review run and on ack/push-back.
+    — `domain/findings` writes the rollup after each finding report or verdict.
     """
     async with db_session() as s:
         stmt = select(TicketRow).where(TicketRow.org_id == org_id)
@@ -629,26 +563,8 @@ async def list_tickets(
     return out
 
 
-async def set_workflow_execution(
-    ticket_id: UUID,
-    *,
-    workflow_execution_id: UUID,
-    session: AsyncSession,
-) -> None:
-    """Stamp the workflow execution id onto the ticket after engine.start().
-
-    Caller commits.
-    """
-    await session.execute(
-        update(TicketRow)
-        .where(TicketRow.id == ticket_id)
-        .values(current_workflow_execution_id=workflow_execution_id)
-    )
-
-
 async def set_current_run(ticket_id: UUID, run_id: UUID, *, session: AsyncSession) -> None:
-    """Stamp the pipeline run now driving this ticket. The run-engine
-    equivalent of `set_workflow_execution` above. Caller commits."""
+    """Stamp the pipeline run now driving this ticket. Caller commits."""
     await session.execute(update(TicketRow).where(TicketRow.id == ticket_id).values(current_run_id=run_id))
 
 
@@ -677,11 +593,8 @@ async def transition_ticket_on_run_start(
 ) -> bool:
     """Flip ticket pending→running when its pipeline run starts running.
 
-    Run-engine equivalent of `transition_on_workflow_start` above, keyed on
-    `current_run_id` instead of `current_workflow_execution_id`. Called
-    directly by `domain/pipelines`' engine (a plain acyclic import) — there
-    is no `on_start`-hook indirection the way the workflow-era callback
-    needed, since the run engine calls tickets functions itself.
+    Called directly by `domain/pipelines`' engine (a plain acyclic import) —
+    no hook indirection; the run engine calls tickets functions itself.
 
     Returns True if flipped. Returns False (silent no-op) when:
     - the ticket is not found,
@@ -719,8 +632,7 @@ async def transition_ticket_on_run_terminal(
     session: AsyncSession,
 ) -> bool:
     """Flip a ticket to a terminal status only when the calling run still
-    owns it and it is not already terminal. Run-engine equivalent of
-    `transition_on_workflow_terminal` above. Shape-a: takes the caller's
+    owns it and it is not already terminal. Shape-a: takes the caller's
     session, never commits.
 
     Returns True when the transition was applied; False on any guard miss:
@@ -859,76 +771,3 @@ async def _transition(
             raise InvalidTicketTransition(f"ticket {ticket_id} is terminal ({row.status}); cannot transition")
         await _apply_transition(s, row, new_status=new_status, reason=reason, org_id=org_id)
         await s.commit()
-
-
-async def transition_on_workflow_start(
-    ticket_id: UUID,
-    *,
-    org_id: UUID,
-    workflow_execution_id: UUID,
-    session: AsyncSession,
-) -> bool:
-    """Flip ticket pending→running when its workflow bootstraps.
-
-    Atomic with the workflow's RUNNING state write — called from the start
-    hook inside the engine's bootstrap-commit transaction.
-
-    Returns True if flipped. Returns False (silent no-op) when:
-    - the ticket is not found,
-    - the ticket is owned by a different workflow execution,
-    - the ticket is not currently in `pending` (re-bootstrap or already past).
-
-    Caller commits.
-    """
-    row = (
-        await session.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
-    ).scalar_one_or_none()
-    if row is None:
-        return False
-    if row.current_workflow_execution_id != workflow_execution_id:
-        return False
-    if row.status != "pending":
-        return False
-    await _apply_transition(
-        session,
-        row,
-        new_status="running",
-        reason=None,
-        org_id=org_id,
-    )
-    return True
-
-
-async def transition_on_workflow_terminal(
-    ticket_id: UUID,
-    *,
-    org_id: UUID,
-    workflow_execution_id: UUID,
-    to_status: TicketStatus,
-    reason: str | None,
-    session: AsyncSession,
-) -> bool:
-    """Flip a ticket to a terminal status only when the calling workflow
-    execution still owns it and it is not already terminal. Shape-a:
-    takes the caller's session, never commits.
-
-    Returns True when the transition was applied; False on any guard miss:
-    - ticket not found or wrong org
-    - `current_workflow_execution_id` does not match `workflow_execution_id`
-      (a newer execution has superseded this one)
-    - ticket is already in a terminal state (`done`, `cancelled`, `failed`)
-
-    Never raises on guard misses — the caller (a workflow terminal hook)
-    shares the engine's transaction; raising would roll back the workflow commit.
-    """
-    row = (
-        await session.execute(select(TicketRow).where(TicketRow.id == ticket_id, TicketRow.org_id == org_id))
-    ).scalar_one_or_none()
-    if row is None:
-        return False
-    if row.current_workflow_execution_id != workflow_execution_id:
-        return False
-    if row.status in ("done", "cancelled", "failed"):
-        return False
-    await _apply_transition(session, row, new_status=to_status, reason=reason, org_id=org_id)
-    return True

@@ -208,7 +208,6 @@ class Settings(BaseSettings):
     # production by the model validator below — a prod deployment that stubbed
     # either would silently fake reviews. Safe default is False.
     yaaos_coding_agent_stub: bool = False  # stubs the coding-agent + workspace providers
-    yaaos_reviewer_classifier_stub: bool = False  # stubs the reviewer reply classifier
     yaaos_pr_comment_classifier_stub: bool = False  # stubs domain/pr_review's comment classifier
 
     # Service version string exposed in /api/health and OTel resource attrs.
@@ -241,8 +240,6 @@ class Settings(BaseSettings):
             forbidden.append("YAAOS_STS_HOST_OVERRIDE")
         if self.yaaos_coding_agent_stub:
             forbidden.append("YAAOS_CODING_AGENT_STUB")
-        if self.yaaos_reviewer_classifier_stub:
-            forbidden.append("YAAOS_REVIEWER_CLASSIFIER_STUB")
         if self.yaaos_pr_comment_classifier_stub:
             forbidden.append("YAAOS_PR_COMMENT_CLASSIFIER_STUB")
         if forbidden:

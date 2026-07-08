@@ -6,9 +6,6 @@
 payload into a `RunResult`; `validate_settings` validates and normalizes a raw
 settings dict. Plugins own skill resolution, model mapping, stdout parsing, and
 settings validation; `core/coding_agent` owns dispatch and the run lifecycle.
-
-`ReviewContext`, `ReportedFindingShape`, and `CodeReviewResponse` live in
-`domain/reviewer` — they are reviewer-domain types, not generic coding-agent types.
 """
 
 from __future__ import annotations
