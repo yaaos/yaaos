@@ -67,7 +67,10 @@ async def _build_pipeline_run(run: PipelineRunRow, *, session: AsyncSession) -> 
             await session.execute(
                 select(StageExecutionRow)
                 .where(StageExecutionRow.run_id == run.id)
-                .order_by(StageExecutionRow.started_at)
+                # `id` breaks the tie: rows inserted in one transaction share
+                # `started_at` (Postgres `now()` is transaction-start time),
+                # and uuid7 ids are monotonic, so the pair is a total order.
+                .order_by(StageExecutionRow.started_at, StageExecutionRow.id)
             )
         )
         .scalars()

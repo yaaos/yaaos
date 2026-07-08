@@ -541,7 +541,9 @@ async def _prev_reviewed_head_sha(
                     PipelineRunRow.state == "completed",
                     PipelineRunRow.id != exclude_run_id,
                 )
-                .order_by(PipelineRunRow.completed_at.desc())
+                # `id` breaks the tie — uuid7 ids are monotonic, so the most
+                # recently created run wins when two share a `completed_at`.
+                .order_by(PipelineRunRow.completed_at.desc(), PipelineRunRow.id.desc())
             )
         )
         .scalars()
@@ -591,7 +593,10 @@ async def _latest_stage_execution(
             await session.execute(
                 select(StageExecutionRow)
                 .where(StageExecutionRow.run_id == run_id, StageExecutionRow.stage_index == stage_index)
-                .order_by(StageExecutionRow.started_at.desc())
+                # `id` breaks the tie: re-entry rows written in one transaction
+                # share `started_at` (Postgres `now()` is transaction-start
+                # time); uuid7 ids are monotonic, so the newest row always wins.
+                .order_by(StageExecutionRow.started_at.desc(), StageExecutionRow.id.desc())
                 .limit(1)
             )
         )
@@ -1513,7 +1518,8 @@ async def _handle_agent_event_impl(
             await session.execute(
                 select(StageExecutionRow)
                 .where(StageExecutionRow.run_id == run.id, StageExecutionRow.status == "running")
-                .order_by(StageExecutionRow.started_at.desc())
+                # `id` breaks the tie — see `_latest_stage_execution`.
+                .order_by(StageExecutionRow.started_at.desc(), StageExecutionRow.id.desc())
                 .limit(1)
             )
         )

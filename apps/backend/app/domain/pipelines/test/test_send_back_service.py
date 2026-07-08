@@ -147,7 +147,7 @@ async def _stage_rows(db_session, run_id: UUID) -> list[StageExecutionRow]:
             await db_session.execute(
                 select(StageExecutionRow)
                 .where(StageExecutionRow.run_id == run_id)
-                .order_by(StageExecutionRow.started_at)
+                .order_by(StageExecutionRow.started_at, StageExecutionRow.id)
             )
         )
         .scalars()

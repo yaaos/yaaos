@@ -251,7 +251,9 @@ async def maybe_start_batch_run(org_id: UUID, ticket_id: UUID, *, session: Async
                     PRCommentRow.classification.is_not(None),
                     PRCommentRow.classification != "unclear",
                 )
-                .order_by(PRCommentRow.created_at)
+                # `id` breaks the tie — comments sharing a `created_at` still
+                # render into the batch in a stable, reproducible order.
+                .order_by(PRCommentRow.created_at, PRCommentRow.id)
                 .with_for_update()
             )
         )

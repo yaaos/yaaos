@@ -174,7 +174,10 @@ async def _reconcile_stale_running(*, cutoff: datetime, session: AsyncSession) -
                     await session.execute(
                         select(StageExecutionRow)
                         .where(StageExecutionRow.run_id == run.id, StageExecutionRow.kind != "system")
-                        .order_by(StageExecutionRow.started_at.desc())
+                        # `id` breaks the tie — rows written in one transaction
+                        # share `started_at`, and recovery args derived from the
+                        # wrong row would re-execute an already-settled stage.
+                        .order_by(StageExecutionRow.started_at.desc(), StageExecutionRow.id.desc())
                         .limit(1)
                     )
                 )
