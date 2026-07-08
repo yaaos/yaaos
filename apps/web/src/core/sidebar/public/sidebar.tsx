@@ -7,6 +7,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   Brain,
   ChevronRight,
+  GitFork,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -60,6 +61,14 @@ const NAV: NavConfig = {
           label: "Pipelines",
           icon: Layers,
           path: "/settings/pipelines",
+          role: "admin",
+        },
+        {
+          kind: "link",
+          id: "repos",
+          label: "Repos",
+          icon: GitFork,
+          path: "/settings/repos",
           role: "admin",
         },
         {

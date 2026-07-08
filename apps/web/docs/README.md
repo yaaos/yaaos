@@ -30,6 +30,8 @@ React SPA built with Vite. Bundled into the backend's Docker image at build time
 | [domain_lessons](domain_lessons.md) | Per-repo lessons CRUD. |
 | [domain_notifications](domain_notifications.md) | cross-org inbox page + sidebar bell popover. |
 | [domain_org_settings](domain_org_settings.md) | Tabbed org-settings shell (Auth, Members, VCS, Coding Agents, API Keys, MCP Proxy, Audit). |
+| [domain_pipeline_settings](domain_pipeline_settings.md) | Org Settings > Pipelines — pipeline-definition CRUD + per-stage editor + template instantiation. |
+| [domain_repo_settings](domain_repo_settings.md) | Org Settings > Repos — per-repo trigger bindings, protected code, PR auto-approval. |
 | [domain_auth](domain_auth.md) | Login page (email-first SSO-discover) + logout. |
 | [domain_user](domain_user.md) | `/user/details`, `/user/security` — self-service profile + 2FA. |
 | [domain_orgs](domain_orgs.md) | Org picker (`/orgs`) + Members + Audit + SSO config — surfaces tied to a specific org's identity layer. |

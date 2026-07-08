@@ -19,6 +19,17 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+// jsdom has no `ResizeObserver` — `cmdk` (the `Command` primitive's list
+// virtualization) instantiates one unconditionally and throws without a
+// stub. No-op polyfill is enough; tests never assert on resize behavior.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 // Root `package.json`'s `pnpm.overrides` pins every shared Radix internal
 // package (`react-focus-scope`, `react-dismissable-layer`, `react-dialog`,
 // `react-presence`, `react-primitive`, …) to one resolved version

@@ -38,11 +38,12 @@
 
 | File | Purpose |
 |---|---|
-| `alert-dialog.tsx` | Destructive or high-stakes confirmation modal (Radix `AlertDialog`). No close X — use `AlertDialogCancel` / `AlertDialogAction` buttons. Used by `ShutdownDialog` and `CancelShutdownDialog`. |
+| `alert-dialog.tsx` | Destructive or high-stakes confirmation modal (Radix `AlertDialog`). No close X — use `AlertDialogCancel` / `AlertDialogAction` buttons. Used by `ShutdownDialog`, `CancelShutdownDialog`, and the Repos settings page's protected-code mode-switch confirm. |
 | `dialog.tsx` | General-purpose modal dialog. Composed by ConfirmModal. |
 | `sheet.tsx` | Right-anchored slide-in panel (built on `@radix-ui/react-dialog`, no separate package). Used by the ticket Runs tab's per-stage artifact viewer and the Pipelines settings page's per-stage editor. |
 | `popover.tsx` | Anchored floating panel. Used by Org switcher, Notifications. |
 | `dropdown-menu.tsx` | Anchored action menu (Radix `DropdownMenu`). Used by the Pipelines settings page's per-stage row actions and "Add stage" picker. |
+| `command.tsx` | Filterable list (`cmdk`). Paired with `popover.tsx` for multi-select pickers — the Repos settings page's notify/owner user pickers. |
 
 ### Display
 

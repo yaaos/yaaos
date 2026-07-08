@@ -28,7 +28,7 @@ Three groupings under `apps/web/src/`:
 
 ## Key flows
 
-**Domain modules:** `domain/workspaces` (live fleet page, `orgWorkspacesRoute` at `/workspaces`) · `domain/tickets` · `domain/lessons` · `domain/org_settings` · `domain/pipeline_settings` (Org Settings > Pipelines — pipeline-definition CRUD + stage editor) · `domain/notifications` · `domain/auth` · `domain/user` · `domain/orgs`.
+**Domain modules:** `domain/workspaces` (live fleet page, `orgWorkspacesRoute` at `/workspaces`) · `domain/tickets` · `domain/lessons` · `domain/org_settings` · `domain/pipeline_settings` (Org Settings > Pipelines — pipeline-definition CRUD + stage editor) · `domain/repo_settings` (Org Settings > Repos — trigger bindings, protected code, PR auto-approval) · `domain/notifications` · `domain/auth` · `domain/user` · `domain/orgs`.
 
 **SSE → re-render** (crosses core/sse → core/api → domain):
 `EventSource message` → `useServerEvents` maps `kind` → `qc.invalidateQueries(key)` → TanStack Query refetch → domain component re-renders.

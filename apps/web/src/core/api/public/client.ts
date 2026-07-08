@@ -127,7 +127,13 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     throw new Error(`${r.status} ${path}: ${body}`);
   }
   if (r.status === 204) return undefined as T;
-  return (await r.json()) as T;
+  // Some 2xx handlers return a bare `Response(status_code=200)` with an
+  // empty body (e.g. `PUT /api/repos/settings`) rather than 204 — reading
+  // as text first and short-circuiting on empty avoids `r.json()` throwing
+  // a SyntaxError on `""`, which would otherwise surface as a false
+  // "couldn't save" error despite the request having succeeded.
+  const text = await r.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 /**

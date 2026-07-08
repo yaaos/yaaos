@@ -23,6 +23,7 @@ import { IntegrationsSettingsPage } from "@domain/org_settings/public/integratio
 import { VcsSettingsPage } from "@domain/org_settings/public/vcs/VcsSettingsPage";
 import { OrgPickerPage } from "@domain/orgs/public/OrgPickerPage";
 import { PipelinesSettingsPage } from "@domain/pipeline_settings/public/PipelinesSettingsPage";
+import { RepoSettingsPage } from "@domain/repo_settings/public/RepoSettingsPage";
 import { TicketDetailPage } from "@domain/tickets/public/TicketDetailPage";
 import { TicketsListPage as TicketsPage } from "@domain/tickets/public/TicketsListPage";
 import { DetailsPage } from "@domain/user/public/DetailsPage";
@@ -193,6 +194,12 @@ const orgSettingsPipelinesRoute = createRoute({
   component: PipelinesSettingsPage,
 });
 
+const orgSettingsReposRoute = createRoute({
+  getParentRoute: () => orgScopeRoute,
+  path: "/settings/repos",
+  component: RepoSettingsPage,
+});
+
 // User-area pages nest under the current org so the URL alone carries
 // all routing context (no module-global current-org, no localStorage).
 // The backend routes they call (`/api/user/*`, `/api/notifications/*`)
@@ -248,6 +255,7 @@ const routeTree = rootRoute.addChildren([
     orgSettingsIntegrationsRoute,
     orgSettingsWorkspacesRoute,
     orgSettingsPipelinesRoute,
+    orgSettingsReposRoute,
     orgUserRedirectRoute,
     orgUserDetailsRoute,
     orgUserSecurityRoute,

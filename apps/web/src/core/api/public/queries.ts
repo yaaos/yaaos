@@ -698,3 +698,89 @@ export function useGithubInstallation() {
     refetchInterval: 10_000,
   });
 }
+
+// ── Intake points + repo config (Org Settings > Repos page) ────────────────
+
+export type IntakePointView = components["schemas"]["IntakePoint"];
+
+/** Every registered intake point (webhook + schedule kinds) — the Repos
+ *  page's trigger-binding intake picker. */
+export function useIntakePoints() {
+  return useSuspenseQuery<IntakePointView[]>({
+    queryKey: ["intake-points"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ points: IntakePointView[] }>("/api/intake/points");
+      return resp.points;
+    },
+  });
+}
+
+export type RepoAccordionView = components["schemas"]["RepoAccordionEntry"];
+export type RepoConfigView = components["schemas"]["RepoConfigResponse"];
+export type ProtectedPathSetView = components["schemas"]["ProtectedPathSet"];
+export type TriggerBindingView = components["schemas"]["TriggerBinding"];
+export type RepoSettingsSpecBody = components["schemas"]["RepoSettingsSpec"];
+export type TriggerBindingSpecBody = components["schemas"]["TriggerBindingSpec"];
+
+/** Installed repos joined against `domain/repos` config — the accordion list. */
+export function useRepos() {
+  return useSuspenseQuery<RepoAccordionView[]>({
+    queryKey: ["repos"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ repos: RepoAccordionView[] }>("/api/repos");
+      return resp.repos;
+    },
+  });
+}
+
+/** One repo's full config (bindings + protected-code + auto-approve).
+ *  Always 200 — an absent settings row is the model's defaults, so
+ *  `enabled` gates the fetch to when the Accordion row is open, not
+ *  whether the repo is "configured". */
+export function useRepoConfig(repoExternalId: string, opts: { enabled: boolean }) {
+  return useQuery<RepoConfigView>({
+    queryKey: ["repos", repoExternalId],
+    queryFn: () =>
+      apiFetch<RepoConfigView>(`/api/repos/config?repo=${encodeURIComponent(repoExternalId)}`),
+    enabled: opts.enabled,
+  });
+}
+
+function _invalidateRepo(qc: ReturnType<typeof useQueryClient>, repoExternalId: string): void {
+  qc.invalidateQueries({ queryKey: ["repos"] });
+  qc.invalidateQueries({ queryKey: ["repos", repoExternalId] });
+}
+
+/** `PUT /api/repos/settings?repo=` — whole-section replace (last-write-wins). */
+export function useSaveRepoSettings(repoExternalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (spec: RepoSettingsSpecBody) =>
+      apiFetch(`/api/repos/settings?repo=${encodeURIComponent(repoExternalId)}`, {
+        method: "PUT",
+        body: JSON.stringify(spec),
+      }),
+    onSuccess: () => _invalidateRepo(qc, repoExternalId),
+  });
+}
+
+export function useAddTrigger(repoExternalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (spec: TriggerBindingSpecBody) =>
+      apiFetch<{ id: string }>(`/api/repos/triggers?repo=${encodeURIComponent(repoExternalId)}`, {
+        method: "POST",
+        body: JSON.stringify(spec),
+      }),
+    onSuccess: () => _invalidateRepo(qc, repoExternalId),
+  });
+}
+
+export function useRemoveTrigger(repoExternalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (bindingId: string) =>
+      apiFetch(`/api/repos/triggers/${bindingId}`, { method: "DELETE" }),
+    onSuccess: () => _invalidateRepo(qc, repoExternalId),
+  });
+}
