@@ -39,7 +39,7 @@ import type { ServerEvent } from "./types";
  *   ["tickets", ticket_id, "audit"], ["reviewer", "metrics"]
  * - `run_state_changed` → ["runs", ticket_id], ["runs", "overview", ticket_id],
  *   ["tickets", ticket_id] (status pill re-read)
- * - `stage_state_changed` → ["runs", ticket_id]
+ * - `stage_state_changed` → ["runs", ticket_id], ["runs", "stage-activity"] (flush cached blobs)
  * - `artifact_stored` → ["artifacts", ticket_id]
  * - `review_requested` | `review_started` | `review_completed` |
  *   `review_failed` | `review_superseded` → ["tickets"], ["tickets", "dashboard"]
@@ -169,6 +169,9 @@ function _handleEvent(evt: ServerEvent): void {
       break;
     case "stage_state_changed":
       if (tid) _scheduleInvalidate(["runs", tid]);
+      // Flush any cached stage-activity blobs — a just-completed stage now has
+      // a persisted blob where "no activity yet" was cached before.
+      _scheduleInvalidate(["runs", "stage-activity"]);
       break;
     case "artifact_stored":
       if (tid) _scheduleInvalidate(["artifacts", tid]);

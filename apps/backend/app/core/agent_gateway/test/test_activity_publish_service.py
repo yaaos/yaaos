@@ -116,5 +116,14 @@ async def test_ws_batch_publishes_workspace_activity_with_org_id(db_session) -> 
         await asyncio.wait_for(consumer, timeout=3.0)
 
         assert len(received) == 2
-        assert received[0] == {"kind": "agent.thought", "text": "thinking"}
-        assert received[1] == {"kind": "agent.tool_use", "tool": "Read"}
+        # WS batch events are normalized to {kind, ts, message, detail} before
+        # publishing so the workspace-activity channel has one frame shape
+        # regardless of transport.
+        assert received[0]["kind"] == "agent.thought"
+        assert received[0]["message"] == "thinking"  # "text" field maps to message
+        assert received[0]["detail"] == {}
+        assert "ts" in received[0]
+        assert received[1]["kind"] == "agent.tool_use"
+        assert received[1]["message"] == ""  # no text/message in this event
+        assert received[1]["detail"] == {"tool": "Read"}
+        assert "ts" in received[1]

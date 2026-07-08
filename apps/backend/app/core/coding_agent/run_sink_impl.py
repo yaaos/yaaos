@@ -1,9 +1,9 @@
 """Concrete implementation of `AgentRunSink`.
 
 Registered by `core/coding_agent.__init__` at import time.
-Fires only on `InvokeClaudeCode` terminal events — all other command kinds
-are silently no-ops so the sink can be registered without per-kind checks
-in `agent_gateway`.
+`handle_terminal_event` fires only on `InvokeClaudeCode` terminal events —
+all other command kinds are silently no-ops so the sink can be registered
+without per-kind checks in `agent_gateway`.
 
 On each terminal event the sink resolves the coding-agent plugin from the
 run row's `plugin_id`, calls `plugin.parse_result(outputs)` to derive a
@@ -11,6 +11,14 @@ run row's `plugin_id`, calls `plugin.parse_result(outputs)` to derive a
 via `finalize_run`. Returns `{"output": result.output, "error_message":
 result.error_message}` so agent_gateway can merge those keys into the
 run outputs.
+
+`handle_progress_event` fires on every non-terminal `progress` AgentEvent
+correlated to an `InvokeClaudeCode` run: resolves the plugin the same way,
+extracts the raw stream-json line from `outputs["stream_line"]`, maps it via
+`plugin.parse_activity_line`, and publishes the normalized frame to the
+workspace-activity SSE channel. This is the one place a live frame's shape
+is decided — the channel carries the same `{kind, ts, message, detail}`
+vocabulary regardless of which plugin produced it.
 """
 
 from __future__ import annotations
@@ -20,9 +28,11 @@ from uuid import UUID
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.agent_gateway import AgentEventEnrichment
+from app.core.agent_gateway import AgentEvent, AgentEventEnrichment
 from app.core.coding_agent.run_service import finalize_run, get_run_ref_for_command
 from app.core.coding_agent.service import PluginNotFoundError, get_plugin
+from app.core.database import session as db_session
+from app.core.sse import publish_workspace_activity
 
 log = structlog.get_logger("core.coding_agent.run_sink")
 
@@ -122,3 +132,49 @@ class CodingAgentRunSinkImpl:
             "error_message": result.error_message,
         }
         return enrichment
+
+    async def handle_progress_event(
+        self,
+        *,
+        org_id: UUID,
+        run_id: UUID,
+        event: AgentEvent,
+    ) -> None:
+        """Normalize + publish one live `progress` AgentEvent.
+
+        Resolves the plugin via the same `get_run_ref_for_command` lookup
+        `handle_terminal_event` uses (opens its own read-only session — this
+        is a pure read, no writes, no composition with a caller's transaction).
+        No-ops silently when: no run row exists for this command (not
+        `InvokeClaudeCode`, or no run yet); the plugin can't be resolved;
+        `outputs["stream_line"]` is missing or not a string; or
+        `plugin.parse_activity_line` returns `None` (line has no useful render).
+        """
+        async with db_session() as s:
+            run_ref = await get_run_ref_for_command(event.command_id, session=s)
+        if run_ref is None:
+            return
+
+        try:
+            plugin = get_plugin(run_ref.plugin_id)
+        except PluginNotFoundError:
+            log.warning(
+                "coding_agent.run_sink.progress_plugin_not_found",
+                command_id=str(event.command_id),
+                plugin_id=run_ref.plugin_id,
+            )
+            return
+
+        stream_line = event.outputs.get("stream_line")
+        if not isinstance(stream_line, str):
+            return
+
+        rendered = plugin.parse_activity_line(stream_line)
+        if rendered is None:
+            return
+
+        await publish_workspace_activity(
+            org_id=org_id,
+            run_id=run_id,
+            payload=rendered.model_dump(mode="json"),
+        )

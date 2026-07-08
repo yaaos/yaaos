@@ -13,6 +13,7 @@ import {
   useRuns,
   useStageActivity,
 } from "@core/api/public/queries";
+import { useRunActivityTail } from "@core/sse/public/run_activity";
 import { EmptyState } from "@shared/components/public/layout/empty-state";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
 import { Markdown } from "@shared/components/public/markdown";
@@ -39,7 +40,7 @@ import { Textarea } from "@shared/components/ui/textarea";
 import { ago } from "@shared/utils/public/ago";
 import { cn } from "@shared/utils/public/cn";
 import { GitBranch, ListChecks, Play, Wrench } from "lucide-react";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { ActivityEventRow } from "./ActivityEventRow";
 
@@ -178,7 +179,12 @@ function StageRow({
         </TableCell>
         <TableCell className="flex items-center gap-1 justify-end">
           {hasActivity && (
-            <Button variant="ghost" size="sm" onClick={() => setActivityOpen((o) => !o)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid={`stage-activity-toggle-${stage.stage_name}`}
+              onClick={() => setActivityOpen((o) => !o)}
+            >
               Activity
             </Button>
           )}
@@ -208,7 +214,11 @@ function StageRow({
               )}
             >
               <Suspense fallback={<Skeleton className="h-16 m-2" />}>
-                <StageActivityBody runId={runId} stageExecutionId={stage.id} />
+                <StageActivityBody
+                  runId={runId}
+                  stageExecutionId={stage.id}
+                  isRunning={stage.status === "running"}
+                />
               </Suspense>
             </ErrorBoundary>
           </TableCell>
@@ -230,6 +240,54 @@ function StageRow({
 }
 
 function StageActivityBody({
+  runId,
+  stageExecutionId,
+  isRunning,
+}: { runId: string; stageExecutionId: string; isRunning: boolean }) {
+  if (isRunning) {
+    return <LiveStageActivity runId={runId} />;
+  }
+  return <PersistedStageActivity runId={runId} stageExecutionId={stageExecutionId} />;
+}
+
+function LiveStageActivity({ runId }: { runId: string }) {
+  const { events, connected } = useRunActivityTail(runId);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  // Scroll to bottom after every render so new events are always visible.
+  // No dependency array — runs after every render. This is correct because
+  // LiveStageActivity only mounts while a stage is running; there is no
+  // work wasted on unrelated re-renders.
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  });
+
+  return (
+    <div
+      className="max-h-[300px] overflow-y-auto"
+      data-testid="stage-activity-live"
+      data-connected={connected ? "true" : "false"}
+    >
+      <p className="px-3 py-2 text-xs text-muted-foreground italic">
+        Streaming live. Earlier output appears when the stage completes.
+      </p>
+      {events.map((ev, i) => (
+        <ActivityEventRow
+          // biome-ignore lint/suspicious/noArrayIndexKey: live events carry no stable id
+          key={i}
+          event={{
+            ts: ev.ts,
+            kind: ev.kind,
+            message: ev.message || "(no message)",
+            detail: ev.detail ?? null,
+          }}
+        />
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
+
+function PersistedStageActivity({
   runId,
   stageExecutionId,
 }: { runId: string; stageExecutionId: string }) {

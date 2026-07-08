@@ -39,6 +39,7 @@ Per-endpoint authorization beyond bearer validity:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
@@ -535,8 +536,12 @@ async def activity_ws(websocket: WebSocket) -> None:
 
     Protocol:
       - **WorkspaceAgent → backend:** `{"type": "activity_batch", "run_id": "...", "events": [...]}`.
-        Backend publishes each event to the org-scoped channel via
-        `publish_workspace_activity(org_id, run_id, payload)`.
+        Each event is normalized inline to `{kind, ts, message, detail}` and
+        published via `publish_workspace_activity` so the workspace-activity
+        channel carries one consistent frame shape regardless of transport.
+        The WS path carries pre-rendered activity from the Go conductor
+        (not raw stream-json), so normalization happens here rather than
+        through the run sink.
       - **Backend → WorkspaceAgent:** `{"type": "subscribe", "workspace_id": "...", "run_id": "..."}` /
         `{"type": "unsubscribe", "workspace_id": "...", "run_id": "..."}`.
         Driven by the subscriber registry's 0→1 / 1→0 transitions.
@@ -590,13 +595,37 @@ async def activity_ws(websocket: WebSocket) -> None:
                                 keys=list(msg.keys()),
                             )
                             continue
-                        for event in events:
-                            if isinstance(event, dict):
-                                await publish_workspace_activity(
-                                    org_id=require_org_context(),
-                                    run_id=UUID(run_id),
-                                    payload=event,
-                                )
+                        # Normalize each WS batch event to {kind,ts,message,detail}
+                        # before publishing, so the workspace-activity channel
+                        # carries ONE frame shape regardless of transport (WS or
+                        # HTTP progress). WS batch events from the Go conductor
+                        # carry {kind, ...} but not the AgentEvent wire format,
+                        # so normalization is done inline here rather than through
+                        # the sink (which expects an AgentEvent object).
+                        run_uuid = UUID(run_id)
+                        batch_org_id = require_org_context()
+                        for raw_event in events:
+                            if not isinstance(raw_event, dict):
+                                continue
+                            kind_val = raw_event.get("kind", "unknown")
+                            ts_val = raw_event.get("ts") or datetime.now(UTC).isoformat()
+                            msg_val = raw_event.get("message") or raw_event.get("text") or ""
+                            detail_val = {
+                                k: v
+                                for k, v in raw_event.items()
+                                if k not in ("kind", "ts", "message", "text")
+                            }
+                            frame: dict = {
+                                "kind": kind_val,
+                                "ts": ts_val,
+                                "message": msg_val,
+                                "detail": detail_val,
+                            }
+                            await publish_workspace_activity(
+                                org_id=batch_org_id,
+                                run_id=run_uuid,
+                                payload=frame,
+                            )
                     else:
                         log.debug(
                             "agent_gateway.ws.unknown_kind",

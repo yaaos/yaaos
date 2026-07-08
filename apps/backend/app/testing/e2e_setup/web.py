@@ -15,6 +15,7 @@ from fastapi import Depends as _Depends
 from pydantic import BaseModel, Field
 
 from app.core.auth import public_route as _public_route
+from app.core.sse import publish_workspace_activity as _publish_workspace_activity
 from app.testing.e2e_setup import service
 
 router = APIRouter(dependencies=[_Depends(_public_route)])
@@ -358,3 +359,42 @@ async def delete_user_artifacts(user_id: UUID) -> dict[str, bool]:
     _guard_dev()
     await service.delete_user(user_id)
     return {"deleted": True}
+
+
+class _SeedRunningRunRequest(BaseModel):
+    org_slug: str = Field(..., min_length=1)
+    ticket_title: str = Field(..., min_length=1)
+    stage_name: str = Field(default="write-code", min_length=1)
+
+
+@router.post("/seed/running_run")
+async def seed_running_run_endpoint(req: _SeedRunningRunRequest) -> dict[str, str]:
+    """Seed a `running` pipeline run + `running` skill stage_execution for e2e specs
+    exercising the ticket page's live activity pane. See `service.seed_running_run`
+    for what's constructed and why."""
+    _guard_dev()
+    return await service.seed_running_run(
+        org_slug=req.org_slug, ticket_title=req.ticket_title, stage_name=req.stage_name
+    )
+
+
+class _PublishWorkspaceActivityRequest(BaseModel):
+    org_id: UUID
+    run_id: UUID
+    payload: dict
+
+
+@router.post("/publish/workspace_activity")
+async def publish_workspace_activity_endpoint(req: _PublishWorkspaceActivityRequest) -> dict[str, str]:
+    """Publish a pre-normalized `{kind,ts,message,detail}` frame directly to the
+    workspace-activity Redis channel for `(org_id, run_id)`. Used by e2e specs to
+    inject synthetic activity frames without a live coding-agent. The payload is
+    published verbatim — normalization (D2) is a separate concern with its own
+    service-test coverage."""
+    _guard_dev()
+    await _publish_workspace_activity(
+        org_id=req.org_id,
+        run_id=req.run_id,
+        payload=req.payload,
+    )
+    return {"status": "published"}

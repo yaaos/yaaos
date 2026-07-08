@@ -19,6 +19,8 @@ HTTP routes (prefix `/api/testing`):
 - `POST /seed/bootstrap_owner` — mint user + org + Owner membership.
 - `POST /seed/user_with_session` — bind a raw session cookie to an existing or new user.
 - `POST /seed/broken_integration` — `{org_slug, provider}`. Seeds a broken `mcp_credentials` row.
+- `POST /seed/running_run` — `{org_slug, ticket_title, stage_name}`. Seeds a pipeline run in `running` state with one `stage_executions` row in `running` status. Returns `{ticket_id, run_id, stage_execution_id, org_id}`.
+- `POST /publish/workspace_activity` — `{org_id, run_id, payload: {kind, ts, message, detail}}`. Publishes a synthetic normalized activity frame on `{org_id}:workspace_activity:{run_id}` so e2e specs can drive the live-tail SSE stream without a real agent.
 
 ## Module architecture
 
@@ -48,7 +50,7 @@ Always inserts; does not check for existing rows. Pair with a fresh `reset()` in
 
 ### Consumed by e2e specs
 
-`apps/e2e/tests/_helpers.ts` wraps routes via `resetStack`, `seedGithubInstall`, `seedLesson`. `resetStack` also calls `apps/fake-github/__test/reset` in parallel.
+`apps/e2e/tests/_helpers.ts` wraps routes via `resetStack`, `seedGithubInstall`, `seedLesson`, `seedRunningRun`, `publishWorkspaceActivity`. `resetStack` also calls `apps/fake-github/__test/reset` in parallel.
 
 ## Data owned
 

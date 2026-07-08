@@ -30,6 +30,25 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   };
 }
 
+// jsdom has no native `EventSource` — stub a no-op implementation so
+// components that open a workspace-activity stream (e.g. `InFlightCard`) don't
+// throw `ReferenceError: EventSource is not defined`. Tests that need to assert
+// on live frames install their own `FakeEventSource` over this stub per-test.
+if (typeof globalThis.EventSource === "undefined") {
+  class _StubEventSource {
+    onmessage: null = null;
+    onerror: null = null;
+    onopen: null = null;
+    close() {}
+    addEventListener() {}
+    removeEventListener() {}
+    dispatchEvent(_ev: Event): boolean {
+      return false;
+    }
+  }
+  (globalThis as unknown as { EventSource: unknown }).EventSource = _StubEventSource;
+}
+
 // Root `package.json`'s `pnpm.overrides` pins every shared Radix internal
 // package (`react-focus-scope`, `react-dismissable-layer`, `react-dialog`,
 // `react-presence`, `react-primitive`, …) to one resolved version

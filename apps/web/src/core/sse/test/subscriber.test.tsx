@@ -149,7 +149,7 @@ describe("server-event subscriber", () => {
     expect(invalidatedKeys).toContain(JSON.stringify(["tickets", "t1"]));
   });
 
-  it("invalidates only the runs key on stage_state_changed", () => {
+  it("invalidates the runs key and stage-activity prefix on stage_state_changed", () => {
     const qc = new QueryClient();
     const spy = vi.spyOn(qc, "invalidateQueries");
     attachQueryClient(qc);
@@ -160,9 +160,11 @@ describe("server-event subscriber", () => {
     es.emit({ kind: "stage_state_changed", ticket_id: "t1", run_id: "r1" });
     vi.advanceTimersByTime(250);
 
-    expect(spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey))).toEqual([
-      JSON.stringify(["runs", "t1"]),
-    ]);
+    const invalidatedKeys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    // Invalidates the run list so the stage row re-fetches its status.
+    expect(invalidatedKeys).toContain(JSON.stringify(["runs", "t1"]));
+    // Also invalidates the stage-activity prefix so persisted blobs re-fetch at terminal.
+    expect(invalidatedKeys).toContain(JSON.stringify(["runs", "stage-activity"]));
   });
 
   it("invalidates the artifacts key on artifact_stored", () => {

@@ -72,13 +72,13 @@ async def test_non_owned_run_yields_empty_stream(cross_org_seed, redis_or_skip) 
     hangs on close for infinite streams.
     """
     gen = _workspace_activity_stream(cross_org_seed["org_a"].org_id, cross_org_seed["foreign_run_id"])
-    # Drain the connect prelude (yielded before subscription) so the collector
-    # below waits on a real data frame, not the prelude.
+    # Drain the connect prelude.  The subscription is established BEFORE the
+    # prelude is sent (see _workspace_activity_stream), so no sleep is needed
+    # before publishing — but we keep asyncio.sleep(0.1) below for clarity.
     prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
     assert prelude.startswith(":"), f"expected comment prelude first; got {prelude!r}"
     collector = asyncio.create_task(gen.__anext__())
-    # Yield control to let the subscription register, then publish to a
-    # different org's channel for the same run_id id — should NOT reach the stream.
+    # Publish to a different org's channel for the same run_id — should NOT reach the stream.
     await asyncio.sleep(0.1)
     await publish_workspace_activity(
         org_id=uuid.uuid4(),
@@ -104,14 +104,15 @@ async def test_workspace_activity_endpoint_streams_org_scoped(redis_or_skip) -> 
     run_id = uuid.uuid4()
 
     gen = _workspace_activity_stream(org_id, run_id)
-    # Drain the connect prelude (yielded before subscription) so the collector
-    # below waits on the first real data frame.
+    # Drain the connect prelude.  The subscription is established BEFORE the
+    # prelude is sent (see _workspace_activity_stream), so by the time we
+    # get the prelude the Redis SUBSCRIBE is already confirmed.
     prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
     assert prelude.startswith(":"), f"expected comment prelude first; got {prelude!r}"
     collector = asyncio.create_task(gen.__anext__())
-    # Yield control so the generator registers its Redis subscription before
-    # we publish — Redis pub/sub is fire-and-forget; earlier publishes drop.
-    await asyncio.sleep(0.1)
+    # No sleep needed — subscription is already established.  Keep a short
+    # yield so the asyncio event loop can schedule the collector task.
+    await asyncio.sleep(0)
 
     payload = {"kind": "agent_event", "id": str(uuid.uuid4()), "body": "hello"}
     await publish_workspace_activity(

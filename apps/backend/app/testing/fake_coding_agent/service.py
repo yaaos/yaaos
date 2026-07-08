@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.coding_agent import (
+    ActivityEvent,
     ActivityLog,
     Invocation,
     InvokeCodingAgent,
@@ -68,6 +70,20 @@ class FakeCodingAgentPlugin:
     def byok_requirement(self) -> str | None:
         """Fake implementation — stateless, needs no byok key."""
         return None
+
+    def parse_activity_line(self, line: str) -> ActivityEvent | None:
+        """Deterministic fake mapping: every non-blank line renders as an
+        `assistant_message` event; blank lines render nothing."""
+        text = line.strip()
+        if not text:
+            return None
+        return ActivityEvent(
+            seq=0,
+            ts=datetime.now(UTC),
+            kind="assistant_message",
+            message=text,
+            detail={},
+        )
 
 
 @contextmanager

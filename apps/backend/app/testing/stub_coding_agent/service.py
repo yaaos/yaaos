@@ -115,6 +115,20 @@ class StubCodingAgentPlugin:
             activity=_canned_activity_log(),
         )
 
+    def parse_activity_line(self, line: str) -> ActivityEvent | None:
+        """Deterministic stub mapping: every non-blank line renders as an
+        `assistant_message` event; blank lines render nothing."""
+        text = line.strip()
+        if not text:
+            return None
+        return ActivityEvent(
+            seq=0,
+            ts=datetime.now(UTC),
+            kind="assistant_message",
+            message=text,
+            detail={},
+        )
+
 
 def wrap_all_registered_plugins() -> int:
     """Replace every registered coding-agent plugin with a stub wrapping it.

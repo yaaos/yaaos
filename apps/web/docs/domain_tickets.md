@@ -28,7 +28,7 @@ Three tabs: **Overview** (default), **Runs**, **Artifacts**. Each tab body is wr
 `useRunOverview(ticketId)` — a plain (non-Suspense) query; a 404 resolves to `null` (a legitimate "no run yet" empty state, not an error). Branches on `RunOverview.status`:
 
 - **`paused`** — the attention block: tripped-condition badges, the pausing stage's artifact in a `<details>` disclosure (`useArtifactVersion`), open residual findings, and four actions — Approve, Instruct (+ `Textarea`), Send back (+ `Select` of earlier skill/review stage names, sourced from the ticket's current run via `useRuns`), and Kill (destructive, behind `ConfirmModal` — "Kill run?" / "This can't be undone."). All four disabled with a `pause-waiting-on` "Waiting on {escalation logins}." line when the server-sent `PauseDetail.can_respond` is `false` — no client role math; `resolve_pause`'s own authorization (escalation set ∪ org admins) is the sole source of truth.
-- **`in_flight`** — a live card naming the pipeline + current stage, with a Cancel action behind `ConfirmModal` ("Cancel run?").
+- **`in_flight`** — a live card naming the pipeline + current stage, with a Cancel action behind `ConfirmModal` ("Cancel run?"). Also shows a `data-testid="overview-live-ticker"` line when at least one activity frame has arrived for the run's current stage — displays the most recent frame's `message`. Clicking the ticker switches to the Runs tab. The `in_flight` branch also carries `data-connected="true"|"false"` on the `attention-block` element (driven by `useRunActivityTail.connected` / EventSource `onopen`).
 - **`terminal`** — an outcome card: state + a PR link when `RunOutcome.pr_url` is set, else a mono `failure_reason`.
 
 The card always carries `data-testid="attention-block"` with `data-state` set to `paused` / `in_flight` / the terminal run state (`completed`/`failed`/`killed`/`cancelled`) — one selector regardless of branch.
@@ -38,7 +38,9 @@ The card always carries `data-testid="attention-block"` with `data-state` set to
 `useRuns(ticketId)` (Suspense) — every run for the ticket, newest first. One `<details>` card per run (`run-card-${id}`, newest open by default) containing a dense `Table` of that run's stage executions:
 
 - Columns: stage name (kind icon), status, confidence badge, review iterations, boundary outcome, decisions (inline `action by actor · ago`) + mono `failure_reason`, and a row-action cell.
-- **Activity** toggle (skill/review stages only) expands a second table row rendering the persisted coding-agent activity blob (`useStageActivity(runId, stageExecutionId)` → `ActivityEventRow` list) — lazy-fetched only once expanded.
+- **Activity** toggle (skill/review stages only, `data-testid="stage-activity-toggle-${stageName}"`) expands a second table row with two branches:
+  - **Running stage** — `data-testid="stage-activity-live"`: live-tail pane subscribed to the workspace-activity SSE stream via `useRunActivityTail(runId)`; appends `ActivityEventRow`s as frames arrive; auto-scrolls to bottom; shows "Streaming live" until the first frame. Also carries `data-connected="true"|"false"` (driven by `useRunActivityTail.connected` / EventSource `onopen`) — `"true"` once the backend's Redis subscription is confirmed. Connects immediately on accordion open; disconnects on accordion close (component unmount) or stage completion.
+  - **Terminal stage** — calls `useStageActivity(runId, stageExecutionId)` (Suspense, lazy-fetched on open) and renders the persisted `ActivityLog.events` as `ActivityEventRow`s. Shows "No activity recorded." when `events` is empty or the blob is absent.
 - **Artifact** button (rows that produced one) opens a right `Sheet` with the latest version's rendered `Markdown` body.
 - **Instruct & re-run** button (completed skill/review rows) opens a `Dialog` + `Textarea` → `useRerunFromStage(ticketId)` → `POST /api/pipelines/runs/rerun`.
 
@@ -48,7 +50,7 @@ The card always carries `data-testid="attention-block"` with `data-state` set to
 
 Header: title + status pill. No page-level Cancel/Kill — those actions live inside the Overview tab's per-state card, scoped to the run/pause they act on.
 
-Live updates: `run_state_changed` SSE invalidates `["runs", ticketId]` + `["runs","overview",ticketId]` + `["tickets", ticketId]`; `stage_state_changed` invalidates `["runs", ticketId]`; `artifact_stored` invalidates `["artifacts", ticketId]`. No polling fallback.
+Live updates: `run_state_changed` SSE invalidates `["runs", ticketId]` + `["runs","overview",ticketId]` + `["tickets", ticketId]`; `stage_state_changed` invalidates `["runs", ticketId]` + `["runs","stage-activity"]` prefix (so the persisted blob refetches when a stage completes); `artifact_stored` invalidates `["artifacts", ticketId]`. No polling fallback.
 
 ## Standalone composites
 
@@ -66,5 +68,6 @@ Router imports each directly by path; no barrel.
 - `test/use-tickets-filters.test.ts` — unit: pure hook logic (status toggle, repo filter, query filter, myOnly, pagination, repoOptions merge).
 - `test/tickets-list.test.tsx` — component/MSW: filter chips render, empty state.
 - `test/ticket-detail.test.tsx` — component/MSW: title, status pill, tab strip; Overview's three `RunOverview.status` branches (paused / in_flight / terminal); the disabled-actions "Waiting on {names}." state when `can_respond` is `false`; switching to the Runs tab renders a stage row.
+- `test/live-activity.test.tsx` — component/MSW: `stage-activity-live` renders when the stage is running and the Activity accordion is opened; persisted branch ("No activity recorded.") renders when the stage is completed; `overview-live-ticker` appears with the most recent frame message; ticker hidden when no frames arrived.
 - `test/activity-event-row.test.tsx` — component: icon-by-kind mapping, long-message collapse.
-- Page composition (browser-visible): `apps/e2e/tests/pipeline-run-overview.spec.ts` (attention block, live SSE-driven pause resolution, role-gated actions), `apps/e2e/tests/pipeline-run-tabs.spec.ts` (Runs tab stage rows, Artifacts tab version dropdown).
+- Page composition (browser-visible): `apps/e2e/tests/pipeline-run-overview.spec.ts` (attention block, live SSE-driven pause resolution, role-gated actions), `apps/e2e/tests/pipeline-run-tabs.spec.ts` (Runs tab stage rows, Artifacts tab version dropdown), `apps/e2e/tests/pipeline-live-activity.spec.ts` (live activity rows appear in `stage-activity-live` without reload; overview ticker shows message + switches to Runs tab).

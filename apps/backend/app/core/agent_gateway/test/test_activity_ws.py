@@ -139,10 +139,17 @@ async def test_activity_batch_fans_out_to_sse() -> None:
         await asyncio.to_thread(_send_batch)
         await asyncio.wait_for(consumer, timeout=2)
 
-        assert received == [
-            {"kind": "agent.thought", "text": "hello"},
-            {"kind": "agent.tool_use", "tool": "Read"},
-        ]
+        # WS batch events are normalized to {kind, ts, message, detail} before
+        # publishing — "text" maps to "message", extra fields go into "detail".
+        assert len(received) == 2
+        assert received[0]["kind"] == "agent.thought"
+        assert received[0]["message"] == "hello"
+        assert received[0]["detail"] == {}
+        assert "ts" in received[0]
+        assert received[1]["kind"] == "agent.tool_use"
+        assert received[1]["message"] == ""
+        assert received[1]["detail"] == {"tool": "Read"}
+        assert "ts" in received[1]
 
 
 @pytest.mark.asyncio

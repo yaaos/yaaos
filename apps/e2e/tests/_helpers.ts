@@ -95,6 +95,56 @@ export async function seedPausedRun(opts: {
   };
 }
 
+/**
+ * Seed a `running` pipeline run with one `running` skill stage_execution —
+ * no live coding-agent required. Lets e2e specs exercise the Runs-tab live
+ * activity pane and Overview in-flight card deterministically.
+ *
+ * Returns the seeded ticket/run/stage-execution ids.
+ */
+export async function seedRunningRun(opts: {
+  orgSlug: string;
+  ticketTitle: string;
+  stageName?: string;
+}): Promise<{ ticket_id: string; run_id: string; stage_execution_id: string; org_id: string }> {
+  const r = await fetch(`${YAAOS_URL}/api/testing/seed/running_run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      org_slug: opts.orgSlug,
+      ticket_title: opts.ticketTitle,
+      stage_name: opts.stageName ?? "write-code",
+    }),
+  });
+  if (!r.ok) {
+    throw new Error(`seedRunningRun → ${r.status}: ${await r.text()}`);
+  }
+  return (await r.json()) as {
+    ticket_id: string;
+    run_id: string;
+    stage_execution_id: string;
+    org_id: string;
+  };
+}
+
+/**
+ * Inject a pre-normalized `{kind,ts,message,detail}` activity frame directly
+ * onto the workspace-activity Redis channel for the given `(orgId, runId)`.
+ * Used by e2e specs to simulate live agent output without a live coding-agent.
+ * The backend publishes the payload verbatim — no further normalization occurs.
+ */
+export async function publishWorkspaceActivity(opts: {
+  orgId: string;
+  runId: string;
+  payload: { kind: string; ts: string; message: string; detail: Record<string, unknown> | null };
+}): Promise<void> {
+  await jsonPost(`${YAAOS_URL}/api/testing/publish/workspace_activity`, {
+    org_id: opts.orgId,
+    run_id: opts.runId,
+    payload: opts.payload,
+  });
+}
+
 /** Seed the `skill_name` for a connected repo. Used by e2e specs that render
  *  the Code Connect settings page and expect a non-null skill_name. The
  *  column is reserved for a future per-repo skill override — no dispatch

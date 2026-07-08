@@ -211,6 +211,18 @@ class CodingAgentPlugin(Protocol):
         """
         ...
 
+    def parse_activity_line(self, line: str) -> ActivityEvent | None:
+        """Map ONE stream line from a `progress` AgentEvent into a renderable
+        `ActivityEvent`, or `None` when the line has no useful render.
+
+        Pure function — no IO, no session. Never raises: an unparseable or
+        unrenderable line returns `None` rather than an error, since a single
+        bad line must not interrupt the live tail. `seq` on the returned
+        event is not meaningful (a single line carries no run-wide ordering
+        context) and callers must not rely on it.
+        """
+        ...
+
     def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:
         """Validate the raw settings dict and return the normalized dict.
 

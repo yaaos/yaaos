@@ -23,7 +23,7 @@ depends_on = ["app.core.audit_log", "app.core.database", "app.core.secrets"]
 
 [[modules]]
 path = "app.core.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.byok", "app.core.database", "app.core.tasks", "app.core.workspace"]
+depends_on = ["app.core.agent_gateway", "app.core.byok", "app.core.database", "app.core.sse", "app.core.tasks", "app.core.workspace"]
 
 [[modules]]
 path = "app.core.config"
@@ -275,6 +275,7 @@ expose = [
   "register_report_sink",
   "register_run_sink",
   "requeue_stale_claimed",
+  "resolve_run_route",
   "retire_command",
   "revoke_all_for_agent",
   "revoke_all_for_arn",
@@ -606,6 +607,7 @@ expose = [
   "publish_general",
   "publish_general_after_commit",
   "publish_workspace_activity",
+  "register_activity_subscriber_lifecycle",
   "serialize_for_sse",
   "set_shutdown_event_for_tests",
   "shutdown",

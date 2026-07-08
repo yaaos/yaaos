@@ -370,6 +370,43 @@ async def get_command_run_id(
     return row[0]
 
 
+async def resolve_run_route(
+    run_id: UUID,
+    *,
+    session: AsyncSession,
+) -> tuple[UUID, UUID] | None:
+    """Return `(workspace_id, agent_id)` for the given pipeline run, or `None`.
+
+    Reads the run's most recent `agent_commands` row that carries BOTH a
+    `workspace_id` and an `agent_id` (ordered by the UUIDv7 PK, which is
+    time-ordered — mirrors `claim_next`'s FIFO ordering convention). Used by
+    the workspace-activity SSE stream's `on_attach` lifecycle hook to route a
+    `SubscriberRegistry.track` call. Returns `None` when no such row exists
+    (e.g. no `InvokeClaudeCode` command has been dispatched yet for this run,
+    or the run's dispatched commands are all agent-scoped) — the caller
+    treats that as "no route to gate on", not an error.
+
+    Pure read — no writes. Caller owns session lifecycle.
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    row = (
+        await session.execute(
+            select(AgentCommandRow.workspace_id, AgentCommandRow.agent_id)
+            .where(
+                AgentCommandRow.run_id == run_id,
+                AgentCommandRow.workspace_id.isnot(None),
+                AgentCommandRow.agent_id.isnot(None),
+            )
+            .order_by(AgentCommandRow.id.desc())
+            .limit(1)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return (row[0], row[1])
+
+
 async def _build_agent_config(
     org_id: UUID,
     *,
@@ -1069,23 +1106,38 @@ async def record_agent_event(
     if not event.is_terminal():
         # Non-terminal events (progress) skip run-engine resumption —
         # only `completed_*` events resume the run state machine.
-        # Republish to the org-scoped workspace-activity channel so the SPA's
-        # SSE live-tail picks them up. Skipped when the command has no
-        # run correlation (agent-scoped ConfigUpdate has no live-tail
-        # subscriber to fan out to).
+        # Delegate to the registered run sink so it can normalize the raw
+        # stream-json line into the renderable `{kind, ts, message, detail}`
+        # shape before publishing to the workspace-activity channel. Skipped
+        # when the command has no run correlation (agent-scoped ConfigUpdate
+        # has no live-tail subscriber to fan out to). A sink failure never
+        # breaks event recording — recorded on the active span and logged,
+        # not re-raised.
         log.debug(
             "agent.event.progress",
             command_id=str(event.command_id),
         )
         if holder_run_id is not None:
+            from app.core.agent_gateway.run_sink import get_run_sink  # noqa: PLC0415
             from app.core.auth import require_org_context  # noqa: PLC0415
-            from app.core.sse import publish_workspace_activity  # noqa: PLC0415
 
-            await publish_workspace_activity(
-                org_id=require_org_context(),
-                run_id=holder_run_id,
-                payload=event.model_dump(mode="json"),
-            )
+            sink = get_run_sink()
+            if sink is not None:
+                try:
+                    await sink.handle_progress_event(
+                        org_id=require_org_context(),
+                        run_id=holder_run_id,
+                        event=event,
+                    )
+                except Exception as exc:
+                    span = trace.get_current_span()
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR, str(exc)))
+                    log.warning(
+                        "agent.event.progress_sink_failed",
+                        command_id=str(event.command_id),
+                        error=str(exc),
+                    )
         return
 
     # ConfigUpdate completed_success → CAS-flip lifecycle unconfigured → active.

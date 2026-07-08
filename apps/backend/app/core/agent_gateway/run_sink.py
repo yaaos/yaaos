@@ -14,8 +14,11 @@ command kinds are silently no-ops at the implementation level.
 
 from __future__ import annotations
 
-from typing import Protocol, TypedDict
+from typing import TYPE_CHECKING, Protocol, TypedDict
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from app.core.agent_gateway.types import AgentEvent
 
 
 class AgentEventEnrichment(TypedDict, total=False):
@@ -63,6 +66,27 @@ class AgentRunSink(Protocol):
         that replaces raw `stdout` downstream) and `error_message` (structured
         error text; `None` when none). Return `None` to leave `outputs`
         unchanged.
+        """
+        ...
+
+    async def handle_progress_event(
+        self,
+        *,
+        org_id: UUID,
+        run_id: UUID,
+        event: AgentEvent,
+    ) -> None:
+        """Handle a non-terminal (`progress`) AgentEvent.
+
+        `run_id` is the pipeline run this command resumes (`agent_commands.run_id`
+        — the same id the workspace-activity SSE channel is keyed on). Implementations
+        resolve the coding-agent plugin for `event.command_id`, extract the raw
+        stream-json line from `event.outputs["stream_line"]`, call
+        `plugin.parse_activity_line(line)`, and — on a non-`None` result — publish
+        the normalized `{kind, ts, message, detail}` frame to the workspace-activity
+        channel via `core/sse.publish_workspace_activity`. No-ops silently when the
+        command has no correlated run (not `InvokeClaudeCode`, or the plugin can't be
+        resolved) or when `parse_activity_line` returns `None`.
         """
         ...
 

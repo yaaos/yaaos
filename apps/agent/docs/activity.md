@@ -9,6 +9,7 @@
 - **Receives:** raw WS bytes from the supervisor's read loop (subscribe/unsubscribe frames) and `AgentEvent` values from dispatched workspace commands.
 - **Emits:** encoded `activity_batch` JSON frames via the injected `SendFunc`; send errors are logged and dropped — the supervisor owns retry and reconnect.
 - **Hands to:** `SendFunc` (caller-supplied callback); `internal/protocol.AgentEvent` (imported from the wire-DTO leaf).
+- **Reachability:** this whole path runs only when `supervisor.Config.ActivityWSURL` is set; `cmd/agent/main.go` never populates it, so production agents ship progress events over HTTP `PostCommandEvent` instead (the supervisor's `progressForwarder` fallback) and this package is exercised by tests only.
 
 ## Why / invariants
 

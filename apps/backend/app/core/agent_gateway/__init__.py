@@ -79,6 +79,7 @@ from app.core.agent_gateway.service import (
     record_workspace_event,
     register_agent_event_consumer,
     requeue_stale_claimed,
+    resolve_run_route,
     retire_command,
     shutdown_agents,
     stale_agent_ids,
@@ -207,6 +208,7 @@ __all__ = [
     "register_report_sink",
     "register_run_sink",
     "requeue_stale_claimed",
+    "resolve_run_route",
     "retire_command",
     "revoke_all_for_agent",
     "revoke_all_for_arn",
@@ -221,3 +223,22 @@ __all__ = [
 
 # shutdown() is registered with register_web_shutdown_hook in subscribers.py
 # at module import time — no second registration needed here.
+
+# Wire the demand-pull subscriber lifecycle into core/sse. core/sse cannot
+# import agent_gateway (that edge would cycle — agent_gateway already imports
+# sse to publish activity frames), so the registration flows in this direction:
+# agent_gateway imports sse and registers three callables that sse/web.py
+# calls on every workspace-activity SSE stream attach, heartbeat, and detach.
+# Pattern mirrors domain/repos.register_pipeline_lookup and core/byok.register_validator.
+from app.core.agent_gateway.lifecycle_hooks import (
+    on_attach,
+    on_detach,
+    on_heartbeat,
+)
+from app.core.sse import register_activity_subscriber_lifecycle
+
+register_activity_subscriber_lifecycle(
+    on_attach=on_attach,
+    on_heartbeat=on_heartbeat,
+    on_detach=on_detach,
+)

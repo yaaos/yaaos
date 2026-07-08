@@ -302,37 +302,34 @@ async def test_progress_event_does_not_advance_pipeline_run(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_progress_event_publishes_to_sse(db_session, redis_or_skip) -> None:
-    """Progress AgentEvents posted via HTTP get republished to the org-scoped
-    workspace-activity channel so the SPA's live-tail picks them up."""
+async def test_progress_event_does_not_publish_without_correlated_run(db_session, redis_or_skip) -> None:
+    """Progress AgentEvents with no correlated coding_agent_runs row do NOT
+    publish anything to the workspace-activity SSE channel.
+
+    The live-tail is gated on a correlated run: the run sink looks up
+    `coding_agent_runs.command_id` to resolve plugin + run_id before delegating
+    to `parse_activity_line`. With no row, publish is skipped entirely — there
+    is no run_id to scope the channel publish.
+    """
     from app.core.audit_log import ActorKind  # noqa: PLC0415
     from app.core.auth import org_context  # noqa: PLC0415
-    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import subscribe_workspace_activity  # noqa: PLC0415
-
-    await redis_shutdown()
-    # pubsub_isolation (autouse) already bound a fresh instance; redis_shutdown
-    # just called aclose() on it (which clears local subscriber counts). The
-    # instance is still usable for new subscriptions after aclose().
 
     ws = await _seed_workspace(db_session)
     cmd_id = ws["command_id"]
     run_id = ws["run_id"]
     org_id = ws["org_id"]
 
-    # Open an SSE subscriber on the org-scoped channel BEFORE posting the event.
+    # Subscribe to the channel. A publish would arrive here.
     sub = subscribe_workspace_activity(org_id, run_id)
     received: list[dict] = []
 
     async def _drain() -> None:
         async for evt in sub:
             received.append(evt)
-            if len(received) >= 1:
-                return
 
     drainer = asyncio.create_task(_drain())
-    # Yield once so the subscriber registers before the publish fires.
-    await asyncio.sleep(0)
+    await asyncio.sleep(0)  # let subscriber register
 
     event = AgentEvent(
         command_id=cmd_id,
@@ -344,17 +341,18 @@ async def test_progress_event_publishes_to_sse(db_session, redis_or_skip) -> Non
     async with org_context(org_id, ActorKind.WORKSPACE):
         await record_agent_event(event, session=db_session)
     await db_session.commit()
-    try:
-        await asyncio.wait_for(drainer, timeout=2.0)
-    except TimeoutError as exc:
-        drainer.cancel()
-        raise AssertionError("progress event never reached the SSE channel") from exc
 
-    assert len(received) == 1, f"expected one event on the channel, got {received}"
-    got = received[0]
-    assert got["kind"] == "progress"
-    assert got["command_id"] == str(cmd_id)
-    assert got["outputs"]["stream_line"] == '{"type":"tool_use"}'
+    # Wait a moment — if anything was published it would arrive quickly.
+    await asyncio.sleep(0.3)
+    drainer.cancel()
+    try:
+        await drainer
+    except asyncio.CancelledError:
+        pass
+
+    assert received == [], (
+        f"progress event for a command with no correlated run should not publish to SSE; got: {received}"
+    )
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,7 @@ import {
   useRunOverview,
   useRuns,
 } from "@core/api/public/queries";
+import { useRunActivityTail } from "@core/sse/public/run_activity";
 import { ConfirmModal } from "@shared/components/public/layout/confirm-modal";
 import { EmptyState } from "@shared/components/public/layout/empty-state";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
@@ -37,11 +38,15 @@ import {
 } from "@shared/components/ui/select";
 import { Skeleton } from "@shared/components/ui/skeleton";
 import { Textarea } from "@shared/components/ui/textarea";
+import { ago } from "@shared/utils/public/ago";
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, XCircle } from "lucide-react";
 import { Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 
-export function OverviewTab({ ticketId }: { ticketId: string }) {
+export function OverviewTab({
+  ticketId,
+  onShowRuns,
+}: { ticketId: string; onShowRuns: () => void }) {
   const { data: overview, isLoading, isError } = useRunOverview(ticketId);
 
   if (isLoading) {
@@ -78,7 +83,7 @@ export function OverviewTab({ ticketId }: { ticketId: string }) {
     );
   }
   if (overview.status === "in_flight" && overview.run) {
-    return <InFlightCard ticketId={ticketId} run={overview.run} />;
+    return <InFlightCard ticketId={ticketId} run={overview.run} onShowRuns={onShowRuns} />;
   }
   if (overview.status === "terminal" && overview.outcome) {
     return <OutcomeCard outcome={overview.outcome} />;
@@ -259,16 +264,22 @@ function PauseArtifact({ artifactId }: { artifactId: string }) {
   );
 }
 
-function InFlightCard({ ticketId, run }: { ticketId: string; run: PipelineRunView }) {
+function InFlightCard({
+  ticketId,
+  run,
+  onShowRuns,
+}: { ticketId: string; run: PipelineRunView; onShowRuns: () => void }) {
   const cancel = useCancelRun(ticketId);
   const [showCancel, setShowCancel] = useState(false);
   const currentStage = run.stages[run.stages.length - 1];
+  const { lastEvent, connected } = useRunActivityTail(run.id);
 
   return (
     <div
       className="rounded-md border border-info/40 bg-info/5 p-4"
       data-testid="attention-block"
       data-state="in_flight"
+      data-connected={connected ? "true" : "false"}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -282,6 +293,18 @@ function InFlightCard({ ticketId, run }: { ticketId: string; run: PipelineRunVie
           Cancel
         </Button>
       </div>
+
+      {lastEvent && (
+        <button
+          type="button"
+          className="mt-2 w-full text-left text-xs text-muted-foreground hover:text-foreground transition-colors"
+          data-testid="overview-live-ticker"
+          onClick={onShowRuns}
+        >
+          <span className="line-clamp-1">{lastEvent.message}</span>
+          <span className="ml-1 text-muted-foreground/70">{ago(lastEvent.ts)}</span>
+        </button>
+      )}
 
       <ConfirmModal
         open={showCancel}

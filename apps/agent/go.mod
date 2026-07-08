@@ -2,7 +2,7 @@ module github.com/yaaos/agent
 
 go 1.25.0
 
-toolchain go1.26.4
+toolchain go1.26.5
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.9

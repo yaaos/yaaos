@@ -585,6 +585,27 @@ class ClaudeCodePlugin:
             activity=activity,
         )
 
+    def parse_activity_line(self, line: str) -> ActivityEvent | None:
+        """Map one stream-json line from a live `progress` AgentEvent into a
+        renderable `ActivityEvent`, reusing `_render_activity` — the exact
+        per-line mapping `parse_result`/`_render_activity_log` apply at
+        finalize, so live and persisted views never diverge in taxonomy.
+
+        Returns `None` for unparseable JSON, a non-dict line, or a line with
+        no useful render (same null cases as `_render_activity`). `seq` is
+        always 0 — a single line carries no run-wide ordering context.
+        """
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(event, dict):
+            return None
+        rendered = _render_activity(event)
+        if rendered is None:
+            return None
+        return ActivityEvent(**{**rendered, "seq": 0})
+
 
 _plugin = ClaudeCodePlugin()
 

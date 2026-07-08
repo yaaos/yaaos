@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — four methods (`compile_invocation`, `byok_requirement`, `parse_result`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — five methods (`compile_invocation`, `byok_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
@@ -25,6 +25,10 @@ Returns `"anthropic"` — the BYOK `provider_id` this plugin needs. Called by `c
 ### `parse_result`
 
 Takes a terminal AgentEvent `outputs` dict. Reads `stdout` and `exit_code`. Delegates to `_parse_usage(stdout)` and `_render_activity_log(stdout)` internally. Reads `duration_ms` from the terminal `type=result` stream event inside stdout. Returns `RunResult{output, error_message=None, usage, duration_ms, exit_code, activity}`. Never raises on missing keys.
+
+### `parse_activity_line`
+
+Decodes one raw `stream-json` newline into a normalized `ActivityEvent | None`. Blank lines return `None`. Parseable events map to `ActivityEvent.kind` via the same `_render_activity` helper used by `parse_result`'s `_render_activity_log` — but operates on a single line, not the full stdout blob. Unrecognized event types produce `kind="unknown"` with the raw line as `message`. Used by `CodingAgentRunSinkImpl.handle_progress_event` to normalize live `progress` AgentEvent frames before publishing to the workspace-activity SSE channel.
 
 ### `validate_settings`
 
