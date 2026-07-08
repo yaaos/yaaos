@@ -498,6 +498,111 @@ export function useArtifactVersion(artifact_id: string | null) {
   });
 }
 
+// ── Pipeline definitions (Org Settings > Pipelines page) ────────────────────
+
+export type PipelineSummaryView = components["schemas"]["PipelineSummary"];
+export type PipelineDetailView = components["schemas"]["PipelineDetailResponse"];
+export type PipelineDefinitionBody = components["schemas"]["PipelineDefinition"];
+export type StageView = PipelineDetailView["stages"][number];
+export type PipelineTemplateView = components["schemas"]["TemplateResponse"];
+export type ActionInfoView = components["schemas"]["ActionInfo"];
+
+/** Org's pipeline definitions, unflattened (a `call` stage counts as one). */
+export function usePipelines() {
+  return useSuspenseQuery<PipelineSummaryView[]>({
+    queryKey: ["pipelines"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ pipelines: PipelineSummaryView[] }>("/api/pipelines");
+      return resp.pipelines;
+    },
+  });
+}
+
+/** One pipeline's full definition. `enabled` gates the fetch — callers
+ *  fetch lazily, e.g. only once the pipeline's Accordion row is expanded. */
+export function usePipelineDetail(pipelineId: string, opts: { enabled: boolean }) {
+  return useQuery<PipelineDetailView>({
+    queryKey: ["pipelines", pipelineId],
+    queryFn: () => apiFetch<PipelineDetailView>(`/api/pipelines/${pipelineId}`),
+    enabled: opts.enabled,
+  });
+}
+
+/** The shipped, code-defined pipeline templates ("New from template" picker). */
+export function usePipelineTemplates() {
+  return useSuspenseQuery<PipelineTemplateView[]>({
+    queryKey: ["pipeline-templates"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ templates: PipelineTemplateView[] }>(
+        "/api/pipelines/templates",
+      );
+      return resp.templates;
+    },
+  });
+}
+
+function _invalidatePipelines(qc: ReturnType<typeof useQueryClient>): void {
+  qc.invalidateQueries({ queryKey: ["pipelines"] });
+}
+
+export function useCreatePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (definition: PipelineDefinitionBody) =>
+      apiFetch<{ id: string }>("/api/pipelines", {
+        method: "POST",
+        body: JSON.stringify(definition),
+      }),
+    onSuccess: () => _invalidatePipelines(qc),
+  });
+}
+
+export function useCreatePipelineFromTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) =>
+      apiFetch<{ id: string }>("/api/pipelines/from-template", {
+        method: "POST",
+        body: JSON.stringify({ template_id: templateId }),
+      }),
+    onSuccess: () => _invalidatePipelines(qc),
+  });
+}
+
+export function useUpdatePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; definition: PipelineDefinitionBody }) =>
+      apiFetch<PipelineDetailView>(`/api/pipelines/${vars.id}`, {
+        method: "PUT",
+        body: JSON.stringify(vars.definition),
+      }),
+    onSuccess: (_data, vars) => {
+      _invalidatePipelines(qc);
+      qc.invalidateQueries({ queryKey: ["pipelines", vars.id] });
+    },
+  });
+}
+
+export function useDeletePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/pipelines/${id}`, { method: "DELETE" }),
+    onSuccess: () => _invalidatePipelines(qc),
+  });
+}
+
+/** `GET /api/actions` — the Pipelines page's "Add an action" stage picker. */
+export function useActions() {
+  return useSuspenseQuery<ActionInfoView[]>({
+    queryKey: ["actions"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ actions: ActionInfoView[] }>("/api/actions");
+      return resp.actions;
+    },
+  });
+}
+
 export interface LessonsFilter {
   /** Repo full-names; when present each is sent as a separate
    * `repo_external_id=…` query parameter. */

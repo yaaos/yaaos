@@ -12,6 +12,11 @@ import type React from "react";
  * Kept as a component (rather than removed entirely) so per-tab role gating
  * and any future shared chrome land in one place. The `active` prop is now
  * informational only — preserved for callers but unused.
+ *
+ * Lives in `shared/` (not `domain/org_settings/`) because a second domain
+ * module (`domain/pipeline_settings`) needs the same shell — cross-domain
+ * imports are forbidden, so this graduated per the rule-of-three in
+ * apps/web/docs/components.md.
  */
 export function OrgSettingsLayout({
   active: _active,

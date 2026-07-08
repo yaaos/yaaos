@@ -129,3 +129,25 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   if (r.status === 204) return undefined as T;
   return (await r.json()) as T;
 }
+
+/**
+ * Extracts the backend's `{"detail": {"error": "<code>"}}` error code from an
+ * `apiFetch` rejection. Backend handlers raise `HTTPException(status_code,
+ * detail={"error": code})` for domain-specific 4xx outcomes (e.g.
+ * `invalid_definition`, `name_taken`, `referenced`) — this is the one place
+ * that parses `apiFetch`'s `"<status> <path>: <body>"` message shape back
+ * apart so callers can branch on the code instead of string-matching the
+ * whole message. Returns `null` when the error isn't in that shape (network
+ * error, validation error, etc.).
+ */
+export function apiErrorCode(err: unknown): string | null {
+  if (!(err instanceof Error)) return null;
+  const sep = err.message.indexOf(": ");
+  if (sep === -1) return null;
+  try {
+    const body = JSON.parse(err.message.slice(sep + 2)) as { detail?: { error?: string } };
+    return body.detail?.error ?? null;
+  } catch {
+    return null;
+  }
+}

@@ -62,6 +62,7 @@ Use `vi.useFakeTimers({ toFake: ["Date"] })` (not full fake timers) when tests n
 - Review cards carry `data-state="<status>"` — query via `[data-testid^="agent-card-"][data-state="posted"]`.
 - Workspaces page prefix: `workspaces-*`. Sections: `workspaces-section-active`, `workspaces-section-draining`, `workspaces-section-unconfigured`, `workspaces-section-inactive`. Cards: `workspaces-agent-card-${instance_id}`, `workspaces-agent-card-${instance_id}-status`. Empty state: `workspaces-empty`. See [domain_workspaces.md](domain_workspaces.md).
 - Ticket page tabs: `ticket-tab-<overview|runs|artifacts>`; tab bodies: `ticket-overview`, `ticket-runs`, `ticket-artifacts`. Overview's state card is always `attention-block` with `data-state="<paused|in_flight|<terminal-state>>"`, regardless of which branch rendered it. Pause actions: `approve-run`, `instruct-run`, `send-back-run`, `kill-run`. Runs tab: `run-card-${run_id}` (`data-state="<run.state>"`), `stage-row-${stage_name}`, `rerun-from-stage`. Artifacts tab: `artifact-lineage-${stage_name}`. See [domain_tickets.md](domain_tickets.md).
+- Pipelines settings page: `pipelines-list` (Accordion), `pipeline-row-${id}`, `pipeline-new`, `pipeline-new-from-template`, `pipeline-new-card`, `pipeline-name`, `pipeline-description`, `pipeline-save`, `pipeline-delete`, `pipeline-add-stage` (+ `-skill`/`-review`/`-action`/`-call`), `pipeline-stage-row-${key}` (`key` is a client-only id, not the stage's server id), `pipeline-stage-edit-${key}`, `pipeline-stage-menu-${key}` (+ `-move-up-${key}`/`-move-down-${key}`/`-remove-${key}`), `pipeline-template-dialog`. Per-kind stage editor Sheet: `stage-editor`, `stage-name`, `stage-skill-name`, `stage-agent`, `stage-model`, `stage-effort`, `stage-review-enabled`, `stage-boundary-mode`, `stage-editor-save`. See [domain_pipeline_settings.md](domain_pipeline_settings.md).
 
 ## Accessibility (WCAG 2.2 AA)
 
@@ -126,7 +127,7 @@ Terse, bullets, no code snippets, no `Decisions` section, link don't repeat.
 
 ## Org Settings shell
 
-- `OrgSettingsLayout` is a passthrough `<div>` — no top chrome, no tab bar. Per-page role gating in each settings page.
+- `OrgSettingsLayout` (`shared/components/public/layout/org-settings-layout.tsx`) is a passthrough `<div>` — no top chrome, no tab bar. Per-page role gating in each settings page. Shared across `domain/org_settings` and `domain/pipeline_settings` (rule-of-three graduation — see [components.md](components.md)).
 - Coding-agent plugin settings dispatch through `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`. First-party plugins register at module load via side-effect import (`claude_code`); unregistered plugins get the built-in placeholder.
 - VCS empty-state: "Connect GitHub" card — single CTA fires `useStartGithubInstall`. Coding Agents install card: "Add Claude Code" button — installs directly via `useInstallCodingAgent`.
 
@@ -157,6 +158,10 @@ Module-scoped arrays. Canonical keys:
 - `["plugin-health", pluginId]`
 - `["onboarding"]`
 - `["notifications", readState]`, `["notifications", "popover"]`
+- `["pipelines"]`, `["pipelines", id]` — org pipeline-definition list + one full definition (Pipelines settings page)
+- `["pipeline-templates"]` — the shipped, code-defined pipeline templates ("New from template" picker)
+- `["actions"]` — registered control-plane actions (Pipelines settings page's "Add stage" → action picker)
+- `["coding-agents"]`, `["claude-code", "defaults"]` — installed coding agents + `claude_code`'s model/effort dropdown values (Pipelines settings page's stage editor)
 
 Mutations and the SSE subscriber ([core_sse.md](core_sse.md)) invalidate exactly the keys they affect.
 

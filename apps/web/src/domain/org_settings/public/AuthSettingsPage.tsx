@@ -1,4 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { OrgSettingsLayout } from "@shared/components/public/layout/org-settings-layout";
 import { Button } from "@shared/components/ui/button";
 import {
   Form,
@@ -11,7 +12,6 @@ import {
 import { Input } from "@shared/components/ui/input";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { OrgSettingsLayout } from "../OrgSettingsLayout";
 import { SsoConfigPage } from "../SsoConfigPage";
 import { useUpdateOrgSettings } from "../queries";
 

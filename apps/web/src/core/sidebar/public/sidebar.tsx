@@ -8,6 +8,7 @@ import {
   Brain,
   ChevronRight,
   KeyRound,
+  Layers,
   LayoutDashboard,
   ListChecks,
   Pin,
@@ -53,6 +54,14 @@ const NAV: NavConfig = {
           role: "admin",
         },
         { kind: "link", id: "members", label: "Members", icon: Users, path: "/settings/members" },
+        {
+          kind: "link",
+          id: "pipelines",
+          label: "Pipelines",
+          icon: Layers,
+          path: "/settings/pipelines",
+          role: "admin",
+        },
         {
           kind: "link",
           id: "vcs",

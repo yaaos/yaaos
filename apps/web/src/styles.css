@@ -1,4 +1,13 @@
 @import "tailwindcss";
+/* Tailwind v4-native port of `tailwindcss-animate` — supplies the
+ * `animate-in`/`animate-out`/`fade-*`/`zoom-*`/`slide-*` utilities every
+ * shadcn overlay (Dialog, AlertDialog, Sheet, Select, DropdownMenu, Popover)
+ * references. Without it those classes resolve to nothing: Radix's
+ * `Presence` waits for a real CSS animation to finish before unmounting an
+ * overlay's closing state, so with no animation ever firing, the overlay
+ * (and its full-viewport backdrop) stays mounted — and clickable — forever
+ * after "closing", silently blocking every future click on the page. */
+@import "tw-animate-css";
 
 /*
  * Design tokens — shadcn-named semantic role tokens only.

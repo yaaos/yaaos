@@ -1,6 +1,6 @@
 # domain/org_settings
 
-> Org-scoped settings pages under `/org/$slug/settings/*`, sharing `OrgSettingsLayout` for consistent tab navigation.
+> Org-scoped settings pages under `/org/$slug/settings/*`, sharing the shared `OrgSettingsLayout` shell for consistent tab navigation.
 
 ## Scope
 
@@ -61,7 +61,7 @@ Router imports each page directly by path; no barrel.
 - `public/integrations/IntegrationsSettingsPage.tsx` — `IntegrationsSettingsPage`
 - `public/vcs/VcsSettingsPage.tsx` — `VcsSettingsPage`
 
-Private (not in `public/`): `OrgSettingsLayout`, `queries.ts` (root + each sub-folder), `AuditPage.tsx`, `MembersPage.tsx`, `SsoConfigPage.tsx`, `coding_agents/plugin_registry.ts`, `coding_agents/plugins/**`.
+Private (not in `public/`): `queries.ts` (root + each sub-folder), `AuditPage.tsx`, `MembersPage.tsx`, `SsoConfigPage.tsx`, `coding_agents/plugin_registry.ts`, `coding_agents/plugins/**`. `OrgSettingsLayout` itself lives in `shared/components/public/layout/org-settings-layout.tsx` — graduated there once `domain/pipeline_settings` needed the same shell (see [components.md](components.md)).
 
 `CodingAgentSettingsPage` carries the `import "../../coding_agents/plugins/claude_code"` side-effect that registers the plugin before the first `getPluginSettingsComponent` call.
 
