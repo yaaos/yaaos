@@ -1,6 +1,6 @@
 """Service surface for `domain/findings`.
 
-`record_findings` is the only write path onto `pipeline_findings` — the
+`record_findings` is the only write path onto `findings` — the
 engine calls it once per review return (main-loop or standalone review
 stage), for every reported finding, idempotent on id. The four transition
 functions (`resolve`/`reopen`/`dismiss`/`reflag`) apply the matrix in

@@ -264,7 +264,7 @@ class GithubIntakeType:
         branch — the branch already exists on the remote), PR upsert,
         `ticket.pr_bound` audit. All writes go through the endpoint's
         session so they commit atomically with whatever the caller does
-        next (workflow start or pipeline run start).
+        next (pipeline run start).
 
         Used by both the unbound `pr_review_v1` fallback
         (`_prepare_pr_review`) and the bound pipeline-run path
@@ -320,7 +320,7 @@ class GithubIntakeType:
             session=session,
         )
         if not created:
-            # Loser of the race. The winner owns the workflow/run start; we exit clean.
+            # Loser of the race. The winner owns the run start; we exit clean.
             return _PrTicketPrep(IntakeSideEffect(detail="duplicate_ticket"), None, None, repo_full, None)
 
         # PR upsert runs on the endpoint's session — same transaction as the

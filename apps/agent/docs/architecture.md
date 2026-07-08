@@ -76,7 +76,7 @@ Supervisor maintains a bidirectional WS to `/api/v1/agent/activity` when `Config
 
 ### Live progress streaming
 
-`RealHandler.RunClaude` dispatches via the `RunFunc` seam (production default: `RunStreaming`) and wires `OnStdoutLine` to push each Claude Code stream-json line as a `kind=progress` AgentEvent while also accumulating locally for the terminal event. `progress` events record without resuming the workflow engine — only `completed_*` events resume it.
+`RealHandler.RunClaude` dispatches via the `RunFunc` seam (production default: `RunStreaming`) and wires `OnStdoutLine` to push each Claude Code stream-json line as a `kind=progress` AgentEvent while also accumulating locally for the terminal event. `progress` events record without resuming the run engine — only `completed_*` events resume it.
 
 ### Per-command completion token
 
@@ -151,8 +151,8 @@ All three OTel signals (traces, metrics, logs) share two standard dimensions on 
 
 | Span name | Parent | Where | Notable attributes |
 |---|---|---|---|
-| `supervisor.dispatch.<kind>` | backend's `agent_command.dispatch.<kind>` span (propagated via the `traceparent` field in the `AgentCommand` wire payload) | `supervisor.go` `routeCommand` | `workspace_id`, `command_id`, `kind`; `workflow_id` when present |
-| `workspace.handle.<kind>` | `supervisor.dispatch.<kind>` | `workspace.go` `executeCommand` | `workspace_id`, `command_id`, `kind`; `workflow_id` when present |
+| `supervisor.dispatch.<kind>` | backend's `agent_command.dispatch.<kind>` span (propagated via the `traceparent` field in the `AgentCommand` wire payload) | `supervisor.go` `routeCommand` | `workspace_id`, `command_id`, `kind`; `run_id` when present |
+| `workspace.handle.<kind>` | `supervisor.dispatch.<kind>` | `workspace.go` `executeCommand` | `workspace_id`, `command_id`, `kind`; `run_id` when present |
 | `workspace.clone` | `workspace.handle.ProvisionWorkspace` | `realhandler.go` `ProvisionWorkspace` | |
 | `workspace.runclaude` | `workspace.handle.InvokeClaudeCode` | `realhandler.go` `RunClaude` | |
 | `agent.identity_exchange` | inherits caller context; root at current call sites | `supervisor.go` `exchangeIdentity` | |
@@ -171,7 +171,7 @@ The supervisor's normal error model is: retry-with-backoff forever, log warnings
 
 After first exchange, `supervisor` pins `agentID` and `orgID`. Every subsequent call to `exchangeIdentity` (bearer renewal) must return the same values. If the backend returns different `AgentID` or `OrgID`, `runOneRefreshCycle` returns `fatal=true` and `bearerRefreshLoop` calls `os.Exit(1)`.
 
-Rationale: an agent instance that silently continues operating under a different identity would corrupt org-scoped audit and workflow records. A hard exit forces the orchestrator to restart with a fresh exchange rather than propagating bad identity silently.
+Rationale: an agent instance that silently continues operating under a different identity would corrupt org-scoped audit and run records. A hard exit forces the orchestrator to restart with a fresh exchange rather than propagating bad identity silently.
 
 ## Concurrency model
 

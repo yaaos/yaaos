@@ -794,7 +794,7 @@ def test_injected_submodule_from_import_is_rejected() -> None:
     a private-state reach.
     """
     canary = APP / "core" / "audit_log" / "_rule6_from_canary.py"
-    # workflow has a `service` submodule but `service` is not in its __all__.
+    # workspace has a `service` submodule but `service` is not in its __all__.
     canary.write_text("from app.core.workspace import service  # noqa\n")
     try:
         modules = discover_modules()
@@ -847,11 +847,11 @@ def test_injected_private_attr_via_alias_is_rejected() -> None:
 
 
 def test_injected_private_attr_via_return_taint_is_rejected() -> None:
-    """Rule-7: ``engine._workflows`` flagged when ``engine`` was returned from
+    """Rule-7: ``engine._registry`` flagged when ``engine`` was returned from
     a cross-module call.
 
     Mirrors a private-attribute reach via return-value taint:
-    ``engine = get_engine(); engine._workflows.pop(...)``.
+    ``engine = get_engine(); engine._registry.pop(...)``.
     """
     canary = APP / "core" / "audit_log" / "_rule7_taint_canary.py"
     canary.write_text(
@@ -859,13 +859,13 @@ def test_injected_private_attr_via_return_taint_is_rejected() -> None:
         "\n"
         "def poke() -> None:\n"
         "    engine = get_engine()\n"
-        '    engine._workflows.pop("x", None)\n'
+        '    engine._registry.pop("x", None)\n'
     )
     try:
         modules = discover_modules()
         errors = check_private_reach(modules)
         assert errors, "expected Rule-7 violation but check_private_reach returned none"
-        assert any("_rule7_taint_canary.py" in e and "_workflows" in e for e in errors), (
+        assert any("_rule7_taint_canary.py" in e and "_registry" in e for e in errors), (
             f"expected Rule-7 hit on _rule7_taint_canary.py but got: {errors}"
         )
     finally:
@@ -1453,7 +1453,7 @@ def test_case_collision_actor_is_not_flagged() -> None:
     a sibling but the case-sensitive ``_is_submodule`` (and the AST classifier)
     distinguish the function/class re-export from a namespace handle.
     """
-    canary = APP / "core" / "workflow" / "_d3_actor_canary.py"
+    canary = APP / "core" / "config" / "_d3_actor_canary.py"
     canary.write_text("from app.core.audit_log import Actor  # noqa\n")
     try:
         modules = discover_modules()
@@ -1567,7 +1567,7 @@ def test_injected_walrus_private_reach_is_rejected() -> None:
         "from app.core.workspace import get_engine  # noqa\n"
         "\n"
         "def poke() -> None:\n"
-        "    (eng := get_engine())._workflows.clear()\n"
+        "    (eng := get_engine())._registry.clear()\n"
     )
     try:
         errors = check_private_reach(discover_modules())

@@ -43,7 +43,7 @@ class PRCommentRow(Base):
     author_login: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     finding_id: Mapped[UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("pipeline_findings.id"), nullable=True
+        PgUUID(as_uuid=True), ForeignKey("findings.id"), nullable=True
     )
     classification: Mapped[str | None] = mapped_column(String, nullable=True)
     claimed_by_run_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)

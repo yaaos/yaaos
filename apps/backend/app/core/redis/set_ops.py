@@ -1,6 +1,6 @@
-"""SET primitives for the per-agent workflow-route index.
+"""SET primitives for the per-agent run-route index.
 
-The `agent_routes:{agent_id}` SET holds all wfx_ids the agent is
+The `agent_routes:{agent_id}` SET holds all run_ids the agent is
 currently expected to stream. When an agent's WS reconnects to a new pod,
 that pod reads this SET to know which subscribes to re-emit.
 """

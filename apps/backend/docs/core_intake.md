@@ -4,7 +4,7 @@
 
 ## Scope
 
-Owns: webhook routing policy, idempotency layers, skip-path heuristics, rereview/command parsing, and the `IntakePoint` registry (plugin-contributed trigger sources `domain/repos` trigger bindings target). All `IntakeType` handlers return `IntakeSideEffect`; ticket creation and run/workflow dispatch happen inside each plugin's `handle()` via the domain services.
+Owns: webhook routing policy, idempotency layers, skip-path heuristics, rereview/command parsing, and the `IntakePoint` registry (plugin-contributed trigger sources `domain/repos` trigger bindings target). All `IntakeType` handlers return `IntakeSideEffect`; ticket creation and run dispatch happen inside each plugin's `handle()` via the domain services.
 
 Does NOT own: any tables. All writes flow through other modules' services.
 

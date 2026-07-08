@@ -34,12 +34,9 @@ from app.core.database import Base
 class FindingRow(Base):
     """One durable finding. `id` is app-minted (engine's uuid7 at first
     report) — no server_default. `severity` is immutable after creation.
-
-    Table name is `pipeline_findings`, not `findings` — a rename to
-    `findings` is a separate follow-up migration, not yet applied.
     """
 
-    __tablename__ = "pipeline_findings"
+    __tablename__ = "findings"
 
     id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
     org_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
@@ -72,10 +69,10 @@ class FindingRow(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("severity IN ('blocker','should_fix','nit')", name="ck_pipeline_findings_severity"),
-        CheckConstraint("status IN ('open','resolved','dismissed')", name="ck_pipeline_findings_status"),
-        UniqueConstraint("ticket_id", "display_id", name="uq_pipeline_findings_ticket_display_id"),
-        Index("ix_pipeline_findings_ticket_status", "ticket_id", "status"),
-        Index("ix_pipeline_findings_stage_execution", "source_stage_execution_id"),
-        Index("ix_pipeline_findings_external_comment", "org_id", "external_comment_id"),
+        CheckConstraint("severity IN ('blocker','should_fix','nit')", name="ck_findings_severity"),
+        CheckConstraint("status IN ('open','resolved','dismissed')", name="ck_findings_status"),
+        UniqueConstraint("ticket_id", "display_id", name="uq_findings_ticket_display_id"),
+        Index("ix_findings_ticket_status", "ticket_id", "status"),
+        Index("ix_findings_stage_execution", "source_stage_execution_id"),
+        Index("ix_findings_external_comment", "org_id", "external_comment_id"),
     )

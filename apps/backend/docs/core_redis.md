@@ -23,7 +23,7 @@
 
 - `sliding_window_hit(key, *, limit, window_seconds)` — rate-limit counter backed by a Redis ZSET. Returns `True` if the hit is within the limit, `False` if it would exceed it. Caller owns the policy (axis, error shape, HTTP status).
 - `set_if_absent(key, ttl_seconds)` — cross-pod idempotency / replay protection. Wraps `SET key 1 NX EX ttl_seconds`; returns `True` on insert (this caller wins), `False` when the key already existed (replay / duplicate). Used by `core/agent_gateway/sts_verifier` to reject replayed signed STS envelopes across pods.
-- `scan_keys(pattern)` — returns all keys matching `pattern` via `SCAN MATCH pattern COUNT 100` (iterated to completion). Used by the subscriber sweeper to find `workflow_subscribers:*` keys for GC.
+- `scan_keys(pattern)` — returns all keys matching `pattern` via `SCAN MATCH pattern COUNT 100` (iterated to completion). Used by the subscriber sweeper to find `run_subscribers:*` keys for GC.
 - **HASH primitives** (`hash_ops.py`):
   - `hash_set(key, fields: Mapping[str, str])` — `HSET key field1 val1 ...` (multi-field).
   - `hash_get_all(key)` — `HGETALL key`; returns `dict[str, str]`, empty on missing key.

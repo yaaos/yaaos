@@ -1,8 +1,8 @@
 """HTTP coverage for GET /api/tickets/{ticket_id}.
 
 Asserts the extended-projection shape: status (6-state vocab),
-findings_count, max_severity, and builder. Workflow-run data is served
-by the dedicated /workflow-runs endpoint.
+findings_count, max_severity, and builder. Run data is served
+by the dedicated /api/pipelines/runs endpoint.
 """
 
 from __future__ import annotations
@@ -52,9 +52,9 @@ async def seeded(db_session):
     await db_session.execute(
         text(
             "INSERT INTO tickets (id, org_id, source, source_external_id, title, status,"
-            " plugin_id, repo_external_id)"
+            " plugin_id, repo_external_id, branch_name)"
             " VALUES (:id, :org_id, 'github_pr', 'x/y#1', 'Tighten retries', 'running',"
-            " 'github', 'x/y')"
+            " 'github', 'x/y', 'yaaos/tighten-retries')"
         ),
         {"id": ticket_id, "org_id": org.org_id},
     )
@@ -76,8 +76,8 @@ async def test_detail_returns_status_meta_fields(seeded) -> None:
     assert body["status"] == "running"
     assert body["findings_count"] == 0
     assert body["builder_kind"] in {"user", "system"}
-    # `stages` is NOT in the detail payload — workflow-run data lives at
-    # GET /api/tickets/{id}/workflow-runs.
+    # `stages` is NOT in the detail payload — run data lives at
+    # GET /api/pipelines/runs?ticket_id=.
     assert "stages" not in body
 
 
@@ -101,8 +101,8 @@ async def test_detail_404_on_cross_org_access(seeded, db_session) -> None:
     await db_session.execute(
         text(
             "INSERT INTO tickets (id, org_id, source, source_external_id, title, status,"
-            " plugin_id, repo_external_id)"
-            " VALUES (:id, :org_id, 'github_pr', 'x/y#9', 'other', 'running', 'github', 'x/y')"
+            " plugin_id, repo_external_id, branch_name)"
+            " VALUES (:id, :org_id, 'github_pr', 'x/y#9', 'other', 'running', 'github', 'x/y', 'yaaos/other')"
         ),
         {"id": other_ticket, "org_id": other_org.org_id},
     )

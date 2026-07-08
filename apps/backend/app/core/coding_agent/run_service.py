@@ -29,8 +29,8 @@ log = structlog.get_logger("core.coding_agent.run_service")
 async def create_run(
     *,
     org_id: UUID,
-    workflow_execution_id: UUID,
-    step_id: str,
+    run_id: UUID,
+    stage_execution_id: UUID,
     agent_command_id: UUID,
     command_kind: str,
     plugin_id: str,
@@ -51,8 +51,8 @@ async def create_run(
     now = datetime.now(UTC)
     row = CodingAgentRunRow(
         org_id=org_id,
-        workflow_execution_id=workflow_execution_id,
-        step_id=step_id,
+        run_id=run_id,
+        stage_execution_id=stage_execution_id,
         agent_command_id=agent_command_id,
         command_kind=command_kind,
         plugin_id=plugin_id,
@@ -203,18 +203,18 @@ async def get_run_ref_for_command(
     return RunRef(run_id=row[0], plugin_id=row[1])
 
 
-async def get_run_id_for_workflow_step(
-    workflow_execution_id: UUID,
-    step_id: str,
+async def get_run_id_for_stage(
+    run_id: UUID,
+    stage_execution_id: UUID,
     *,
     session: AsyncSession,
 ) -> UUID | None:
-    """Return the run id for a given `(workflow_execution_id, step_id)`, or None."""
+    """Return the coding-agent run id for a given `(run_id, stage_execution_id)`, or None."""
     row = (
         await session.execute(
             select(CodingAgentRunRow.id).where(
-                CodingAgentRunRow.workflow_execution_id == workflow_execution_id,
-                CodingAgentRunRow.step_id == step_id,
+                CodingAgentRunRow.run_id == run_id,
+                CodingAgentRunRow.stage_execution_id == stage_execution_id,
             )
         )
     ).one_or_none()
@@ -223,27 +223,27 @@ async def get_run_id_for_workflow_step(
     return row[0]
 
 
-async def get_step_activity(
-    workflow_execution_id: UUID,
-    step_id: str,
+async def get_stage_activity(
+    run_id: UUID,
+    stage_execution_id: UUID,
     *,
     session: AsyncSession,
 ) -> ActivityLog | None:
-    """Return the persisted `ActivityLog` for a workflow step's coding-agent
-    run, or None when there is no such run (non-`InvokeClaudeCode` step) or
+    """Return the persisted `ActivityLog` for a stage execution's coding-agent
+    run, or None when there is no such run (non-`InvokeClaudeCode` stage) or
     the activity row's weekly partition has been dropped (4-week TTL).
 
-    Two-hop lookup: `(workflow_execution_id, step_id)` →
-    `coding_agent_runs.id` via `get_run_id_for_workflow_step`, then
-    `coding_agent_activity.payload` by `run_id`. The Activity tab in the
-    SPA tolerates None as "activity expired".
+    Two-hop lookup: `(run_id, stage_execution_id)` →
+    `coding_agent_runs.id` via `get_run_id_for_stage`, then
+    `coding_agent_activity.payload` by the coding-agent run's own id. The
+    Activity tab in the SPA tolerates None as "activity expired".
     """
-    run_id = await get_run_id_for_workflow_step(workflow_execution_id, step_id, session=session)
-    if run_id is None:
+    coding_agent_run_id = await get_run_id_for_stage(run_id, stage_execution_id, session=session)
+    if coding_agent_run_id is None:
         return None
     row = (
         await session.execute(
-            select(CodingAgentActivityRow.payload).where(CodingAgentActivityRow.run_id == run_id)
+            select(CodingAgentActivityRow.payload).where(CodingAgentActivityRow.run_id == coding_agent_run_id)
         )
     ).one_or_none()
     if row is None:

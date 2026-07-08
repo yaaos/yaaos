@@ -42,7 +42,7 @@ class WorkspaceRow(Base):
     # event has been observed (NOT before — failure-report-precedes-disposal).
     current_command_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     # idle-timeout sweep horizon. The reaper marks any workspace
-    # `active` past this window as `expired` so its cleanup workflow can run.
+    # `active` past this window as `expired` so its cleanup can run.
     max_idle_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="600")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

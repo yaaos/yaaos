@@ -26,14 +26,14 @@ type SendFunc func(frame []byte) error
 //   - HandleInbound(raw): decode one inbound `subscribe`/`unsubscribe`
 //     message and apply it to both the SubscriptionSet (filters
 //     outbound publishes) and the WorkspaceMapping (translates
-//     workspace_id → workflow_execution_id for outbound frames).
+//     workspace_id → run_id for outbound frames).
 //   - Publish(workspaceID, ev): forward an AgentEvent into the
 //     Batcher. Drops on the floor if workspace_id isn't currently
 //     subscribed.
 //
 // On each flush tick the Batcher hands each (workspace_id, []events)
 // batch back to the Conductor's flush adapter, which looks up the
-// matching workflow_execution_id, encodes the activity_batch envelope,
+// matching run_id, encodes the activity_batch envelope,
 // and calls SendFunc. Missing mapping → drop (defensive; shouldn't
 // happen given the slice-79 payload shape).
 type Conductor struct {
@@ -95,8 +95,8 @@ func (c *Conductor) HandleInbound(raw []byte) error {
 		// Mapping must precede the SubscriptionSet add — otherwise an
 		// in-flight Publish on another goroutine could race and find
 		// the workspace subscribed but unmapped.
-		if msg.WorkflowExecutionID != "" {
-			c.mapping.Set(msg.WorkspaceID, msg.WorkflowExecutionID)
+		if msg.RunID != "" {
+			c.mapping.Set(msg.WorkspaceID, msg.RunID)
 		}
 		c.subs.Add(msg.WorkspaceID)
 	case InboundUnsubscribe:
@@ -112,7 +112,7 @@ func (c *Conductor) Publish(workspaceID string, ev protocol.AgentEvent) {
 	c.batcher.Publish(workspaceID, ev)
 }
 
-// flushOne is the Batcher's FlushFunc adapter. Resolves the workflow
+// flushOne is the Batcher's FlushFunc adapter. Resolves the run
 // id from the cached mapping, encodes one activity_batch envelope,
 // hands it to SendFunc. Send errors are logged and dropped — the
 // caller's transport layer owns retry / reconnect.
@@ -124,10 +124,10 @@ func (c *Conductor) flushOne(workspaceID string, events []protocol.AgentEvent) {
 	}
 	frame, err := EncodeBatch(wf, events)
 	if err != nil {
-		c.log.Warn("activity.encode_batch_failed", "workflow_execution_id", wf, "err", err.Error())
+		c.log.Warn("activity.encode_batch_failed", "run_id", wf, "err", err.Error())
 		return
 	}
 	if err := c.send(frame); err != nil {
-		c.log.Warn("activity.send_batch_failed", "workflow_execution_id", wf, "err", err.Error())
+		c.log.Warn("activity.send_batch_failed", "run_id", wf, "err", err.Error())
 	}
 }

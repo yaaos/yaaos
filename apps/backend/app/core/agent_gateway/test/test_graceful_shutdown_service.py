@@ -147,20 +147,20 @@ async def test_delete_identity_expires_held_workspaces_and_synthesizes_failure(d
     """DELETE expires agent-owned ACTIVE workspaces and enqueues a terminal
     failure for each in-flight current_command_id.
 
-    Workflow-execution correlation lives on agent_commands.workflow_execution_id;
+    Run correlation lives on agent_commands.run_id;
     the test seeds both the workspace row and the agent_commands row so
-    failsafe_agent_loss can resolve the workflow_execution_id without reading
-    the shed workspaces.current_holder_workflow_id column.
+    failsafe_agent_loss can resolve the run_id without reading
+    the shed workspaces.current_holder_run_id column.
     """
     org, agent = await _seed_org_and_agent(db_session)
 
     command_id = uuid7()
-    workflow_exec_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid7()
 
     # Enqueue the agent_commands row so failsafe_agent_loss can resolve
-    # workflow_execution_id from agent_commands (not from the shed
-    # workspaces.current_holder_workflow_id column).
+    # run_id from agent_commands (not from the shed
+    # workspaces.current_holder_run_id column).
     cmd = CleanupWorkspaceCommand(
         command_id=command_id,
         workspace_id=workspace_id,
@@ -170,14 +170,14 @@ async def test_delete_identity_expires_held_workspaces_and_synthesizes_failure(d
         org_id=org.org_id,
         command=cmd,
         session=db_session,
-        workflow_execution_id=workflow_exec_id,
+        run_id=run_id,
     )
     await db_session.flush()
 
     # Seed the workspace row holding the command claim.
     # failsafe_agent_loss finds workspaces by owning_agent_id, reads current_command_id,
-    # and resolves workflow_execution_id via agent_commands (PK=command_id) — not from
-    # the shed workspaces.current_holder_workflow_id column.
+    # and resolves run_id via agent_commands (PK=command_id) — not from
+    # the shed workspaces.current_holder_run_id column.
     ws_id_str = await seed_workspace(
         org_id=org.org_id,
         provider_id="remote_agent",

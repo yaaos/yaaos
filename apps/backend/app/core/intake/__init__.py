@@ -7,7 +7,7 @@ which routes every GitHub webhook event).
 
 Every handler returns `IntakeSideEffect` — handlers manage their own ticket
 creation inside the endpoint's session so ticket inserts, PR back-references,
-audit rows, and workflow.start outbox enqueues commit atomically.
+audit rows, and pipeline-run-start outbox enqueues commit atomically.
 """
 
 from app.core.intake import web  # noqa: F401 — registers POST /api/intake/{type}

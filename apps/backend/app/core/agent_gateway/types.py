@@ -42,10 +42,10 @@ class _CommandBase(BaseModel):
     # serialize its real value to the agent over the wire — same rationale as
     # `AuthBlock.token`. NEVER log this field.
     completion_token: str | None = None
-    # Workflow execution that dispatched this command. Stamped at enqueue time so
-    # agent-side spans can carry workflow_id without a separate lookup. NULL for
-    # agent-scoped commands (ConfigUpdate) that do not correlate to a workflow.
-    workflow_execution_id: UUID | None = None
+    # Pipeline run that dispatched this command. Stamped at enqueue time so
+    # agent-side spans can carry run_id without a separate lookup. NULL for
+    # agent-scoped commands (ConfigUpdate) that do not correlate to a run.
+    run_id: UUID | None = None
 
 
 # ── The five concrete AgentCommand kinds ────────────────────────────────
@@ -157,7 +157,7 @@ class InvokeClaudeCodeFields(BaseModel):
 
     Carries only the command-kind-specific fields — no envelope keys
     (`kind`, `command_id`, `workspace_id`, `traceparent`, `completion_token`,
-    `workflow_execution_id`). Those are owned and injected by
+    `run_id`). Those are owned and injected by
     `enqueue_command_payload` after this model is serialised, ensuring
     they cannot be overwritten by the caller.
 
@@ -259,7 +259,7 @@ class ShutdownCommand(BaseModel):
     traceparent: str
     kind: Literal[AgentCommandKind.SHUTDOWN] = AgentCommandKind.SHUTDOWN
     completion_token: str | None = None
-    workflow_execution_id: UUID | None = None
+    run_id: UUID | None = None
 
 
 class CancelShutdownCommand(BaseModel):
@@ -274,7 +274,7 @@ class CancelShutdownCommand(BaseModel):
     traceparent: str
     kind: Literal[AgentCommandKind.CANCEL_SHUTDOWN] = AgentCommandKind.CANCEL_SHUTDOWN
     completion_token: str | None = None
-    workflow_execution_id: UUID | None = None
+    run_id: UUID | None = None
 
 
 AgentCommand = Annotated[
@@ -489,7 +489,7 @@ class CommandEventAck(BaseModel):
     """Response body for a successful `POST /api/v1/commands/{id}/events`.
 
     `command_event_outcome` is `event_recorded` — the event was persisted and any
-    workflow side-effects fired. The stale-claim case does not return this body;
+    run side-effects fired. The stale-claim case does not return this body;
     it returns `410 Gone` with `{"error": "stale_claim"}`.
     """
 

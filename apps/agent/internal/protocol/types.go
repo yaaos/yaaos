@@ -39,11 +39,11 @@ type CommandHeader struct {
 	// echoes on every AgentEvent it posts for this command. The backend
 	// verifies it by hash before accepting the event.
 	CompletionToken string `json:"completion_token,omitempty"`
-	// WorkflowExecutionID is the workflow execution that dispatched this
-	// command. Stamped at enqueue time so agent-side spans can carry
-	// workflow_id without a separate lookup. Empty for agent-scoped commands
-	// (e.g. ConfigUpdate) that do not correlate to a workflow.
-	WorkflowExecutionID string `json:"workflow_execution_id,omitempty"`
+	// RunID is the pipeline run that dispatched this command. Stamped at
+	// enqueue time so agent-side spans can carry run_id without a separate
+	// lookup. Empty for agent-scoped commands (e.g. ConfigUpdate) that do
+	// not correlate to a run.
+	RunID string `json:"run_id,omitempty"`
 }
 
 // RepoRef matches the spec's nested `repo` object on ProvisionWorkspace.

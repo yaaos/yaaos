@@ -138,7 +138,7 @@ func TestSupervisor_ActivityWS_ProgressEventsRouteThroughConductor(t *testing.T)
 	}
 
 	// Server pushes subscribe → wait for Conductor to apply it.
-	fs.push(t, []byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`))
+	fs.push(t, []byte(`{"type":"subscribe","workspace_id":"ws-1","run_id":"wf-1"}`))
 	deadline := time.Now().Add(2 * time.Second)
 	for !s.conductor.IsSubscribed("ws-1") && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond) // reason: WS read goroutine blocks on OS network I/O (httptest.Server); not durably blocked in synctest sense.
@@ -159,7 +159,7 @@ func TestSupervisor_ActivityWS_ProgressEventsRouteThroughConductor(t *testing.T)
 		if !strings.Contains(string(got), `"activity_batch"`) {
 			t.Errorf("server got non-batch frame: %s", string(got))
 		}
-		if !strings.Contains(string(got), `"workflow_execution_id":"wf-1"`) {
+		if !strings.Contains(string(got), `"run_id":"wf-1"`) {
 			t.Errorf("frame missing wf-1: %s", string(got))
 		}
 	case <-time.After(2 * time.Second):

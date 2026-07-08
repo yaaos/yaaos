@@ -26,12 +26,12 @@ import (
 // that satisfies command.Decode's validation (MaxWorkspaces >= 1, no OTLP).
 func mustMarshalConfigUpdate(commandID string, maxWorkspaces int) []byte {
 	payload := map[string]any{
-		"kind":                  "ConfigUpdate",
-		"command_id":            commandID,
-		"workspace_id":          "",
-		"traceparent":           "tp-" + commandID,
-		"completion_token":      "",
-		"workflow_execution_id": "",
+		"kind":             "ConfigUpdate",
+		"command_id":       commandID,
+		"workspace_id":     "",
+		"traceparent":      "tp-" + commandID,
+		"completion_token": "",
+		"run_id":           "",
 		"config": map[string]any{
 			"max_workspaces": maxWorkspaces,
 			"otlp_endpoint":  "",

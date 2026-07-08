@@ -46,7 +46,7 @@ Private (non-`public/`): `generated/` (only `core/api` may import it).
 
 `client.ts` owns the type surface. Types sourced from the generated schema:
 - `Lesson` — alias of `components["schemas"]["Lesson"]`.
-- `StageActivityResponse` — alias of `components["schemas"]["app__domain__pipelines__web__StepActivityResponse"]` (`{activity: ActivityLog | null}`) — FastAPI's collision-disambiguated name (a same-named response model also lives on the legacy `domain/tickets` workflow-activity route). Backs the Runs tab's per-stage activity accordion.
+- `StageActivityResponse` — alias of `components["schemas"]["StepActivityResponse"]` (`{activity: ActivityLog | null}`). Backs the Runs tab's per-stage activity accordion.
 - `PipelineRunView`, `StageExecutionView`, `RunOverviewView`, `PauseDetailView`, `RunOutcomeView` (in `queries.ts`) — aliases of `components["schemas"]["PipelineRun" | "StageExecution" | "RunOverview" | "PauseDetail" | "RunOutcome"]`. Back the ticket page's Overview/Runs tabs.
 - `ArtifactGroupView`, `ArtifactDetailView` (in `queries.ts`) — aliases of `components["schemas"]["ArtifactGroup" | "ArtifactDetailResponse"]`. Back the Artifacts tab.
 

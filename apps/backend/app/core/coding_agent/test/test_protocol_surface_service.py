@@ -33,7 +33,8 @@ EXPECTED_ALL = frozenset(
         "list_plugins",
         "dispatch_invocation",
         "create_run",
-        "get_step_activity",
+        "finalize_run",
+        "get_stage_activity",
         # Test isolation seam
         "set_coding_agents_for_tests",
         # BYOK secrets provider

@@ -37,7 +37,7 @@ class _StubSink:
         *,
         # id → status map for reconcile_heartbeat
         statuses: dict[UUID, str] | None = None,
-        # command_id → holder_workflow_id for resolve_claim
+        # command_id → holder_run_id for resolve_claim
         claims: dict[UUID, UUID | None] | None = None,
         # workspace_id → (current_command_id, accepted) for apply_workspace_event
         ws_commands: dict[UUID, UUID | None] | None = None,

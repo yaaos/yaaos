@@ -15,7 +15,7 @@
 
 - **Single-threaded by design.** `Run` processes one command at a time, in-order. Concurrency lives at the supervisor level (one process per workspace, N workers in the pool).
 - **Clean EOF = normal exit.** The supervisor closes the write end of the command pipe when it reaps the runner; `Run` exits nil on `ipc.ErrClosed`.
-- **Progress events do not resume the backend's workflow engine** — only `completed_*` events do. `RealHandler.RunClaude` streams stdout lines as `kind=progress` while accumulating the final result.
+- **Progress events do not resume the backend's run engine** — only `completed_*` events do. `RealHandler.RunClaude` streams stdout lines as `kind=progress` while accumulating the final result.
 - **`RealHandler` writes a `.workspace-id` manifest** after clone so the startup reconciliation can reattribute orphan directories. See [workspace_lifecycle.md](workspace_lifecycle.md).
 - **Checkout mode is decided by which of `ProvisionWorkspaceCommand.Repo.HeadSHA` / `.BranchName` is set.** `HeadSHA` set → detached pin (`git checkout --detach`) — fork-safe, the only mode a legacy caller with no `branch_name` exercises. `HeadSHA` empty, `BranchName` set → named work branch (`git checkout -B`), tracking the remote branch when it already exists, otherwise creating a fresh local branch off the clone's default-branch HEAD. See `gitClone` in `realhandler.go`.
 - **`ProvisionWorkspace` sets the commit identity** (`git config user.name`/`user.email`) from `GitUserName`/`GitUserEmail` on the wire — backend-supplied constants, not agent policy. Best-effort no-op when both are empty; detached-checkout review flows never commit, so an unset identity there is harmless.

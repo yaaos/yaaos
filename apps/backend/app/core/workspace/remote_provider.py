@@ -158,7 +158,7 @@ async def dispatch_provision_workspace(
     ttl_seconds: int = 600,
     max_idle_seconds: int = 600,
     session: AsyncSession,
-    workflow_execution_id: UUID | None = None,
+    run_id: UUID | None = None,
 ) -> ProvisionWorkspaceDispatch:
     """Enqueue a `ProvisionWorkspace` command durably inside the caller's transaction.
 
@@ -172,9 +172,9 @@ async def dispatch_provision_workspace(
     the dispatch through the single-flight machinery; this helper does NOT
     write to the workspace row itself.
 
-    `workflow_execution_id` is stamped on the new `agent_commands` row so the
-    terminal-event ingestion path can resolve `command_id → workflow` directly,
-    without a workspace-row lookup. Defaults to NULL for non-workflow callers.
+    `run_id` is stamped on the new `agent_commands` row so the
+    terminal-event ingestion path can resolve `command_id → run` directly,
+    without a workspace-row lookup. Defaults to NULL for non-run callers.
     """
     command_id = uuid7()
     cmd = ProvisionWorkspaceCommand(
@@ -191,7 +191,7 @@ async def dispatch_provision_workspace(
         org_id=org_id,
         command=cmd,
         session=session,
-        workflow_execution_id=workflow_execution_id,
+        run_id=run_id,
     )
     return ProvisionWorkspaceDispatch(command_id=command_id)
 

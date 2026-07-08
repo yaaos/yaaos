@@ -54,7 +54,7 @@ async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dic
     from app.testing.e2e_setup import seed_agent  # noqa: PLC0415
 
     cmd_id = uuid7()
-    wfx_id = uuid4()
+    run_id = uuid4()
     org_id = uuid4()
     agent = await seed_agent(org_id=org_id)
     ws_id = await _seed_workspace_for_tests(
@@ -66,7 +66,7 @@ async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dic
     )
     if claimed_by_command:
         # Persist the matching `agent_commands` row pre-stamped with the
-        # workflow_execution_id. `record_agent_event` resolves correlation
+        # run_id. `record_agent_event` resolves correlation
         # purely from this row — no workspace-row lookup is involved.
         provision = ProvisionWorkspaceCommand(
             command_id=cmd_id,
@@ -87,9 +87,9 @@ async def _seed_workspace(db_session, *, claimed_by_command: bool = True) -> dic
             org_id=org_id,
             command=provision,
             session=db_session,
-            workflow_execution_id=wfx_id,
+            run_id=run_id,
         )
-    return {"id": ws_id, "org_id": org_id, "command_id": cmd_id, "workflow_id": wfx_id}
+    return {"id": ws_id, "org_id": org_id, "command_id": cmd_id, "run_id": run_id}
 
 
 # ── Heartbeat reconciliation ───────────────────────────────────────────
@@ -317,11 +317,11 @@ async def test_progress_event_publishes_to_sse(db_session, redis_or_skip) -> Non
 
     ws = await _seed_workspace(db_session)
     cmd_id = ws["command_id"]
-    wfx_id = ws["workflow_id"]
+    run_id = ws["run_id"]
     org_id = ws["org_id"]
 
     # Open an SSE subscriber on the org-scoped channel BEFORE posting the event.
-    sub = subscribe_workspace_activity(org_id, wfx_id)
+    sub = subscribe_workspace_activity(org_id, run_id)
     received: list[dict] = []
 
     async def _drain() -> None:

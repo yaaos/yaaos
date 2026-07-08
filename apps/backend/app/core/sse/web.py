@@ -3,7 +3,7 @@
 | Method | Path                                              | Auth                |
 |--------|---------------------------------------------------|---------------------|
 | GET    | `/api/sse/general`                                | `ORG_READ` — org-scoped general event stream for the caller's resolved org. |
-| GET    | `/api/sse/workspace_activity/{workflow_execution_id}` | `ORG_READ`. Cross-org isolation is the channel key: subscribers attach to `{caller_org}:workspace_activity:{wfx_id}`; publishers publish to `{owner_org}:…`, so a cross-org request silently yields an empty stream rather than 404. |
+| GET    | `/api/sse/workspace_activity/{run_id}` | `ORG_READ`. Cross-org isolation is the channel key: subscribers attach to `{caller_org}:workspace_activity:{run_id}`; publishers publish to `{owner_org}:…`, so a cross-org request silently yields an empty stream rather than 404. |
 
 The `/api/sse` prefix is classified as `ORG_SCOPED` in `core/auth/types.py`,
 so `AuthMiddleware` enforces the `X-Yaaos-Org-Slug` header before the handler runs.
@@ -134,7 +134,7 @@ async def _general_stream(org_id: UUID) -> AsyncIterator[str]:
             return
 
 
-async def _workspace_activity_stream(org_id: UUID, workflow_execution_id: UUID) -> AsyncIterator[str]:
+async def _workspace_activity_stream(org_id: UUID, run_id: UUID) -> AsyncIterator[str]:
     """Translate workspace-activity pub/sub events into SSE frames.
 
     Yields a connect prelude first (see `sse_prelude`) for the same
@@ -142,7 +142,7 @@ async def _workspace_activity_stream(org_id: UUID, workflow_execution_id: UUID) 
     `__anext__` against the shutdown event for the same graceful-close reason.
     """
     yield sse_prelude()
-    it = subscribe_workspace_activity(org_id, workflow_execution_id).__aiter__()
+    it = subscribe_workspace_activity(org_id, run_id).__aiter__()
     while True:
         next_task = asyncio.create_task(it.__anext__())
         shutdown_task = asyncio.create_task(_get_event().wait())
@@ -175,20 +175,20 @@ async def stream_general() -> StreamingResponse:
 
 
 @router.get(
-    "/workspace_activity/{workflow_execution_id}",
+    "/workspace_activity/{run_id}",
     dependencies=[Depends(require(Action.ORG_READ))],
 )
-async def stream_workspace_activity(workflow_execution_id: UUID) -> StreamingResponse:
-    """Subscribe an SSE client to the per-workflow activity event stream.
+async def stream_workspace_activity(run_id: UUID) -> StreamingResponse:
+    """Subscribe an SSE client to the per-run activity event stream.
 
     Cross-org isolation is the channel key: subscribers attach to
-    `{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a
+    `{caller_org}:workspace_activity:{run_id}`. A request for a run owned by a
     different org subscribes to a channel nobody publishes to and yields an
     empty stream.
     """
     org_id = org_id_var.get()
     return StreamingResponse(
-        _workspace_activity_stream(org_id, workflow_execution_id),
+        _workspace_activity_stream(org_id, run_id),
         media_type="text/event-stream",
     )
 

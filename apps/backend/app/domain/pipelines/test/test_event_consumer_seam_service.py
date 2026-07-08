@@ -1,6 +1,6 @@
 """Service test: the `core/agent_gateway` agent-event consumer registry —
 `record_agent_event` enqueues `domain/pipelines.handle_agent_event` for
-every terminal event; an event whose `workflow_execution_id` doesn't
+every terminal event; an event whose `run_id` doesn't
 correspond to a `pipeline_runs` row is a safe no-op (not an error), and the
 matching run resumes off its own terminal event.
 """
@@ -122,12 +122,12 @@ def _success_event(command_id: UUID) -> AgentEvent:
 
 @pytest.mark.asyncio
 async def test_foreign_run_id_is_a_no_op_and_the_real_run_still_resumes(db_session) -> None:
-    """A terminal event whose `workflow_execution_id` doesn't correspond to
+    """A terminal event whose `run_id` doesn't correspond to
     any `pipeline_runs` row is a no-op that leaves a parked run untouched;
     the parked run's own terminal event still resumes it normally."""
     pipe_org_id, run_id, provision_command_id = await _start_pipelines_flow(db_session)
 
-    # Enqueue a real command stamped with a `workflow_execution_id` that
+    # Enqueue a real command stamped with a `run_id` that
     # isn't any `pipeline_runs.id` — `handle_agent_event` sees an id it
     # doesn't own and no-ops.
     foreign_command_id = uuid7()
@@ -136,7 +136,7 @@ async def test_foreign_run_id_is_a_no_op_and_the_real_run_still_resumes(db_sessi
         org_id=pipe_org_id,
         command=CleanupWorkspaceCommand(command_id=foreign_command_id, workspace_id=uuid4(), traceparent=""),
         session=db_session,
-        workflow_execution_id=foreign_run_id,
+        run_id=foreign_run_id,
     )
     await db_session.commit()
 

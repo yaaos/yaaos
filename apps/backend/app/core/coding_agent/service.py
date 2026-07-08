@@ -202,8 +202,8 @@ async def dispatch_invocation(
 
     await create_run(
         org_id=owner.org_id,
-        workflow_execution_id=ctx.run_id,
-        step_id=str(ctx.stage_execution_id),
+        run_id=ctx.run_id,
+        stage_execution_id=ctx.stage_execution_id,
         agent_command_id=command_id,
         command_kind="InvokeClaudeCode",
         plugin_id=plugin.plugin_id,

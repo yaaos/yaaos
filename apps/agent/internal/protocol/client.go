@@ -28,7 +28,7 @@ type CommandEventAck struct {
 }
 
 // CommandEventOutcomeRecorded is the outcome value when the event was
-// persisted and any workflow side-effects fired.
+// persisted and any run side-effects fired.
 const CommandEventOutcomeRecorded = "event_recorded"
 
 // Client is the HTTP client wrapper for the 5 backend endpoints. Safe

@@ -99,8 +99,8 @@ func executeCommand(ctx context.Context, cmd command.WorkspaceCommand, ops comma
 		attribute.String("command_id", header.CommandID),
 		attribute.String("kind", string(header.Kind)),
 	}
-	if header.WorkflowExecutionID != "" {
-		spanAttrs = append(spanAttrs, attribute.String("workflow_id", header.WorkflowExecutionID))
+	if header.RunID != "" {
+		spanAttrs = append(spanAttrs, attribute.String("run_id", header.RunID))
 	}
 	ctx, end := tracing.StartSpan(ctx, "workspace.handle."+string(header.Kind), spanAttrs...)
 	childTP := tracing.InjectTraceparent(ctx)

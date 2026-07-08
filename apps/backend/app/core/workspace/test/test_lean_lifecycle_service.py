@@ -405,7 +405,7 @@ async def test_release_claim_before_next_try_claim(db_session) -> None:
     claimed = await try_claim(
         workspace_id=workspace_id,
         command_id=new_cmd_id,
-        workflow_execution_id=uuid4(),
+        run_id=uuid4(),
         session=db_session,
     )
     assert claimed, "try_claim should succeed after release_claim"

@@ -213,7 +213,7 @@ ORG_SCOPED_PREFIXES: tuple[str, ...] = (
     # Org-scoped tickets / lessons.
     "/api/tickets",
     "/api/lessons",
-    # SSE routes mounted at core/sse/web.py — org-scoped per-workflow streams.
+    # SSE routes mounted at core/sse/web.py — org-scoped per-run streams.
     "/api/sse",
     # Pipeline-definition CRUD.
     "/api/pipelines",

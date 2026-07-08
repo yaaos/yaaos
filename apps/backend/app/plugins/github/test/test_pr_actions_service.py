@@ -192,7 +192,7 @@ async def test_posting_reconciles_after_simulated_crash(
     # Simulate the crash: the comment is real on GitHub, but the DB write
     # anchoring it never landed.
     await db_session.execute(
-        text("UPDATE pipeline_findings SET external_comment_id = NULL WHERE id = :id"), {"id": finding_id}
+        text("UPDATE findings SET external_comment_id = NULL WHERE id = :id"), {"id": finding_id}
     )
     await db_session.flush()
     finding_before_retry = await get_finding(finding.id, session=db_session)

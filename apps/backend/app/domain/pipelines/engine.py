@@ -1453,7 +1453,7 @@ async def _run_action_stage(
 #
 # Registered as a `core/agent_gateway` consumer (see
 # `register_agent_event_consumer` in `apps/backend/app/core/agent_gateway/service.py`)
-# and receives the args dict for every terminal event. `workflow_execution_id`
+# and receives the args dict for every terminal event. `run_id`
 # here is a `pipeline_runs.id` (stringified UUID); an id this engine doesn't
 # own (e.g. a stale/foreign id) is a no-op, not an error — `session.get`
 # returning `None` is the signal.
@@ -1462,7 +1462,7 @@ async def _run_action_stage(
 @task("pipelines.handle_agent_event", queue="pipelines", max_retries=1)
 async def handle_agent_event(
     *,
-    workflow_execution_id: str,
+    run_id: str,
     agent_command_id: str,
     outcome_label: str,
     outputs: dict[str, Any],
@@ -1471,7 +1471,7 @@ async def handle_agent_event(
     del traceparent  # reserved for span-reparenting once spans are added here
     async with db_session() as s:
         await _handle_agent_event_impl(
-            run_id=workflow_execution_id,
+            run_id=run_id,
             agent_command_id=agent_command_id,
             outcome_label=outcome_label,
             outputs=outputs,

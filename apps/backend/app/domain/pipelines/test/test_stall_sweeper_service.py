@@ -159,7 +159,7 @@ async def test_lost_resume_reenqueues_handle_agent_event_service(db_session, red
     await db_session.execute(
         text(
             "INSERT INTO agent_commands "
-            "(id, org_id, workflow_execution_id, command_kind, payload, status, attempt) "
+            "(id, org_id, run_id, command_kind, payload, status, attempt) "
             "VALUES (:id, :org_id, :run_id, 'InvokeClaudeCode', '{}'::jsonb, 'done', 0)"
         ),
         {"id": command_id, "org_id": org_id, "run_id": run_id},

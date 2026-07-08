@@ -24,10 +24,16 @@ from app.domain.tickets.pull_request import PullRequest, PullRequestNotFoundErro
 from app.domain.tickets.pull_request import get as get_pull_request
 from app.domain.tickets.pull_request import list_by_ids as list_prs_by_ids
 
-# Six-state ticket vocabulary. `running` is set when the first workflow step dispatches;
-# `hitl` and `failed` are populated by the workflow-state projection;
+# Six-state ticket vocabulary. `running` is set when the first pipeline stage dispatches;
+# `hitl` and `failed` are populated by the run-state projection;
 # `done`/`cancelled` are terminal.
 TicketStatus = Literal["pending", "running", "hitl", "done", "failed", "cancelled"]
+
+# Transient INSERT-time value for `branch_name` (NOT NULL) when the real
+# name needs the server-minted `ticket_id` to compute (`mint_branch_name`).
+# Overwritten by an UPDATE in the same uncommitted transaction — never
+# durable, never read.
+_PENDING_BRANCH_NAME_PLACEHOLDER = "yaaos/pending"
 
 
 class Ticket(BaseModel):
@@ -46,9 +52,9 @@ class Ticket(BaseModel):
     payload: dict = Field(default_factory=dict)
     # Soft ref to the pipeline_runs row currently driving this ticket.
     current_run_id: UUID | None = None
-    # Per-ticket work branch. Nullable for tickets predating branch minting;
-    # the run engine reads it to build an action stage's ActionContext.branch_name.
-    branch_name: str | None = None
+    # Per-ticket work branch. The run engine reads it to build an action
+    # stage's ActionContext.branch_name.
+    branch_name: str
     # Enriched fields (denormalized at read-time from the linked PR; nullable
     # because a ticket can briefly exist without its PR row in the create flow).
     pr_number: int | None = None
@@ -166,6 +172,12 @@ async def _insert_ticket_atomic(
     winner's id — never returns None. Returns `(ticket_id, created)`.
     Caller commits; never commits here.
     """
+    # `branch_name` is NOT NULL at the DB level, but the caller's mint of
+    # `mint_branch_name(title, ticket_id)` needs `ticket_id`, which is only
+    # known after this INSERT returns (server-minted UUIDv7). Insert a
+    # placeholder when the caller hasn't supplied one; the caller then
+    # overwrites it with the real minted value in the same uncommitted
+    # transaction — no reader ever observes the placeholder.
     stmt = (
         pg_insert(TicketRow)
         .values(
@@ -181,7 +193,7 @@ async def _insert_ticket_atomic(
             type=type,
             idempotency_key=idempotency_key,
             payload=payload,
-            branch_name=branch_name,
+            branch_name=branch_name if branch_name is not None else _PENDING_BRANCH_NAME_PLACEHOLDER,
         )
         .on_conflict_do_nothing(index_elements=list(conflict_target))
         .returning(TicketRow.id)
@@ -359,7 +371,7 @@ async def notify_ticket_status_change(
     """Single broadcast seam for TICKET_STATUS_CHANGED events.
 
     All ticket status changes (creation at pending, state transitions,
-    and workflow terminal outcomes) route through here. Looks up the title
+    and run terminal outcomes) route through here. Looks up the title
     internally so callers stay terse. Caller commits.
     """
     row = (
@@ -719,7 +731,7 @@ async def abandon(ticket_id: UUID, *, reason: str, org_id: UUID) -> None:
 
 async def fail(ticket_id: UUID, *, reason: str, org_id: UUID) -> None:
     """Move a `running` ticket to `failed`. The reason is recorded in the
-    audit row's payload — caller-supplied so the sweep / workflow / HITL
+    audit row's payload — caller-supplied so the sweep / run / HITL
     layers can each tag their own failure mode."""
     await _transition(ticket_id, new_status="failed", org_id=org_id, reason=reason)
 

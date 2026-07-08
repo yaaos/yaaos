@@ -234,7 +234,7 @@ async def test_idle_sweep_expires_active_workspace_past_max_idle(db_session) -> 
 async def test_idle_sweep_leaves_active_workspace_with_live_claim(db_session) -> None:  # type: ignore[no-untyped-def]
     """ACTIVE rows with a live `current_command_id` are skipped — the engine
     owns them. The idle sweep must never yank a workspace out from under an
-    in-flight workflow."""
+    in-flight run."""
     register_workspace_provider(_GoodProvider())
     row = await _make_row(
         db_session,
@@ -365,13 +365,13 @@ def test_workspace_registry_items_is_immutable_snapshot() -> None:
     assert reg.items()[0][1] is not None  # original provider still there
 
 
-# ── failsafe_agent_loss: workflow correlation via agent_commands ────────────
+# ── failsafe_agent_loss: run correlation via agent_commands ────────────
 
 
 async def test_failsafe_agent_loss_uses_command_row_correlation(db_session) -> None:
     """failsafe_agent_loss synthesizes a terminal failure for an in-flight
-    command. The workflow_execution_id must come from agent_commands, not from
-    the shed workspaces.current_holder_workflow_id column."""
+    command. The run_id must come from agent_commands, not from
+    the shed workspaces.current_holder_run_id column."""
     org_id = uuid4()
     stale = await seed_agent(org_id=org_id)
     workspace_id = uuid7()

@@ -23,7 +23,7 @@ class AgentEventEnrichment(TypedDict, total=False):
 
     Keys:
     - `output` — the structured skill response JSON extracted by `plugin.parse_result`
-      from the stream-json `result` field; forwarded to the workflow as `outputs["output"]`
+      from the stream-json `result` field; forwarded to the run as `outputs["output"]`
       and validated by `CodingAgentCommand.handle_response` against `ExpectedResponse`.
     - `error_message` — structured error text from the run; `None` when the
       agent completed without a reported error.

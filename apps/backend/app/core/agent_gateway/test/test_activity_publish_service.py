@@ -2,8 +2,8 @@
 events through `publish_workspace_activity` on the org-scoped channel.
 
 All three sites call
-`publish_workspace_activity(org_id=..., workflow_execution_id=..., payload=...)`
-so the SPA subscribes to the namespaced `{org_id}:workspace_activity:{wfx_id}`
+`publish_workspace_activity(org_id=..., run_id=..., payload=...)`
+so the SPA subscribes to the namespaced `{org_id}:workspace_activity:{run_id}`
 channel.
 """
 
@@ -65,14 +65,14 @@ async def _fixture_org_and_agent(db_session) -> tuple[UUID, UUID, str]:
 @pytest.mark.service
 async def test_ws_batch_publishes_workspace_activity_with_org_id(db_session) -> None:
     """WS activity_batch handler calls `publish_workspace_activity` so events
-    arrive on `subscribe_workspace_activity(org_id, wfx_id)`.
+    arrive on `subscribe_workspace_activity(org_id, run_id)`.
 
     Strategy: install a bearer stub that returns the known org_id; subscribe
     to the org-scoped channel; send an activity_batch over the WS; assert the
     event arrives on the subscription.
     """
     org_id, agent_id, token = await _fixture_org_and_agent(db_session)
-    wfx_id = uuid4()
+    run_id = uuid4()
 
     # Install a bearer stub so the WS upgrade doesn't need a DB round-trip
     # inside the synchronous TestClient portal.
@@ -85,7 +85,7 @@ async def test_ws_batch_publishes_workspace_activity_with_org_id(db_session) -> 
         received: list[dict] = []
 
         async def _consume() -> None:
-            async for evt in subscribe_workspace_activity(org_id, wfx_id):
+            async for evt in subscribe_workspace_activity(org_id, run_id):
                 received.append(evt)
                 if len(received) >= 2:
                     return
@@ -103,7 +103,7 @@ async def test_ws_batch_publishes_workspace_activity_with_org_id(db_session) -> 
                     ws.send_json(
                         {
                             "type": "activity_batch",
-                            "workflow_execution_id": str(wfx_id),
+                            "run_id": str(run_id),
                             "events": [
                                 {"kind": "agent.thought", "text": "thinking"},
                                 {"kind": "agent.tool_use", "tool": "Read"},

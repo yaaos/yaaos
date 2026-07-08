@@ -6,7 +6,7 @@
 
 - Owns: `CloudflareIngressMiddleware`, `AuthMiddleware`, `RouteSecurity` enum, `Action` enum, `Role` enum, `_REQUIRED_ROLE` map, `required_role_for(action)`, identity contextvars, `org_context()`, `classify_route()`.
 - Does NOT own: session-cookie resolution or membership lookup — those are in [`core/sessions`](core_sessions.md), which also owns `/api/auth/*` routes.
-- Emits: sets `org_id_var`, `user_id_var`, `actor_kind_var`, `actor_id_var`, `workflow_execution_id_var`, `command_id_var`, `route_security_resolved`. Consumed by structlog, OTel span processor, log filter, and audit-log writes.
+- Emits: sets `org_id_var`, `user_id_var`, `actor_kind_var`, `actor_id_var`, `run_id_var`, `command_id_var`, `route_security_resolved`. Consumed by structlog, OTel span processor, log filter, and audit-log writes.
 
 ## Role
 
@@ -50,11 +50,11 @@
 
 **`GET /api/intake/points` is `ORG_SCOPED`, not unclassified** — the `/api/intake` prefix itself stays unclassified (`POST /api/intake/{type}`, the GitHub webhook, must never gain an `X-Yaaos-Org-Slug`/CSRF requirement). One method+path pair overrides the fall-through via `ORG_SCOPED_METHOD_EXACT`, the same tier `USER_SCOPED_METHOD_EXACT` uses.
 
-**`org_context(org_id, actor_kind, actor_id)`** — async context manager for background jobs. Sets the four identity vars + `route_security_resolved = "background"` + OTel attrs on the current span + structlog `bind_contextvars`. Resets on exit. Does NOT set `workflow_execution_id_var` or `command_id_var`.
+**`org_context(org_id, actor_kind, actor_id)`** — async context manager for background jobs. Sets the four identity vars + `route_security_resolved = "background"` + OTel attrs on the current span + structlog `bind_contextvars`. Resets on exit. Does NOT set `run_id_var` or `command_id_var`.
 
-**`workflow_execution_id_var` + `command_id_var`** — run/command-scope contextvars, read by the span processor and `_YaaosLogDimsFilter` to stamp `yaaos.workflow_id`/`yaaos.command_id` on every span and log record when set. No production setter today — always unset.
+**`run_id_var` + `command_id_var`** — run/command-scope contextvars, read by the span processor and `_YaaosLogDimsFilter` to stamp `yaaos.run_id`/`yaaos.command_id` on every span and log record when set. No production setter today — always unset.
 
-**Standard dims on every span** — `YaaosDimensionsSpanProcessor` (in `core/observability`) reads all six identity/workflow contextvars on `on_start` and stamps `yaaos.org_id`, `yaaos.user_id`, `yaaos.actor_kind`, `yaaos.workflow_id`, `yaaos.command_id` on every new span. Dims are only stamped when the var is set — background spans carry org+actor but no `user_id`; non-workflow spans carry no `workflow_id`/`command_id`. The middleware's previous inline `set_attribute` calls are removed; the processor makes dims universal without per-span code.
+**Standard dims on every span** — `YaaosDimensionsSpanProcessor` (in `core/observability`) reads all six identity/run contextvars on `on_start` and stamps `yaaos.org_id`, `yaaos.user_id`, `yaaos.actor_kind`, `yaaos.run_id`, `yaaos.command_id` on every new span. Dims are only stamped when the var is set — background spans carry org+actor but no `user_id`; non-run spans carry no `run_id`/`command_id`. The middleware's previous inline `set_attribute` calls are removed; the processor makes dims universal without per-span code.
 
 **Pure-ASGI, not `BaseHTTPMiddleware`** — contextvars set inside the route handler propagate back to the middleware on the way out. `BaseHTTPMiddleware` runs downstream in a separate task, making those mutations invisible.
 

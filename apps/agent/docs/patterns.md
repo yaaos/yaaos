@@ -121,5 +121,5 @@ Canonical shapes for work that can run concurrently across multiple agent pods. 
 ### Identity-integrity fatal exit
 
 - **Pattern:** after first identity exchange, `Supervisor` pins `agentID` and `orgID`. Every subsequent bearer renewal calls `acceptIdentityChange()` before accepting a differing identity. In production builds `acceptIdentityChange()` is always `false`; a mismatch returns `refreshResult{fatal: true}` and `bearerRefreshLoop` calls `os.Exit(1)`.
-- **Why:** an agent that silently continues under a different identity would corrupt org-scoped audit and workflow records. A hard exit forces the orchestrator to restart with a fresh exchange rather than propagating bad identity silently.
+- **Why:** an agent that silently continues under a different identity would corrupt org-scoped audit and run records. A hard exit forces the orchestrator to restart with a fresh exchange rather than propagating bad identity silently.
 - **Reference:** `apps/agent/internal/supervisor/supervisor.go:582` (the `acceptIdentityChange()` guard in `runOneRefreshCycle`); `:623` (the `os.Exit(1)` call in `bearerRefreshLoop`).

@@ -2259,7 +2259,7 @@
         "type": "object"
       },
       "PipelineRun": {
-        "description": "Replaces WorkflowExecution — the Runs-tab timeline entry.",
+        "description": "The Runs-tab timeline entry for one pipeline run.",
         "properties": {
           "completed_at": {
             "anyOf": [
@@ -8936,7 +8936,7 @@
     },
     "/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity": {
       "get": {
-        "description": "Reuses `core/coding_agent.get_step_activity`, keyed on\n`(coding_agent_runs.workflow_execution_id, step_id)` — the pipelines\nengine stamps `workflow_execution_id=<run_id>` and\n`step_id=str(stage_execution_id)` (TEXT column, pre-rename) at dispatch\ntime. 404s when the run doesn't belong to the caller's org.",
+        "description": "Reuses `core/coding_agent.get_stage_activity`, keyed on\n`(coding_agent_runs.run_id, stage_execution_id)` — both UUID columns, so\nthe join happens directly on the path params with no stringify hop.\n404s when the run doesn't belong to the caller's org.",
         "operationId": "stage_activity_endpoint_api_pipelines_runs__run_id__stages__stage_execution_id__activity_get",
         "parameters": [
           {
@@ -9758,18 +9758,18 @@
         ]
       }
     },
-    "/api/sse/workspace_activity/{workflow_execution_id}": {
+    "/api/sse/workspace_activity/{run_id}": {
       "get": {
-        "description": "Subscribe an SSE client to the per-workflow activity event stream.\n\nCross-org isolation is the channel key: subscribers attach to\n`{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a\ndifferent org subscribes to a channel nobody publishes to and yields an\nempty stream.",
-        "operationId": "stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get",
+        "description": "Subscribe an SSE client to the per-run activity event stream.\n\nCross-org isolation is the channel key: subscribers attach to\n`{caller_org}:workspace_activity:{run_id}`. A request for a run owned by a\ndifferent org subscribes to a channel nobody publishes to and yields an\nempty stream.",
+        "operationId": "stream_workspace_activity_api_sse_workspace_activity__run_id__get",
         "parameters": [
           {
             "in": "path",
-            "name": "workflow_execution_id",
+            "name": "run_id",
             "required": true,
             "schema": {
               "format": "uuid",
-              "title": "Workflow Execution Id",
+              "title": "Run Id",
               "type": "string"
             }
           },
@@ -10364,7 +10364,7 @@
     },
     "/api/tickets/dashboard": {
       "get": {
-        "description": "Single-query Dashboard projection per E2a.3.\n\nResponse shape:\n`{stats: {in_flight, hitl_pending, completed_today, failed_today},\n   in_flight: [TicketRow ≤10],\n   needs_attention: [TicketRow ≤5]}`.\n\nAvoids the SPA making three `/api/tickets?status=…` calls in a tight\npolling loop. `t.status` is the 6-state vocab\n(pending / running / hitl / done / failed / cancelled); precise hitl/failed\ncounts depend on the workflow-state projection landing on every\ntransition.",
+        "description": "Single-query Dashboard projection per E2a.3.\n\nResponse shape:\n`{stats: {in_flight, hitl_pending, completed_today, failed_today},\n   in_flight: [TicketRow ≤10],\n   needs_attention: [TicketRow ≤5]}`.\n\nAvoids the SPA making three `/api/tickets?status=…` calls in a tight\npolling loop. `t.status` is the 6-state vocab\n(pending / running / hitl / done / failed / cancelled); precise hitl/failed\ncounts depend on the run-state projection landing on every\ntransition.",
         "operationId": "dashboard_api_tickets_dashboard_get",
         "parameters": [
           {

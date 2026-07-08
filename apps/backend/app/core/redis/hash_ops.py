@@ -1,6 +1,6 @@
-"""HASH primitives for cross-pod workflow route metadata.
+"""HASH primitives for cross-pod run route metadata.
 
-Stores the `{workspace_id, agent_id}` mapping for a workflow execution so
+Stores the `{workspace_id, agent_id}` mapping for a pipeline run so
 any pod can resolve which agent's WS channel to notify on subscribe/unsubscribe.
 """
 

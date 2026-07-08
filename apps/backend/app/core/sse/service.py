@@ -9,8 +9,8 @@ silently discard stashed events so rolled-back transactions never emit
 SPA events.
 
 Workspace-activity pipeline: `publish_workspace_activity` /
-`subscribe_workspace_activity` use a per-org-per-workflow channel
-(`{org_id}:workspace_activity:{workflow_execution_id}`). Raw agent event
+`subscribe_workspace_activity` use a per-org-per-run channel
+(`{org_id}:workspace_activity:{run_id}`). Raw agent event
 dict passed through unchanged — no envelope, no `ts` stamping.
 
 `serialize_for_sse(payload)` formats any dict as an HTTP `text/event-stream`
@@ -154,32 +154,32 @@ def subscribe_general(org_id: UUID) -> AsyncIterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _channel_for_workspace_activity(org_id: UUID, workflow_execution_id: UUID) -> str:
-    """Internal: per-org per-workflow channel name for workspace-activity events. NOT in __all__."""
-    return f"{org_id}:workspace_activity:{workflow_execution_id}"
+def _channel_for_workspace_activity(org_id: UUID, run_id: UUID) -> str:
+    """Internal: per-org per-run channel name for workspace-activity events. NOT in __all__."""
+    return f"{org_id}:workspace_activity:{run_id}"
 
 
 async def publish_workspace_activity(
     *,
     org_id: UUID,
-    workflow_execution_id: UUID,
+    run_id: UUID,
     payload: dict[str, Any],
 ) -> None:
-    """Publish a workspace-activity event for a specific org + workflow execution.
+    """Publish a workspace-activity event for a specific org + pipeline run.
 
     Passes `payload` through unchanged — no envelope, no `ts` stamping.
     Redis fire-and-forget semantics apply.
     """
-    await redis_client.publish(_channel_for_workspace_activity(org_id, workflow_execution_id), payload)
+    await redis_client.publish(_channel_for_workspace_activity(org_id, run_id), payload)
 
 
-def subscribe_workspace_activity(org_id: UUID, workflow_execution_id: UUID) -> AsyncIterator[dict[str, Any]]:
-    """Async iterator over workspace-activity events for `org_id` + `workflow_execution_id`.
+def subscribe_workspace_activity(org_id: UUID, run_id: UUID) -> AsyncIterator[dict[str, Any]]:
+    """Async iterator over workspace-activity events for `org_id` + `run_id`.
 
     Returns an async iterator — consumers do
-    `async for event in subscribe_workspace_activity(org_id, wfx_id)`.
+    `async for event in subscribe_workspace_activity(org_id, run_id)`.
     """
-    return redis_client.subscribe(_channel_for_workspace_activity(org_id, workflow_execution_id))
+    return redis_client.subscribe(_channel_for_workspace_activity(org_id, run_id))
 
 
 # ---------------------------------------------------------------------------

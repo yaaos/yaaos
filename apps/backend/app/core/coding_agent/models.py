@@ -45,10 +45,10 @@ class CodingAgentRunRow(Base):
     )
     # Tenant scope — soft FK (no DB FK), consistent with workspaces.org_id.
     org_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
-    # Soft FK → workflow_executions(id); cross-module, no DB FK.
-    workflow_execution_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
-    # The workflow step that dispatched this run.
-    step_id: Mapped[str] = mapped_column(String, nullable=False)
+    # Soft FK → pipeline_runs(id); cross-module, no DB FK.
+    run_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    # The stage execution that dispatched this run.
+    stage_execution_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     # Soft FK → agent_commands(id); 1:1 with the command.
     agent_command_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     # Reporting dimension — e.g. "review".

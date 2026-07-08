@@ -189,7 +189,7 @@ class StageExecution(BaseModel, frozen=True):
 
 
 class PipelineRun(BaseModel, frozen=True):
-    """Replaces WorkflowExecution — the Runs-tab timeline entry."""
+    """The Runs-tab timeline entry for one pipeline run."""
 
     id: UUID
     pipeline_name: str

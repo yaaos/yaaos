@@ -4,7 +4,7 @@ Channel naming and event shapes over the `core/redis` JSON pub/sub bus, so a
 publish from the worker process reaches an SSE subscriber attached to a
 different web process. Two channel shapes in active use:
 - `{org_id}:general` — org-scoped general events with typed `GeneralEventKind`.
-- `{org_id}:workspace_activity:{workflow_execution_id}` — per-org per-workflow activity events.
+- `{org_id}:workspace_activity:{run_id}` — per-org per-run activity events.
 
 `shutdown()` sets the process-wide close event so all active stream generators
 emit a final `retry:`+comment frame and return; registered with the web

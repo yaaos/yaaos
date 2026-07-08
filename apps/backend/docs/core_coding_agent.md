@@ -68,8 +68,8 @@ The agent stats `skill_path` before spawning claude — absent → `completed_fa
 |---|---|
 | `id` | UUIDv7 PK. |
 | `org_id` | Soft FK — org-scoped queries. |
-| `workflow_execution_id` | Soft FK — links to workflow execution. |
-| `step_id` | Workflow step id (e.g. `"review"`). |
+| `run_id` | Soft FK — links to the pipeline run. |
+| `stage_execution_id` | Soft FK — links to the stage execution (e.g. the review stage). |
 | `agent_command_id` | FK to `agent_commands.id`. |
 | `command_kind` | Command kind string (`"InvokeClaudeCode"`). |
 | `plugin_id` | Plugin that issued the run (sink resolves which plugin parses the terminal event). |
@@ -85,13 +85,13 @@ The agent stats `skill_path` before spawning claude — absent → `completed_fa
 - `create_run(...)` — inserts with `status=running`, flushes, returns the run id. In `__all__`; cross-module tests (e.g. `agent_gateway/test/`) seed run rows via this public function.
 - `get_run_ref_for_command(agent_command_id, *, session)` — returns `(run_id, plugin_id)`; used by the run sink to resolve which plugin parses the terminal event.
 - `finalize_run(run_id, *, usage, duration_ms, activity, exit_code, status, session)` — updates status, tokens, duration, activity blob.
-- `get_step_activity(workflow_execution_id, step_id, *, session)` — public; two-hop: resolve run id, then read the `coding_agent_activity` JSONB payload. Returns `None` when absent (partition TTL, no run).
+- `get_stage_activity(run_id, stage_execution_id, *, session)` — public; two-hop: resolve the coding-agent run id, then read the `coding_agent_activity` JSONB payload. Returns `None` when absent (partition TTL, no run).
 - `get_run_id_for_command(agent_command_id, *, session)` — internal helper (not in `__all__`); lookup by command id. Reachable via direct submodule import within `core/coding_agent/test/`.
-- `get_run_id_for_workflow_step(workflow_execution_id, step_id, *, session)` — internal helper (not in `__all__`); lookup by `(workflow_execution_id, step_id)`. Reachable via direct submodule import within `core/coding_agent/test/`.
+- `get_run_id_for_stage(run_id, stage_execution_id, *, session)` — internal helper (not in `__all__`); lookup by `(run_id, stage_execution_id)`. Reachable via direct submodule import within `core/coding_agent/test/`.
 
 ### `AgentRunSink` (IoC seam)
 
-`core/agent_gateway` defines the `AgentRunSink` Protocol. `core/coding_agent.__init__` registers `CodingAgentRunSinkImpl()` at import. `record_agent_event` calls the sink on every terminal `AgentEvent`; for `InvokeClaudeCode` it resolves the plugin via `get_run_ref_for_command`, calls `plugin.parse_result(outputs)`, then calls `finalize_run`. Returns an `AgentEventEnrichment` (`output` + `error_message`) for downstream workflow steps. See [core_agent_gateway.md](core_agent_gateway.md).
+`core/agent_gateway` defines the `AgentRunSink` Protocol. `core/coding_agent.__init__` registers `CodingAgentRunSinkImpl()` at import. `record_agent_event` calls the sink on every terminal `AgentEvent`; for `InvokeClaudeCode` it resolves the plugin via `get_run_ref_for_command`, calls `plugin.parse_result(outputs)`, then calls `finalize_run`. Returns an `AgentEventEnrichment` (`output` + `error_message`) for the downstream run. See [core_agent_gateway.md](core_agent_gateway.md).
 
 ### Table — `coding_agent_activity`
 

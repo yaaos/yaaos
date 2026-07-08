@@ -188,15 +188,15 @@ async def test_reconcile_empty_set_returns_empty(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_claim_returns_holder(db_session) -> None:
-    """resolve_claim reads workflow_execution_id from agent_commands, not from
-    the shed workspaces.current_holder_workflow_id column."""
+    """resolve_claim reads run_id from agent_commands, not from
+    the shed workspaces.current_holder_run_id column."""
     sink = WorkspaceAgentReportSinkImpl()
     cmd_id = uuid7()
     workspace_id = uuid7()
-    wfx_id = uuid4()
+    run_id = uuid4()
     org_id = uuid4()
 
-    # Enqueue an agent_commands row with the expected workflow_execution_id.
+    # Enqueue an agent_commands row with the expected run_id.
     cmd = CleanupWorkspaceCommand(
         command_id=cmd_id,
         workspace_id=workspace_id,
@@ -206,12 +206,12 @@ async def test_resolve_claim_returns_holder(db_session) -> None:
         org_id=org_id,
         command=cmd,
         session=db_session,
-        workflow_execution_id=wfx_id,
+        run_id=run_id,
     )
     await db_session.flush()
 
     result = await sink.resolve_claim(cmd_id, db_session)
-    assert result == wfx_id
+    assert result == run_id
 
 
 @pytest.mark.asyncio

@@ -146,7 +146,7 @@ paths:
     post:
       summary: Report AgentCommand progress + terminal result.
       description: |
-        Triggers `core/workflow.handle_agent_event` when the event is
+        Triggers every registered agent-event consumer (`domain/pipelines.handle_agent_event`) when the event is
         terminal. The control plane validates `command_id` against the
         workspace's `current_command_id` (single-flight claim); a stale
         command (workspace already moved on) is recorded as
@@ -228,7 +228,7 @@ components:
           type: string
           enum: [event_recorded, stale_claim_dropped]
           description: |
-            - `event_recorded`: the event was persisted and any workflow side-effects fired.
+            - `event_recorded`: the event was persisted and any run side-effects fired.
             - `stale_claim_dropped`: the backend no longer holds this command's claim (workspace moved on or command row was reaped); the agent should treat this as a successful no-op and stop retrying.
 
     ErrorEnvelope:
@@ -433,15 +433,15 @@ components:
             at claim. The agent echoes it back on the terminal/progress AgentEvent;
             the backend verifies it (constant-time) before any side effect.
             Treated as a secret — never logged in cleartext.
-        workflow_execution_id:
+        run_id:
           type: string
           format: uuid
           nullable: true
           description: |
-            The workflow execution that dispatched this command. Stamped at
-            enqueue time so agent-side spans can carry `workflow_id` without a
+            The pipeline run that dispatched this command. Stamped at
+            enqueue time so agent-side spans can carry `run_id` without a
             separate lookup. NULL for agent-scoped commands (e.g. ConfigUpdate)
-            that do not correlate to a workflow.
+            that do not correlate to a run.
 
     ProvisionWorkspaceCommand:
       allOf:
@@ -743,7 +743,7 @@ components:
           type: string
           nullable: true
           description: Per-command capability token minted at claim. Agent echoes it on the terminal AgentEvent.
-        workflow_execution_id:
+        run_id:
           type: string
           format: uuid
           nullable: true
@@ -769,7 +769,7 @@ components:
           type: string
           nullable: true
           description: Per-command capability token minted at claim. Agent echoes it on the terminal AgentEvent.
-        workflow_execution_id:
+        run_id:
           type: string
           format: uuid
           nullable: true
@@ -797,9 +797,9 @@ components:
             event for a claimed command to cancel the 30-second lease requeue
             (flips `claimed → delivered` on the command row).
             `completed_*` is terminal — the backend resolves the
-            event-to-workflow lookup chain
-            (`command_id → workspace → current_holder_workflow_id`) and
-            enqueues `core/workflow.handle_agent_event`.
+            event-to-run correlation directly
+            (`command_id → agent_commands.run_id`) and
+            enqueues every registered agent-event consumer (`domain/pipelines.handle_agent_event`).
         outcome_label:
           type: string
           nullable: true

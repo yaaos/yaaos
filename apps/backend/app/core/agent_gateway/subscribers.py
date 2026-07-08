@@ -1,9 +1,9 @@
 """Demand-pull subscriber registry — only forward activity events when a
 UI is watching.
 
-`SubscriberRegistry.track(workflow_execution_id, workspace_id, agent_id)`
+`SubscriberRegistry.track(run_id, workspace_id, agent_id)`
 is called by an SSE handler when a client connects. The registry writes to
-Redis (`workflow_subscribers:{wfx_id}` ZSET, `workflow_route:{wfx_id}` HASH,
+Redis (`run_subscribers:{run_id}` ZSET, `run_route:{run_id}` HASH,
 `agent_routes:{agent_id}` ZSET) and publishes an `AgentWsControlMessage` on
 the `agent_ws_control:{agent_id}` pub/sub channel. The pod whose WS sender
 is registered for `agent_id` receives the control message and forwards it
@@ -69,7 +69,7 @@ class AgentWsControlMessage(BaseModel):
 
     type: Literal["subscribe", "unsubscribe"]
     workspace_id: UUID
-    workflow_execution_id: UUID
+    run_id: UUID
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -81,12 +81,12 @@ _SUBSCRIBER_STALE_THRESHOLD_SECONDS = 60
 # ── Redis key helpers ─────────────────────────────────────────────────────────
 
 
-def _wfx_subscribers_key(wfx_id: UUID) -> str:
-    return f"workflow_subscribers:{wfx_id}"
+def _run_subscribers_key(run_id: UUID) -> str:
+    return f"run_subscribers:{run_id}"
 
 
-def _wfx_route_key(wfx_id: UUID) -> str:
-    return f"workflow_route:{wfx_id}"
+def _run_route_key(run_id: UUID) -> str:
+    return f"run_route:{run_id}"
 
 
 def _agent_routes_key(agent_id: UUID) -> str:
@@ -120,12 +120,12 @@ class SubscriberRegistry:
         self._senders: dict[UUID, Sender] = {}
         # agent_id → asyncio.Task running the Redis subscribe consumer loop.
         self._subscribe_tasks: dict[UUID, asyncio.Task[None]] = {}
-        # wfx_id → set of ZSET members tracked by THIS pod (per-connection).
-        # Same pod may hold multiple concurrent SSE subscribers to the same wfx_id;
+        # run_id → set of ZSET members tracked by THIS pod (per-connection).
+        # Same pod may hold multiple concurrent SSE subscribers to the same run_id;
         # each call to track() gets a unique conn_id so multiple subscriptions are
         # counted independently (matches the agent-side cardinality contract).
         self._connections: dict[UUID, set[str]] = {}
-        # agent_id → set of wfx_ids currently streaming (in-memory tracking
+        # agent_id → set of run_ids currently streaming (in-memory tracking
         # for the reconciler to know what the agent is currently sending).
         self._streaming: dict[UUID, set[UUID]] = {}
 
@@ -143,7 +143,7 @@ class SubscriberRegistry:
         delivered via pub/sub rather than lost.
 
         Then runs an initial reconciliation pass: reads `agent_routes:{agent_id}`
-        and for each wfx_id with ZCARD ≥ 1 sends the subscribe message directly
+        and for each run_id with ZCARD ≥ 1 sends the subscribe message directly
         so the agent picks up where it left off on reconnect. Duplicate subscribes
         that arrive via both replay and pub/sub are harmless — the agent handles
         subscribe idempotently.
@@ -177,22 +177,22 @@ class SubscriberRegistry:
         # _RECONCILE_INTERVAL_SECONDS.
         replay: list[AgentWsControlMessage] = []
         try:
-            wfx_ids = await zset_members(_agent_routes_key(agent_id))
-            for wfx_id_str in wfx_ids:
+            run_ids = await zset_members(_agent_routes_key(agent_id))
+            for run_id_str in run_ids:
                 try:
-                    wfx_id = UUID(wfx_id_str)
+                    run_id = UUID(run_id_str)
                 except ValueError:
                     continue
-                card = await zset_card(_wfx_subscribers_key(wfx_id))
+                card = await zset_card(_run_subscribers_key(run_id))
                 if card >= 1:
-                    route = await hash_get_all(_wfx_route_key(wfx_id))
+                    route = await hash_get_all(_run_route_key(run_id))
                     if "workspace_id" in route and "agent_id" in route:
                         try:
                             replay.append(
                                 AgentWsControlMessage(
                                     type="subscribe",
                                     workspace_id=UUID(route["workspace_id"]),
-                                    workflow_execution_id=wfx_id,
+                                    run_id=run_id,
                                 )
                             )
                         except ValueError:
@@ -215,7 +215,7 @@ class SubscriberRegistry:
             try:
                 await sender(msg.model_dump(mode="json"))
                 async with self._lock:
-                    self._streaming.setdefault(agent_id, set()).add(msg.workflow_execution_id)
+                    self._streaming.setdefault(agent_id, set()).add(msg.run_id)
             except Exception as exc:
                 log.warning(
                     "subscribers.resubscribe_send_failed",
@@ -253,9 +253,9 @@ class SubscriberRegistry:
                 async with self._lock:
                     streaming = self._streaming.setdefault(agent_id, set())
                     if msg.type == "subscribe":
-                        streaming.add(msg.workflow_execution_id)
+                        streaming.add(msg.run_id)
                     else:
-                        streaming.discard(msg.workflow_execution_id)
+                        streaming.discard(msg.run_id)
 
                 try:
                     await sender(msg.model_dump(mode="json"))
@@ -296,21 +296,21 @@ class SubscriberRegistry:
     async def track(
         self,
         *,
-        workflow_execution_id: UUID,
+        run_id: UUID,
         workspace_id: UUID,
         agent_id: UUID,
     ) -> str:
-        """Record one UI subscriber for `workflow_execution_id`.
+        """Record one UI subscriber for `run_id`.
 
         Returns the `conn_id` minted for this subscription. The caller MUST
         pass the same `conn_id` to `untrack()` when the subscription ends so
         the corresponding ZSET member is removed and reference counts stay
-        accurate when multiple subscribers share a wfx_id on the same pod.
+        accurate when multiple subscribers share a run_id on the same pod.
 
         Writes to Redis:
-        - ZADD `workflow_subscribers:{wfx_id}` member=`{pod_id}:{conn_id}` score=now
-        - HSET `workflow_route:{wfx_id}` {workspace_id, agent_id}
-        - ZADD `agent_routes:{agent_id}` member={wfx_id} score=now
+        - ZADD `run_subscribers:{run_id}` member=`{pod_id}:{conn_id}` score=now
+        - HSET `run_route:{run_id}` {workspace_id, agent_id}
+        - ZADD `agent_routes:{agent_id}` member={run_id} score=now
 
         Then PUBLISH `agent_ws_control:{agent_id}` with a subscribe envelope.
         """
@@ -318,23 +318,23 @@ class SubscriberRegistry:
         member = f"{self._pod_id}:{conn_id}"
 
         async with self._lock:
-            self._connections.setdefault(workflow_execution_id, set()).add(member)
+            self._connections.setdefault(run_id, set()).add(member)
 
         score = time.time()
-        await zset_add_member(_wfx_subscribers_key(workflow_execution_id), member, score)
+        await zset_add_member(_run_subscribers_key(run_id), member, score)
         await hash_set(
-            _wfx_route_key(workflow_execution_id),
+            _run_route_key(run_id),
             {
                 "workspace_id": str(workspace_id),
                 "agent_id": str(agent_id),
             },
         )
-        await zset_add_member(_agent_routes_key(agent_id), str(workflow_execution_id), score)
+        await zset_add_member(_agent_routes_key(agent_id), str(run_id), score)
 
         msg = AgentWsControlMessage(
             type="subscribe",
             workspace_id=workspace_id,
-            workflow_execution_id=workflow_execution_id,
+            run_id=run_id,
         )
         try:
             await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
@@ -351,35 +351,35 @@ class SubscriberRegistry:
     async def untrack(
         self,
         *,
-        workflow_execution_id: UUID,
+        run_id: UUID,
         conn_id: str,
     ) -> None:
-        """Remove ONE UI subscriber for `workflow_execution_id`, identified by
+        """Remove ONE UI subscriber for `run_id`, identified by
         the `conn_id` minted at track() time.
 
         Removes the specific member for (pod_id, conn_id) from the ZSET. If
         ZCARD drops to 0:
-        - reads `workflow_route:{wfx_id}` to resolve the agent_id
+        - reads `run_route:{run_id}` to resolve the agent_id
         - publishes unsubscribe envelope on `agent_ws_control:{agent_id}`
-        - DEL `workflow_route:{wfx_id}`
-        - ZREM `agent_routes:{agent_id} {wfx_id}`
+        - DEL `run_route:{run_id}`
+        - ZREM `agent_routes:{agent_id} {run_id}`
 
-        No-op if this pod has no member registered for this (wfx_id, conn_id).
+        No-op if this pod has no member registered for this (run_id, conn_id).
         """
         target_member = f"{self._pod_id}:{conn_id}"
         async with self._lock:
-            members = self._connections.get(workflow_execution_id)
+            members = self._connections.get(run_id)
             if members is None or target_member not in members:
                 return
             members.discard(target_member)
             if not members:
-                del self._connections[workflow_execution_id]
+                del self._connections[run_id]
 
-        await zset_remove_member(_wfx_subscribers_key(workflow_execution_id), target_member)
-        card = await zset_card(_wfx_subscribers_key(workflow_execution_id))
+        await zset_remove_member(_run_subscribers_key(run_id), target_member)
+        card = await zset_card(_run_subscribers_key(run_id))
 
         if card == 0:
-            route = await hash_get_all(_wfx_route_key(workflow_execution_id))
+            route = await hash_get_all(_run_route_key(run_id))
             if route:
                 try:
                     agent_id = UUID(route["agent_id"])
@@ -392,7 +392,7 @@ class SubscriberRegistry:
                     msg = AgentWsControlMessage(
                         type="unsubscribe",
                         workspace_id=workspace_id,
-                        workflow_execution_id=workflow_execution_id,
+                        run_id=run_id,
                     )
                     try:
                         await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
@@ -402,13 +402,13 @@ class SubscriberRegistry:
                             agent_id=str(agent_id),
                             err=str(exc),
                         )
-                    await hash_delete(_wfx_route_key(workflow_execution_id))
-                    await zset_remove_member(_agent_routes_key(agent_id), str(workflow_execution_id))
+                    await hash_delete(_run_route_key(run_id))
+                    await zset_remove_member(_agent_routes_key(agent_id), str(run_id))
 
     async def heartbeat(
         self,
         *,
-        workflow_execution_id: UUID,
+        run_id: UUID,
         conn_id: str,
         agent_id: UUID,
     ) -> None:
@@ -417,7 +417,7 @@ class SubscriberRegistry:
 
         Called periodically (every `_SSE_HEARTBEAT_INTERVAL_SECONDS`) by the
         SSE generator that owns the subscription. Touches the same two ZSETs
-        that `track()` wrote: `workflow_subscribers:{wfx_id}` and
+        that `track()` wrote: `run_subscribers:{run_id}` and
         `agent_routes:{agent_id}`. No-op (logged) if Redis is unavailable —
         the reconciler will pick up state divergence within
         `_RECONCILE_INTERVAL_SECONDS`.
@@ -425,12 +425,12 @@ class SubscriberRegistry:
         member = f"{self._pod_id}:{conn_id}"
         score = time.time()
         try:
-            await zset_add_member(_wfx_subscribers_key(workflow_execution_id), member, score)
-            await zset_add_member(_agent_routes_key(agent_id), str(workflow_execution_id), score)
+            await zset_add_member(_run_subscribers_key(run_id), member, score)
+            await zset_add_member(_agent_routes_key(agent_id), str(run_id), score)
         except Exception as exc:
             log.warning(
                 "subscribers.heartbeat_failed",
-                workflow_execution_id=str(workflow_execution_id),
+                run_id=str(run_id),
                 agent_id=str(agent_id),
                 err=str(exc),
             )
@@ -440,9 +440,9 @@ class SubscriberRegistry:
     def has_sender(self, agent_id: UUID) -> bool:
         return agent_id in self._senders
 
-    def is_streaming(self, agent_id: UUID, workflow_execution_id: UUID) -> bool:
-        """Return True if this pod believes the agent is streaming `wfx_id`."""
-        return workflow_execution_id in self._streaming.get(agent_id, set())
+    def is_streaming(self, agent_id: UUID, run_id: UUID) -> bool:
+        """Return True if this pod believes the agent is streaming `run_id`."""
+        return run_id in self._streaming.get(agent_id, set())
 
 
 # ── Reconciler ────────────────────────────────────────────────────────────────
@@ -453,7 +453,7 @@ class SubscriberReconciler:
 
     Runs every `_RECONCILE_INTERVAL_SECONDS` on the WS-owning pod. For each
     agent with a registered sender, reads `agent_routes:{agent_id}` and for
-    each wfx_id checks ZCARD truth:
+    each run_id checks ZCARD truth:
     - ZCARD ≥ 1 and agent not streaming → publish subscribe
     - ZCARD == 0 and agent is streaming → publish unsubscribe
     """
@@ -474,19 +474,19 @@ class SubscriberReconciler:
             agent_ids = list(registry._senders.keys())
 
         for agent_id in agent_ids:
-            wfx_ids_str = await zset_members(_agent_routes_key(agent_id))
-            for wfx_id_str in wfx_ids_str:
+            run_ids_str = await zset_members(_agent_routes_key(agent_id))
+            for run_id_str in run_ids_str:
                 try:
-                    wfx_id = UUID(wfx_id_str)
+                    run_id = UUID(run_id_str)
                 except ValueError:
                     continue
 
-                card = await zset_card(_wfx_subscribers_key(wfx_id))
-                is_streaming = registry.is_streaming(agent_id, wfx_id)
+                card = await zset_card(_run_subscribers_key(run_id))
+                is_streaming = registry.is_streaming(agent_id, run_id)
 
                 if card >= 1 and not is_streaming:
                     # Agent should be streaming but isn't — re-publish subscribe.
-                    route = await hash_get_all(_wfx_route_key(wfx_id))
+                    route = await hash_get_all(_run_route_key(run_id))
                     if not route:
                         continue
                     try:
@@ -496,7 +496,7 @@ class SubscriberReconciler:
                     msg = AgentWsControlMessage(
                         type="subscribe",
                         workspace_id=workspace_id,
-                        workflow_execution_id=wfx_id,
+                        run_id=run_id,
                     )
                     try:
                         await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
@@ -504,13 +504,13 @@ class SubscriberReconciler:
                         log.warning(
                             "subscribers.reconcile_subscribe_failed",
                             agent_id=str(agent_id),
-                            wfx_id=wfx_id_str,
+                            run_id=run_id_str,
                             err=str(exc),
                         )
 
                 elif card == 0 and is_streaming:
                     # Agent is streaming but nobody is watching — publish unsubscribe.
-                    route = await hash_get_all(_wfx_route_key(wfx_id))
+                    route = await hash_get_all(_run_route_key(run_id))
                     if not route:
                         # Route already gone: untrack() already published the
                         # canonical unsubscribe with the real workspace_id. Nothing
@@ -518,7 +518,7 @@ class SubscriberReconciler:
                         log.debug(
                             "subscribers.reconcile_skip_no_route",
                             agent_id=str(agent_id),
-                            wfx_id=wfx_id_str,
+                            run_id=run_id_str,
                         )
                         continue
                     try:
@@ -527,14 +527,14 @@ class SubscriberReconciler:
                         log.warning(
                             "subscribers.reconcile_bad_route",
                             agent_id=str(agent_id),
-                            wfx_id=wfx_id_str,
+                            run_id=run_id_str,
                         )
                         continue
 
                     msg = AgentWsControlMessage(
                         type="unsubscribe",
                         workspace_id=workspace_id,
-                        workflow_execution_id=wfx_id,
+                        run_id=run_id,
                     )
                     try:
                         await publish(_control_channel(agent_id), msg.model_dump(mode="json"))
@@ -542,7 +542,7 @@ class SubscriberReconciler:
                         log.warning(
                             "subscribers.reconcile_unsubscribe_failed",
                             agent_id=str(agent_id),
-                            wfx_id=wfx_id_str,
+                            run_id=run_id_str,
                             err=str(exc),
                         )
 
@@ -553,7 +553,7 @@ class SubscriberReconciler:
 async def _run_subscriber_sweeper() -> None:
     """Garbage-collect stale ZSET entries.
 
-    Scans both `workflow_subscribers:*` (per-wfx subscriber memberships) and
+    Scans both `run_subscribers:*` (per-run subscriber memberships) and
     `agent_routes:*` (per-agent route memberships). For each key removes
     entries older than `_SUBSCRIBER_STALE_THRESHOLD_SECONDS`. Healthy live
     connections re-stamp their scores via `SubscriberRegistry.heartbeat()`
@@ -562,7 +562,7 @@ async def _run_subscriber_sweeper() -> None:
     """
     now = time.time()
     cutoff = now - _SUBSCRIBER_STALE_THRESHOLD_SECONDS
-    for pattern in ("workflow_subscribers:*", "agent_routes:*"):
+    for pattern in ("run_subscribers:*", "agent_routes:*"):
         for key in await scan_keys(pattern):
             try:
                 await zset_remove_by_score(key, 0, cutoff)

@@ -971,7 +971,7 @@ func (s *Supervisor) sendHeartbeat(ctx context.Context) {
 // to the backend.
 //
 // On runner I/O error / context cancel, the pool emits a synthetic
-// `completed_failure` event so the workflow-engine on the backend always
+// `completed_failure` event so the run engine on the backend always
 // sees an outcome (it never silently hangs waiting for our reply).
 func (s *Supervisor) routeCommand(ctx context.Context, cmd command.Command) {
 	header := cmd.Header()
@@ -982,8 +982,8 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd command.Command) {
 		attribute.String("command_id", header.CommandID),
 		attribute.String("kind", string(header.Kind)),
 	}
-	if header.WorkflowExecutionID != "" {
-		spanAttrs = append(spanAttrs, attribute.String("workflow_id", header.WorkflowExecutionID))
+	if header.RunID != "" {
+		spanAttrs = append(spanAttrs, attribute.String("run_id", header.RunID))
 	}
 	ctx, end := tracing.StartSpan(ctx, "supervisor.dispatch."+string(header.Kind), spanAttrs...)
 
@@ -1011,7 +1011,7 @@ func (s *Supervisor) routeCommand(ctx context.Context, cmd command.Command) {
 	// Progress-event forwarder: when the activity WS is up, each in-flight
 	// progress AgentEvent goes through the Conductor — batched at ~250ms,
 	// filtered by the SubscriptionSet (demand-pull: dropped when no UI is
-	// watching this workflow). When the WS isn't configured / dial failed,
+	// watching this run). When the WS isn't configured / dial failed,
 	// falls back to per-event HTTP POST. Either way, missing progress events
 	// aren't a correctness issue — the terminal event still carries
 	// the outcome.
@@ -1245,7 +1245,7 @@ func (s *Supervisor) buildClaimRequest() protocol.ClaimRequest {
 	// long-poll with an empty workspace_ids before the goroutine's Pool.Dispatch
 	// has run, then miss the InvokeClaudeCode command queued right after
 	// ProvisionWorkspace completes — causing a 30-second stall per command in
-	// sequential multi-step workflows.
+	// sequential multi-stage runs.
 	waitSeconds := s.cfg.ClaimWaitSeconds
 	if (len(idleIDs) == 0 && activeCount > 0) || s.pool.PendingDispatch() > 0 {
 		waitSeconds = 1

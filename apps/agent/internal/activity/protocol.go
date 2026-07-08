@@ -18,24 +18,24 @@ const (
 
 // InboundMessage is the decoded shape of `subscribe` / `unsubscribe`.
 // The backend's SubscriberRegistry ships both `workspace_id` (the
-// SubscriptionSet key) and `workflow_execution_id` (the channel key
+// SubscriptionSet key) and `run_id` (the channel key
 // the agent needs to write on outbound activity_batch frames) so the
 // agent caches the mapping without a backend lookup.
 type InboundMessage struct {
-	Kind                InboundKind
-	WorkspaceID         string
-	WorkflowExecutionID string
+	Kind        InboundKind
+	WorkspaceID string
+	RunID       string
 }
 
 type inboundWire struct {
-	Type                string `json:"type"`
-	WorkspaceID         string `json:"workspace_id"`
-	WorkflowExecutionID string `json:"workflow_execution_id"`
+	Type        string `json:"type"`
+	WorkspaceID string `json:"workspace_id"`
+	RunID       string `json:"run_id"`
 }
 
 // DecodeInbound parses one inbound WS message. Returns an error on
 // malformed JSON, unknown `type`, or missing `workspace_id`. The
-// `workflow_execution_id` may be empty (older backends),
+// `run_id` may be empty (older backends),
 // in which case the agent can still update the SubscriptionSet but
 // can't populate outbound batches — caller decides what to do.
 func DecodeInbound(raw []byte) (InboundMessage, error) {
@@ -49,15 +49,15 @@ func DecodeInbound(raw []byte) (InboundMessage, error) {
 	switch w.Type {
 	case "subscribe":
 		return InboundMessage{
-			Kind:                InboundSubscribe,
-			WorkspaceID:         w.WorkspaceID,
-			WorkflowExecutionID: w.WorkflowExecutionID,
+			Kind:        InboundSubscribe,
+			WorkspaceID: w.WorkspaceID,
+			RunID:       w.RunID,
 		}, nil
 	case "unsubscribe":
 		return InboundMessage{
-			Kind:                InboundUnsubscribe,
-			WorkspaceID:         w.WorkspaceID,
-			WorkflowExecutionID: w.WorkflowExecutionID,
+			Kind:        InboundUnsubscribe,
+			WorkspaceID: w.WorkspaceID,
+			RunID:       w.RunID,
 		}, nil
 	default:
 		return InboundMessage{}, fmt.Errorf("activity: unknown inbound type %q", w.Type)
@@ -68,20 +68,20 @@ func DecodeInbound(raw []byte) (InboundMessage, error) {
 // `activity_batch` frame. Mirrors the backend handler in
 // `apps/backend/app/core/agent_gateway/web.py` (`activity_ws`).
 type outboundBatch struct {
-	Type                string                `json:"type"`
-	WorkflowExecutionID string                `json:"workflow_execution_id"`
-	Events              []protocol.AgentEvent `json:"events"`
+	Type   string                `json:"type"`
+	RunID  string                `json:"run_id"`
+	Events []protocol.AgentEvent `json:"events"`
 }
 
 // EncodeBatch produces the JSON bytes for an `activity_batch` frame.
 // `events` may be empty — the encoder doesn't filter (the Batcher
-// already does that). `workflowExecutionID` is what the backend reads
-// to construct `activity:{workflow_execution_id}` channel and fan out
+// already does that). `runID` is what the backend reads
+// to construct `activity:{run_id}` channel and fan out
 // via core/sse_pubsub.
-func EncodeBatch(workflowExecutionID string, events []protocol.AgentEvent) ([]byte, error) {
+func EncodeBatch(runID string, events []protocol.AgentEvent) ([]byte, error) {
 	return json.Marshal(outboundBatch{
-		Type:                "activity_batch",
-		WorkflowExecutionID: workflowExecutionID,
-		Events:              events,
+		Type:   "activity_batch",
+		RunID:  runID,
+		Events: events,
 	})
 }

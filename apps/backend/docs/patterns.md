@@ -76,7 +76,7 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
   - **Rule-7** — private-attribute reach on cross-module receivers is rejected. Taint-based AST visitor covers four receiver shapes: bare alias (`alias._private`), call return (`cross_mod_call()._private`), walrus (`(eng := cross_mod_call())._private`), and subscript (`cross_mod_call()["x"]._private`). Dunders are exempt (Python protocol, not module-private state). Canary: `test_injected_private_attr_via_alias_is_rejected` + `test_injected_private_attr_via_return_taint_is_rejected` + `test_injected_walrus_private_reach_is_rejected` + `test_injected_subscript_private_reach_is_rejected`.
   - **Rule-9** — submodule namespace handles in `__all__` are rejected. The AST classifier reads `__init__.py` and tags each entry as `symbol_reexport` (OK — `from app.X.sub import name`), `inline_def` (OK — `def`/`class`/value in the file), or `namespace_handle` (REJECT — `from app.X import sub` where `sub` is a sibling submodule). Re-exported functions/classes whose name matches a sibling file (`Actor`, `spawn`, `set_if_absent`) are correctly classified as `symbol_reexport` and pass. Canary: `test_injected_namespace_handle_in_all_is_rejected`.
   - **Rule-10** — `ContextVar(...)` bindings in `__all__` are rejected. A ContextVar IS the storage of the owned singleton — exporting it defeats the Cardinal rule (§ Module structure). Canary: `test_injected_contextvar_in_all_is_rejected` + `test_clean_tree_has_no_contextvar_in_all`.
-  - **Rule-12** — module-level instance-literal bindings in `__all__` are rejected (`engine = WorkflowEngine()` exported). Data-type instance literals (Pydantic `BaseModel`, `Enum`, `Workflow`, `dataclass`, `TypedDict`) are exempt — they are vocabulary, not state. Canary: `test_injected_instance_literal_in_all_is_rejected` + `test_data_type_literal_in_all_is_allowed` + `test_clean_tree_has_no_instance_literal_in_all`.
+  - **Rule-12** — module-level instance-literal bindings in `__all__` are rejected (`engine = _Registry()` exported). Data-type instance literals (Pydantic `BaseModel`, `Enum`, `Workflow`, `dataclass`, `TypedDict`) are exempt — they are vocabulary, not state. Canary: `test_injected_instance_literal_in_all_is_rejected` + `test_data_type_literal_in_all_is_allowed` + `test_clean_tree_has_no_instance_literal_in_all`.
   - **Rule-15** — factory functions in `__all__` whose body is just `return <module-singleton>` or `return <ContextVar>.get()` are rejected. Catches `def get_pubsub(): return _pubsub_var.get()` — the "export the live singleton" Cardinal-rule violation. Canary: `test_injected_factory_returns_singleton_is_rejected` + `test_clean_tree_has_no_factory_returns_singleton`.
   - **Rule-16** — mutable container literals in `__all__` are rejected (`REGISTRY: dict = {}`, `CACHE = []`, `KEYS = set()`). Shared mutable state across module boundaries is the same Cardinal-rule violation as an instance export. Tuples, frozensets, `Final[<frozen>]` exempt. Canary: `test_injected_mutable_container_in_all_is_rejected` + `test_clean_tree_has_no_mutable_container_in_all`.
   - **Rule-17** — `bind_*` entries in `__all__` are rejected. Production composition roots use the eager-default ContextVar pattern (or lazy `_get()` for settings-dependent singletons); the only legitimate binding swap is the test-only `set_*_for_tests` context manager. `register_*` is NOT covered — it's the plugin Protocol entry-point pattern. Canary: `test_injected_bind_in_all_is_rejected`.
@@ -224,7 +224,7 @@ Rules:
 
 - Service modules never write `session: AsyncSession | None`, never check `if session is None`, never call `db_session()` themselves. Semgrep rule `apps/backend/.semgrep/no_optional_session.yaml` enforces this.
 - Read-only services follow the same rule — required session, no commits — so callers can compose snapshot-consistent read-then-write.
-- Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints, and the workflow engine's `_start_step_impl` for LocalCommands) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract. The workflow engine is a unique orchestrator: it opens one session, wraps the LocalCommand inside a SAVEPOINT, and passes the outer session so command writes + step state + outbox enqueue commit atomically.
+- Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints, and the run engine's per-stage dispatch taskiq bodies) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract. The run engine is a unique orchestrator: e.g. `domain/pipelines.engine._run_action_stage` opens one session, wraps the `Action.execute` call inside a SAVEPOINT, and passes the outer session so the action's writes + stage-execution state + outbox enqueue commit atomically.
 - `core/audit_log.audit()` and every `audit_for_*` helper require `session=`. The audit row flushes inside the caller's transaction so it can never diverge from the state change it describes.
 
 ### Service-fn session-handling convention
@@ -275,7 +275,7 @@ Alembic CLI (`alembic revision --autogenerate -m "..."`) is the only supported w
 
 ## Durable tasks via `core/tasks`
 
-Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has retry policy, or participates in a workflow. Use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work without durability needs.
+Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has retry policy, or participates in a run. Use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work without durability needs.
 
 `@task` registers a body; `enqueue(task_ref, args, *, session)` writes a `taskiq_enqueue` row to `outbox_entries` in the caller's session. The drain (in `apps/backend/app/worker.py`) pushes outbox rows to Redis after commit. The atomic-in-session contract: task is durable iff the caller's transaction commits. The outbox table is private to `core/tasks` — domain modules never import it directly.
 
@@ -343,7 +343,7 @@ The workspace state machine accepts one in-flight AgentCommand at a time. [`core
 
 ### Failure-report-precedes-disposal invariant
 
-`release_claim` clears `current_command_id` but **preserves** `owning_agent_id` on the workspace row for observability. Command-to-run correlation lives on `agent_commands.workflow_execution_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their run after the workspace has been torn down.
+`release_claim` clears `current_command_id` but **preserves** `owning_agent_id` on the workspace row for observability. Command-to-run correlation lives on `agent_commands.run_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their run after the workspace has been torn down.
 
 ### Recovery — auth-expired retry
 
@@ -470,7 +470,7 @@ Tests obey the **same import rules as production code** — enforced by `tach ch
 - Service tests of multi-hop pipelines are sliced per-hop: each service test exercises one entry point end-to-end; chain tests by asserting on the durable state that the next hop reads, not by calling internal functions of the next module.
 - Singleton reset for test isolation: never poke private state via a submodule attribute (`mod._svc._singleton = None`). Use a named helper instead.
   - **Intra-module reach only** (module's own `test/` directory) → private `_*_for_tests` helper in the module's `service.py` (or sibling submodule), NOT in `__all__`, NOT in tach `expose`. Tests reach it via direct submodule import — intra-module, tach-permitted. Example: `redis._reset_clients_for_tests`, `orgs.onboarding._reset_contributors_for_tests`.
-  - **Cross-module test machinery** (isolation fixtures, seed/cleanup, workflow harness) → lives in `app/testing/`, which calls each module's *production* `bind_*`/`register_*` APIs only. A test helper must NEVER be reachable across modules — not in `__all__`, not imported from another module's tests.
+  - **Cross-module test machinery** (isolation fixtures, seed/cleanup, test harnesses) → lives in `app/testing/`, which calls each module's *production* `bind_*`/`register_*` APIs only. A test helper must NEVER be reachable across modules — not in `__all__`, not imported from another module's tests.
   - **ContextVar-bound holders** — for process-local in-memory singletons (Redis pubsub, agent dispatch queues, subscriber registry, email inbox) the preferred isolation pattern is ContextVar + `bind_*` production DI seam + autouse fixture in `app/testing/isolation`. No explicit reset is needed in individual tests — the autouse fixture binds a fresh instance per test. See `app/core/redis/pubsub.py` as the reference implementation.
 
 ### DI over `@patch`
@@ -501,7 +501,7 @@ Cross-cutting fixtures shared across every module's tests (transactional `db_ses
 
 ### Context-variable threading
 
-A single `request_meta_var: ContextVar` carries `{request_id, workflow, user, ...}` through async code. Web middleware sets it per request. `spawn()` propagates the parent's context into the spawned coroutine. Log filters and span attributes read from it.
+The identity contextvars (`org_id_var`, `user_id_var`, `actor_kind_var`, `actor_id_var`, `run_id_var`, `command_id_var`; see [core_auth.md](core_auth.md)) carry request/run context through async code. Web middleware sets them per request; `org_context(...)` sets the background-job equivalents. `spawn()` propagates the parent's context into the spawned coroutine. Log filters and span attributes read from them.
 
 ### When to add a manual span
 
@@ -597,7 +597,7 @@ Both loops wrap each hook call in `try/except` (web) or `contextlib.suppress` (w
 Both composition roots live inside `app/` so they're importable as regular Python modules and testable without exec tricks.
 
 - `app/web.py` — web process entry. See § Bootstrap composition order. Ends with `app = webserver.create_app()`. When run directly (`python apps/backend/app/web.py`) the `if __name__ == "__main__"` block calls `uvicorn.run(app, ...)` with all server flags in Python — no flags scattered across Dockerfile CMDs. It passes the built `app` **object**, not the `"app.web:app"` import string: a string makes uvicorn re-import the module (distinct from the running `__main__`), executing the whole composition root — every module-level registration — a second time. Passing the object runs the bootstrap once. Cost: no uvicorn reload/multi-worker (both need an import string), unused since the backend runs single-process per container. Local dev that wants reload runs uvicorn directly (`uvicorn app.web:app --reload`), which imports the module once and never executes `__main__`.
-- `app/worker.py` — worker process entry. Side-effect imports (workflow commands, plugins, workspace providers) + `asyncio.run(core.tasks.runtime.run())`. When run directly the `if __name__ == "__main__"` block is the sole entry point.
+- `app/worker.py` — worker process entry. Side-effect imports (the run-engine modules, plugins, workspace providers) + `asyncio.run(core.tasks.runtime.run())`. When run directly the `if __name__ == "__main__"` block is the sole entry point.
 
 Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["python", "apps/backend/app/worker.py"]`. tini is PID 1 (image-level `ENTRYPOINT ["/usr/bin/tini", "--"]`) and forwards SIGTERM to the Python child, triggering graceful shutdown via the Phase-1 shutdown registries.
 

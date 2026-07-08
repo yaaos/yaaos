@@ -3,7 +3,7 @@
 Owns all workspace-state access needed by agent_gateway event ingestion:
 - heartbeat reconciliation (id→status map)
 - workspace-event kind→status application + lean row creation on first event
-- claim resolution (command_id → holder_workflow_id)
+- claim resolution (command_id → holder_run_id)
 - claim release on terminal agent events (failure-report-precedes-disposal)
 
 Registered into agent_gateway's single-slot registry by
@@ -202,16 +202,16 @@ class WorkspaceAgentReportSinkImpl:
         command_id: UUID,
         session: AsyncSession,
     ) -> UUID | None:
-        """Return the `workflow_execution_id` for `command_id`, or None when
-        no agent_commands row exists or has no workflow correlation.
+        """Return the `run_id` for `command_id`, or None when
+        no agent_commands row exists or has no run correlation.
 
-        Correlation lives on `agent_commands.workflow_execution_id` — the
-        shed `workspaces.current_holder_workflow_id` column is no longer read.
+        Correlation lives on `agent_commands.run_id` — no
+        workspace-row column is read.
         Pure read — no writes.
         """
-        from app.core.agent_gateway import get_command_workflow_execution_id  # noqa: PLC0415
+        from app.core.agent_gateway import get_command_run_id  # noqa: PLC0415
 
-        return await get_command_workflow_execution_id(command_id, session=session)
+        return await get_command_run_id(command_id, session=session)
 
     async def release_command_claim(
         self,

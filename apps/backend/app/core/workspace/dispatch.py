@@ -36,7 +36,7 @@ async def try_claim(
     workspace_id: UUID,
     *,
     command_id: UUID,
-    workflow_execution_id: UUID,
+    run_id: UUID,
     agent_id: UUID | None = None,
     session: AsyncSession,
 ) -> bool:
@@ -54,9 +54,9 @@ async def try_claim(
     Lean-created rows already carry `owning_agent_id` from the first workspace
     event; legacy in-process rows omit it, leaving `WorkspaceRow.owning_agent_id` NULL.
 
-    `workflow_execution_id` is accepted for API compatibility but no longer written
+    `run_id` is accepted for API compatibility but no longer written
     to the workspace row — correlation lives exclusively on
-    `agent_commands.workflow_execution_id`.
+    `agent_commands.run_id`.
 
     Caller commits; the outbox row enqueueing the AgentCommand should go
     in the same transaction so claim + dispatch land atomically.
@@ -80,7 +80,7 @@ async def try_claim(
         log.debug(
             "workspace.claim.busy_or_inactive",
             workspace_id=str(workspace_id),
-            workflow_execution_id=str(workflow_execution_id),
+            run_id=str(run_id),
         )
     return claimed
 
@@ -135,7 +135,7 @@ async def dispatch_via_workspace(
         org_id=ws_row.org_id,
         command=command,
         session=session,
-        workflow_execution_id=ctx.run_id,
+        run_id=ctx.run_id,
     )
     if ws_row.owning_agent_id is not None:
         await pin_command_to_agent(command.command_id, ws_row.owning_agent_id, session=session)
@@ -144,7 +144,7 @@ async def dispatch_via_workspace(
         claimed = await try_claim(
             workspace_id,
             command_id=command.command_id,
-            workflow_execution_id=ctx.run_id,
+            run_id=ctx.run_id,
             session=session,
         )
         if not claimed:
@@ -222,7 +222,7 @@ async def dispatch_provision(
         auth=auth,
         traceparent=ctx.traceparent or "",
         session=session,
-        workflow_execution_id=ctx.run_id,
+        run_id=ctx.run_id,
     )
     return result.command_id
 

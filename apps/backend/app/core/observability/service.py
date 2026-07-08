@@ -225,7 +225,7 @@ def _redact_secrets(_logger: Any, _method_name: str, event_dict: dict[str, Any])
 _ATTR_ORG_ID = "yaaos.org_id"
 _ATTR_USER_ID = "yaaos.user_id"
 _ATTR_ACTOR_KIND = "yaaos.actor_kind"
-_ATTR_WORKFLOW_ID = "yaaos.workflow_id"
+_ATTR_RUN_ID = "yaaos.run_id"
 _ATTR_COMMAND_ID = "yaaos.command_id"
 
 # LogRecord attribute names (snake_case, no dot — LogRecord attrs can't have
@@ -233,7 +233,7 @@ _ATTR_COMMAND_ID = "yaaos.command_id"
 _LOG_ATTR_ORG_ID = "yaaos_org_id"
 _LOG_ATTR_USER_ID = "yaaos_user_id"
 _LOG_ATTR_ACTOR_KIND = "yaaos_actor_kind"
-_LOG_ATTR_WORKFLOW_ID = "yaaos_workflow_execution_id"
+_LOG_ATTR_RUN_ID = "yaaos_run_id"
 _LOG_ATTR_COMMAND_ID = "yaaos_command_id"
 
 
@@ -242,10 +242,10 @@ class YaaosDimensionsSpanProcessor:
     at creation (`on_start`).
 
     Reads the auth contextvars (`org_id_var`, `user_id_var`, `actor_kind_var`,
-    `workflow_execution_id_var`, `command_id_var`) and sets the corresponding
+    `run_id_var`, `command_id_var`) and sets the corresponding
     attributes on the span. Attributes are only stamped when the var is set
     (not None/empty) — background spans carry org+actor but no `user_id`;
-    non-workflow spans carry no `workflow_id`/`command_id`.
+    non-run spans carry no `run_id`/`command_id`.
 
     OTel attributes do NOT inherit to child spans, so a processor on `on_start`
     is the only mechanism that makes dims universal without per-span code.
@@ -258,14 +258,14 @@ class YaaosDimensionsSpanProcessor:
             actor_kind_var,
             command_id_var,
             org_id_var,
+            run_id_var,
             user_id_var,
-            workflow_execution_id_var,
         )
 
         org_id = org_id_var.get()
         user_id = user_id_var.get()
         actor_kind = actor_kind_var.get()
-        workflow_id = workflow_execution_id_var.get()
+        run_id = run_id_var.get()
         command_id = command_id_var.get()
 
         if org_id is not None:
@@ -274,8 +274,8 @@ class YaaosDimensionsSpanProcessor:
             span.set_attribute(_ATTR_USER_ID, str(user_id))
         if actor_kind is not None:
             span.set_attribute(_ATTR_ACTOR_KIND, actor_kind.value)
-        if workflow_id is not None:
-            span.set_attribute(_ATTR_WORKFLOW_ID, workflow_id)
+        if run_id is not None:
+            span.set_attribute(_ATTR_RUN_ID, run_id)
         if command_id is not None:
             span.set_attribute(_ATTR_COMMAND_ID, command_id)
 
@@ -309,14 +309,14 @@ class _YaaosLogDimsFilter(logging.Filter):
             actor_kind_var,
             command_id_var,
             org_id_var,
+            run_id_var,
             user_id_var,
-            workflow_execution_id_var,
         )
 
         org_id = org_id_var.get()
         user_id = user_id_var.get()
         actor_kind = actor_kind_var.get()
-        workflow_id = workflow_execution_id_var.get()
+        run_id = run_id_var.get()
         command_id = command_id_var.get()
 
         if org_id is not None:
@@ -325,8 +325,8 @@ class _YaaosLogDimsFilter(logging.Filter):
             setattr(record, _LOG_ATTR_USER_ID, str(user_id))
         if actor_kind is not None:
             setattr(record, _LOG_ATTR_ACTOR_KIND, actor_kind.value)
-        if workflow_id is not None:
-            setattr(record, _LOG_ATTR_WORKFLOW_ID, workflow_id)
+        if run_id is not None:
+            setattr(record, _LOG_ATTR_RUN_ID, run_id)
         if command_id is not None:
             setattr(record, _LOG_ATTR_COMMAND_ID, command_id)
 
@@ -438,7 +438,7 @@ def _configure_otel(
     _sampler = DenyByNameSampler(inner=ParentBased(ALWAYS_ON), deny=TRACE_SAMPLER_DENY_NAMES)
     tracer_provider = TracerProvider(resource=resource, sampler=_sampler)
     # Stamp standard dims on every span at creation so child spans always
-    # carry org_id/user_id/actor_kind/workflow_id/command_id without per-span
+    # carry org_id/user_id/actor_kind/run_id/command_id without per-span
     # set_attribute calls.  SynchronousMultiSpanProcessor runs on_start in the
     # calling thread — reading contextvars inside on_start is safe.
     tracer_provider.add_span_processor(YaaosDimensionsSpanProcessor())

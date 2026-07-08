@@ -48,7 +48,7 @@ export type Ticket = {
   source_external_id: string;
   title: string;
   description: string | null;
-  // collapsed status — 6-state UI vocab: pending (queued, awaiting workflow start),
+  // collapsed status — 6-state UI vocab: pending (queued, awaiting run start),
   // running, hitl, done, failed, cancelled.
   status: "pending" | "running" | "hitl" | "done" | "failed" | "cancelled";
   plugin_id: string;

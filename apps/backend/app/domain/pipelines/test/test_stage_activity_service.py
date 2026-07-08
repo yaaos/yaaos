@@ -1,14 +1,14 @@
 """Service test: `GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity`.
 
 Pattern mirrors `test_pipeline_crud_service.py`. The endpoint reuses
-`core/coding_agent.get_step_activity`, keyed on the pipelines engine's reuse
-of `coding_agent_runs.workflow_execution_id`/`step_id` (TEXT, pre-rename) —
-see `web.py`'s `stage_activity_endpoint`.
+`core/coding_agent.get_stage_activity`, keyed on `coding_agent_runs.run_id` /
+`stage_execution_id` (both UUID columns) — see `web.py`'s
+`stage_activity_endpoint`.
 """
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -16,6 +16,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role
+from app.core.coding_agent import ActivityEvent, ActivityLog, Usage, create_run, finalize_run
 from app.core.identity import create_user, mint_session
 from app.domain.orgs import insert_membership, insert_org
 from app.domain.pipelines import web as _pipelines_web  # noqa: F401 -- triggers route registration
@@ -88,3 +89,50 @@ async def test_stage_activity_404s_for_run_in_another_org(seeded, db_session) ->
         )
     assert r.status_code == 404, r.text
     assert r.json()["detail"]["error"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_stage_activity_returns_activity_after_uuid_rekey(seeded, db_session) -> None:
+    """Post-rekey join: `coding_agent_runs.run_id` / `stage_execution_id` are
+    both UUID columns — a real run row keyed on the path params' raw UUIDs
+    (no stringify hop) resolves and its persisted activity blob comes back."""
+    result = await seed_paused_run(org_slug=seeded["org"].slug, ticket_title="Activity join test")
+
+    run_row_id = await create_run(
+        org_id=seeded["org"].org_id,
+        run_id=UUID(result["run_id"]),
+        stage_execution_id=UUID(result["stage_execution_id"]),
+        agent_command_id=uuid4(),
+        command_kind="InvokeClaudeCode",
+        plugin_id="claude_code",
+        session=db_session,
+    )
+    await finalize_run(
+        run_row_id,
+        usage=Usage(tokens_in=10, tokens_out=20),
+        duration_ms=1234,
+        activity=ActivityLog(
+            events=[
+                ActivityEvent(
+                    seq=0,
+                    ts="2026-01-01T00:00:00Z",
+                    kind="assistant_message",
+                    message="done",
+                )
+            ]
+        ),
+        exit_code=0,
+        status="success",
+        session=db_session,
+    )
+    await db_session.commit()
+
+    async with _client() as c:
+        r = await c.get(
+            f"/api/pipelines/runs/{result['run_id']}/stages/{result['stage_execution_id']}/activity",
+            cookies=_cookies(seeded),
+            headers=_headers(seeded),
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["activity"]["events"][0]["message"] == "done"

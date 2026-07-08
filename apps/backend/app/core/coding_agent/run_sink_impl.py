@@ -10,7 +10,7 @@ run row's `plugin_id`, calls `plugin.parse_result(outputs)` to derive a
 `RunResult`, derives `RunStatus` from the wire `event_kind`, and persists
 via `finalize_run`. Returns `{"output": result.output, "error_message":
 result.error_message}` so agent_gateway can merge those keys into the
-workflow outputs.
+run outputs.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class CodingAgentRunSinkImpl:
         JSON from the stream-json `result` field and places it in `RunResult.output`.
 
         Returns an `AgentEventEnrichment` on `InvokeClaudeCode` terminal events
-        so `agent_gateway` can merge those keys into the workflow outputs.
+        so `agent_gateway` can merge those keys into the run outputs.
         Returns `None` for all other command kinds.
         """
         if command_kind != _INVOKE_CLAUDE_CODE_KIND:
@@ -77,7 +77,7 @@ class CodingAgentRunSinkImpl:
         # Resolve the plugin from the run row's `plugin_id`. Defensive: in a
         # misconfigured or multi-plugin deployment the sink may be loaded
         # without the plugin that issued the run registered. Skip finalisation
-        # (the run row stays unfinalised) rather than raising — the workflow
+        # (the run row stays unfinalised) rather than raising — the run
         # still proceeds off the terminal event.
         try:
             plugin = get_plugin(run_ref.plugin_id)

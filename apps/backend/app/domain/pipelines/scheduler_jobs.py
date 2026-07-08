@@ -239,7 +239,7 @@ async def _reconcile_lost_resume(*, cutoff: datetime, session: AsyncSession) -> 
             await enqueue(
                 engine.HANDLE_AGENT_EVENT,
                 args={
-                    "workflow_execution_id": str(run.id),
+                    "run_id": str(run.id),
                     "agent_command_id": str(command_id),
                     "outcome_label": "failure",
                     "outputs": {

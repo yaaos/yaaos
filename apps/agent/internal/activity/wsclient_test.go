@@ -154,7 +154,7 @@ func TestWSConn_ReadDeliversServerFrames(t *testing.T) {
 	// Wait until the server has accepted the connection (signaled via AuthCh).
 	<-fs.AuthCh
 	// Server pushes a frame; client should read it.
-	fs.pushFromServer(t, []byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`))
+	fs.pushFromServer(t, []byte(`{"type":"subscribe","workspace_id":"ws-1","run_id":"wf-1"}`))
 
 	raw, err := conn.Read(ctx)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestRunInbound_FeedsConductor(t *testing.T) {
 	go func() { done <- RunInbound(ctx, conn, cond) }()
 
 	// Server sends subscribe → client should now route Publish through.
-	fs.pushFromServer(t, []byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`))
+	fs.pushFromServer(t, []byte(`{"type":"subscribe","workspace_id":"ws-1","run_id":"wf-1"}`))
 	// Wait for the subscribe to propagate.
 	deadline := time.Now().Add(2 * time.Second)
 	for !cond.subs.Contains("ws-1") && time.Now().Before(deadline) {
@@ -209,7 +209,7 @@ func TestRunInbound_FeedsConductor(t *testing.T) {
 		if !strings.Contains(string(got), `"activity_batch"`) {
 			t.Errorf("server got non-batch frame: %s", string(got))
 		}
-		if !strings.Contains(string(got), `"workflow_execution_id":"wf-1"`) {
+		if !strings.Contains(string(got), `"run_id":"wf-1"`) {
 			t.Errorf("frame missing wf-1: %s", string(got))
 		}
 	case <-time.After(2 * time.Second):

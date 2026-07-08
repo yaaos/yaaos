@@ -9,7 +9,7 @@ Three scenarios:
   in `agent_commands.payload` is byte-identical to the legacy dict-based call.
 - `test_enqueue_command_payload_envelope_wins` — passing an `InvokeClaudeCodeFields`
   instance that has no envelope keys confirms that the envelope fields
-  (`kind`, `command_id`, `traceparent`, `completion_token`, `workflow_execution_id`,
+  (`kind`, `command_id`, `traceparent`, `completion_token`, `run_id`,
   `workspace_id`) are present in the persisted payload even though the fields
   model doesn't carry them.
 """
@@ -63,7 +63,7 @@ async def test_invoke_payload_fields_round_trip(db_session) -> None:
 
     command_id = uuid7()
     workspace_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     fields = _make_invoke_fields()
 
     await enqueue_command_payload(
@@ -73,7 +73,7 @@ async def test_invoke_payload_fields_round_trip(db_session) -> None:
         workspace_id=workspace_id,
         payload_fields=fields,
         session=db_session,
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
     )
     await db_session.flush()
 
@@ -98,7 +98,7 @@ async def test_enqueue_command_payload_typed_fields_key_set(db_session) -> None:
     await seed_agent(org_id=org_id)
 
     workspace_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
 
     # Enqueue via new typed path.
     typed_id = uuid7()
@@ -110,7 +110,7 @@ async def test_enqueue_command_payload_typed_fields_key_set(db_session) -> None:
         workspace_id=workspace_id,
         payload_fields=fields,
         session=db_session,
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
     )
     await db_session.flush()
     typed_row = (
@@ -125,7 +125,7 @@ async def test_enqueue_command_payload_typed_fields_key_set(db_session) -> None:
         "command_id",
         "traceparent",
         "completion_token",
-        "workflow_execution_id",
+        "run_id",
         "workspace_id",
     }
     expected_keys = expected_kind_keys | expected_envelope_keys
@@ -143,7 +143,7 @@ async def test_enqueue_command_payload_envelope_wins(db_session) -> None:
 
     command_id = uuid7()
     workspace_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     fields = _make_invoke_fields()
 
     await enqueue_command_payload(
@@ -153,7 +153,7 @@ async def test_enqueue_command_payload_envelope_wins(db_session) -> None:
         workspace_id=workspace_id,
         payload_fields=fields,
         session=db_session,
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
     )
     await db_session.flush()
 
@@ -166,7 +166,7 @@ async def test_enqueue_command_payload_envelope_wins(db_session) -> None:
     assert p["kind"] == "InvokeClaudeCode", f"kind mismatch: {p['kind']}"
     assert p["command_id"] == str(command_id), f"command_id mismatch: {p['command_id']}"
     assert p["workspace_id"] == str(workspace_id), f"workspace_id mismatch: {p['workspace_id']}"
-    assert p["workflow_execution_id"] == str(workflow_id), f"wfx_id mismatch: {p['workflow_execution_id']}"
+    assert p["run_id"] == str(run_id), f"run_id mismatch: {p['run_id']}"
     assert p["completion_token"] is None, (
         f"completion_token should be None at enqueue: {p['completion_token']}"
     )

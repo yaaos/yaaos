@@ -7,7 +7,7 @@ exercises the schema directly. `domain/pipelines`' own four tables
 (`pipelines`, `pipeline_runs`, `stage_executions`, `run_pauses`) are inserted
 via their Row classes (intra-module test-dir carve-out — see patterns.md
 § Module boundaries in tests). The five tables owned by sibling modules
-(`artifacts`, `pipeline_findings`, `repo_settings`, `repo_trigger_bindings`,
+(`artifacts`, `findings`, `repo_settings`, `repo_trigger_bindings`,
 `pr_comments`) are seeded via raw SQL — the sanctioned test-file mechanism
 for seeding cross-module state without a `*Row` cross-module import
 (patterns.md § Module boundaries in tests; `bin/check_table_access` exempts
@@ -220,12 +220,12 @@ async def test_artifacts_table_accepts_minimal_insert(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_findings_table_accepts_minimal_insert(db_session) -> None:
+async def test_findings_table_accepts_minimal_insert(db_session) -> None:
     org_id, ticket_id = await _seed_org_and_ticket(db_session)
 
     result = await db_session.execute(
         text(
-            "INSERT INTO pipeline_findings "
+            "INSERT INTO findings "
             "(id, org_id, ticket_id, source_run_id, source_stage_name, source_stage_execution_id, "
             " first_seen_iteration, display_prefix, display_id, severity, body) "
             "VALUES (uuidv7(), :org_id, :ticket_id, :run_id, 'write-spec', :stage_execution_id, "

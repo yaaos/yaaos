@@ -19,7 +19,7 @@ import pytest
 
 from app.core.agent_gateway.subscribers import (
     SubscriberRegistry,
-    _wfx_subscribers_key,
+    _run_subscribers_key,
 )
 from app.core.agent_gateway.subscribers import (
     _get as _get_subscriber_registry,
@@ -62,7 +62,7 @@ async def test_first_track_sends_subscribe(redis_or_skip) -> None:  # type: igno
     it via the pub/sub consumer task."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid7()
     sent: list[dict] = []
     received = asyncio.Event()
@@ -73,7 +73,7 @@ async def test_first_track_sends_subscribe(redis_or_skip) -> None:  # type: igno
 
     await reg.register_sender(agent_id, _sender)
     _conn = await reg.track(
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
@@ -83,18 +83,18 @@ async def test_first_track_sends_subscribe(redis_or_skip) -> None:  # type: igno
 
     assert sent[0]["type"] == "subscribe"
     assert sent[0]["workspace_id"] == str(workspace_id)
-    assert sent[0]["workflow_execution_id"] == str(workflow_id)
+    assert sent[0]["run_id"] == str(run_id)
 
 
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_second_track_does_not_resend_subscribe(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """A second track() for the same wfx_id from the same pod still publishes
+    """A second track() for the same run_id from the same pod still publishes
     a subscribe message (different ZSET member), but the ZSET ZADD update is
     idempotent. The send count reflects both publishes."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid7()
     sent: list[dict] = []
     count = [0]
@@ -108,12 +108,12 @@ async def test_second_track_does_not_resend_subscribe(redis_or_skip) -> None:  #
 
     await reg.register_sender(agent_id, _sender)
     _conn1 = await reg.track(
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
     _conn2 = await reg.track(
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
@@ -131,7 +131,7 @@ async def test_last_untrack_sends_unsubscribe(redis_or_skip) -> None:  # type: i
     publishes an unsubscribe control message to the sender."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid7()
     sent: list[dict] = []
     unsub_received = asyncio.Event()
@@ -143,7 +143,7 @@ async def test_last_untrack_sends_unsubscribe(redis_or_skip) -> None:  # type: i
 
     await reg.register_sender(agent_id, _sender)
     conn1 = await reg.track(
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
@@ -155,23 +155,23 @@ async def test_last_untrack_sends_unsubscribe(redis_or_skip) -> None:  # type: i
 
     # Track returns a unique conn_id per call; untrack requires it.
     # One track → one ZSET member → untrack drops ZCARD to 0 → unsubscribe fires.
-    await reg.untrack(workflow_execution_id=workflow_id, conn_id=conn1)
+    await reg.untrack(run_id=run_id, conn_id=conn1)
     await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
     reg.unregister_sender(agent_id)
 
     unsubscribes = [m for m in sent if m["type"] == "unsubscribe"]
     assert len(unsubscribes) >= 1
     assert unsubscribes[-1]["workspace_id"] == str(workspace_id)
-    assert unsubscribes[-1]["workflow_execution_id"] == str(workflow_id)
+    assert unsubscribes[-1]["run_id"] == str(run_id)
 
 
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_untrack_below_zero_is_noop(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """untrack() on an unknown wfx_id is a no-op — no error, no message."""
+    """untrack() on an unknown run_id is a no-op — no error, no message."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     sent: list[dict] = []
 
     async def _sender(msg: dict) -> None:
@@ -179,7 +179,7 @@ async def test_untrack_below_zero_is_noop(redis_or_skip) -> None:  # type: ignor
 
     await reg.register_sender(agent_id, _sender)
     # No track() call — untrack with an arbitrary conn_id should silently do nothing.
-    await reg.untrack(workflow_execution_id=workflow_id, conn_id="no-such-conn")
+    await reg.untrack(run_id=run_id, conn_id="no-such-conn")
     await asyncio.sleep(0.05)
     reg.unregister_sender(agent_id)
     assert sent == []
@@ -192,19 +192,19 @@ async def test_track_without_sender_doesnt_raise(redis_or_skip) -> None:  # type
     The subscribe message is published to the pub/sub channel but no local
     sender receives it (that's the cross-pod case)."""
     reg = SubscriberRegistry()
-    workflow_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid7()
     agent_id = uuid4()
 
     # Should not raise even without a registered sender.
     conn = await reg.track(
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
     # No assertions on count — count is Redis ZCARD, not a local field.
     # Verify cleanup.
-    await reg.untrack(workflow_execution_id=workflow_id, conn_id=conn)
+    await reg.untrack(run_id=run_id, conn_id=conn)
 
 
 @pytest.mark.asyncio
@@ -216,10 +216,10 @@ async def test_register_sender_replays_subscribes_for_active_routes(redis_or_ski
     drop until each UI detached + re-attached."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
-    wfx_a, ws_a = uuid4(), uuid4()
-    wfx_b, ws_b = uuid4(), uuid4()
+    run_a, ws_a = uuid4(), uuid4()
+    run_b, ws_b = uuid4(), uuid4()
 
-    # Initial connection: register sender, then track two workflows.
+    # Initial connection: register sender, then track two runs.
     sent_first: list[dict] = []
     first_count = [0]
     first_received = asyncio.Event()
@@ -231,11 +231,11 @@ async def test_register_sender_replays_subscribes_for_active_routes(redis_or_ski
             first_received.set()
 
     await reg.register_sender(agent_id, _first)
-    _conn_a = await reg.track(workflow_execution_id=wfx_a, workspace_id=ws_a, agent_id=agent_id)
-    _conn_b = await reg.track(workflow_execution_id=wfx_b, workspace_id=ws_b, agent_id=agent_id)
-    # Two subscribes (one per workflow) reached the first sender.
+    _conn_a = await reg.track(run_id=run_a, workspace_id=ws_a, agent_id=agent_id)
+    _conn_b = await reg.track(run_id=run_b, workspace_id=ws_b, agent_id=agent_id)
+    # Two subscribes (one per run) reached the first sender.
     await asyncio.wait_for(first_received.wait(), timeout=2.0)
-    assert {m["workflow_execution_id"] for m in sent_first} == {str(wfx_a), str(wfx_b)}
+    assert {m["run_id"] for m in sent_first} == {str(run_a), str(run_b)}
 
     # Simulate disconnect → reconnect: unregister old, register new sender.
     reg.unregister_sender(agent_id)
@@ -257,7 +257,7 @@ async def test_register_sender_replays_subscribes_for_active_routes(redis_or_ski
     reg.unregister_sender(agent_id)
 
     assert {m["type"] for m in sent_second} == {"subscribe"}
-    assert {m["workflow_execution_id"] for m in sent_second} == {str(wfx_a), str(wfx_b)}
+    assert {m["run_id"] for m in sent_second} == {str(run_a), str(run_b)}
     assert {m["workspace_id"] for m in sent_second} == {str(ws_a), str(ws_b)}
 
 
@@ -268,8 +268,8 @@ async def test_register_sender_filters_routes_by_agent_id(redis_or_skip) -> None
     agent B — the registry shards routes by agent."""
     reg = SubscriberRegistry()
     agent_a, agent_b = uuid4(), uuid4()
-    wfx_a, ws_a = uuid4(), uuid4()
-    wfx_b, ws_b = uuid4(), uuid4()
+    run_a, ws_a = uuid4(), uuid4()
+    run_b, ws_b = uuid4(), uuid4()
 
     sent_a: list[dict] = []
     sent_b: list[dict] = []
@@ -286,8 +286,8 @@ async def test_register_sender_filters_routes_by_agent_id(redis_or_skip) -> None
 
     await reg.register_sender(agent_a, _a)
     await reg.register_sender(agent_b, _b)
-    conn_a = await reg.track(workflow_execution_id=wfx_a, workspace_id=ws_a, agent_id=agent_a)
-    conn_b = await reg.track(workflow_execution_id=wfx_b, workspace_id=ws_b, agent_id=agent_b)
+    conn_a = await reg.track(run_id=run_a, workspace_id=ws_a, agent_id=agent_a)
+    conn_b = await reg.track(run_id=run_b, workspace_id=ws_b, agent_id=agent_b)
 
     # Wait for both initial messages.
     await asyncio.wait_for(a_received.wait(), timeout=2.0)
@@ -307,12 +307,12 @@ async def test_register_sender_filters_routes_by_agent_id(redis_or_skip) -> None
     reg.unregister_sender(agent_a)
     reg.unregister_sender(agent_b)
 
-    assert all(m["workflow_execution_id"] == str(wfx_a) for m in sent_a_reconnect)
-    assert str(wfx_b) not in {m["workflow_execution_id"] for m in sent_a_reconnect}
+    assert all(m["run_id"] == str(run_a) for m in sent_a_reconnect)
+    assert str(run_b) not in {m["run_id"] for m in sent_a_reconnect}
 
     # Cleanup.
-    await reg.untrack(workflow_execution_id=wfx_a, conn_id=conn_a)
-    await reg.untrack(workflow_execution_id=wfx_b, conn_id=conn_b)
+    await reg.untrack(run_id=run_a, conn_id=conn_a)
+    await reg.untrack(run_id=run_b, conn_id=conn_b)
 
 
 @pytest.mark.asyncio
@@ -334,7 +334,7 @@ async def test_register_sender_subscribes_before_snapshot(redis_or_skip) -> None
        before track() published.
     """
     agent_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid4()
 
     pod_a = SubscriberRegistry()
@@ -353,7 +353,7 @@ async def test_register_sender_subscribes_before_snapshot(redis_or_skip) -> None
     # After register_sender has returned the subscribe handshake is complete.
     # Any publish from here on is guaranteed to be received.
     conn = await pod_b.track(
-        workflow_execution_id=workflow_id,
+        run_id=run_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
@@ -365,16 +365,16 @@ async def test_register_sender_subscribes_before_snapshot(redis_or_skip) -> None
 
     assert len(sent) >= 1
     assert sent[0]["type"] == "subscribe"
-    assert sent[0]["workflow_execution_id"] == str(workflow_id)
+    assert sent[0]["run_id"] == str(run_id)
 
     # Cleanup.
-    await pod_b.untrack(workflow_execution_id=workflow_id, conn_id=conn)
+    await pod_b.untrack(run_id=run_id, conn_id=conn)
 
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_two_subscribers_same_pod_same_wfx(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """Two concurrent SSE subscribers from the same pod to the same wfx_id
+async def test_two_subscribers_same_pod_same_run(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """Two concurrent SSE subscribers from the same pod to the same run_id
     are each counted independently.
 
     Regression test for the old bug where _connections was dict[UUID, str]
@@ -385,7 +385,7 @@ async def test_two_subscribers_same_pod_same_wfx(redis_or_skip) -> None:  # type
     """
     reg = SubscriberRegistry()
     agent_id = uuid4()
-    wfx_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid7()
 
     unsub_received = asyncio.Event()
@@ -398,14 +398,14 @@ async def test_two_subscribers_same_pod_same_wfx(redis_or_skip) -> None:  # type
 
     await reg.register_sender(agent_id, _sender)
 
-    # Two track() calls for the same wfx_id.
+    # Two track() calls for the same run_id.
     conn1 = await reg.track(
-        workflow_execution_id=wfx_id,
+        run_id=run_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
     conn2 = await reg.track(
-        workflow_execution_id=wfx_id,
+        run_id=run_id,
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
@@ -414,11 +414,11 @@ async def test_two_subscribers_same_pod_same_wfx(redis_or_skip) -> None:  # type
     assert conn1 != conn2
 
     # Both members are in the ZSET.
-    assert await zset_card(_wfx_subscribers_key(wfx_id)) == 2
+    assert await zset_card(_run_subscribers_key(run_id)) == 2
 
     # Untrack conn1 — should drop ZCARD to 1, NOT fire unsubscribe.
-    await reg.untrack(workflow_execution_id=wfx_id, conn_id=conn1)
-    assert await zset_card(_wfx_subscribers_key(wfx_id)) == 1
+    await reg.untrack(run_id=run_id, conn_id=conn1)
+    assert await zset_card(_run_subscribers_key(run_id)) == 1
 
     # Give the pub/sub consumer a moment — no unsubscribe should arrive.
     await asyncio.sleep(0.1)
@@ -427,8 +427,8 @@ async def test_two_subscribers_same_pod_same_wfx(redis_or_skip) -> None:  # type
     )
 
     # Untrack conn2 — ZCARD drops to 0, unsubscribe fires.
-    await reg.untrack(workflow_execution_id=wfx_id, conn_id=conn2)
+    await reg.untrack(run_id=run_id, conn_id=conn2)
     await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
-    assert await zset_card(_wfx_subscribers_key(wfx_id)) == 0
+    assert await zset_card(_run_subscribers_key(run_id)) == 0
 
     reg.unregister_sender(agent_id)

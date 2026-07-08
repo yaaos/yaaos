@@ -43,7 +43,7 @@ class TicketRow(Base):
     # a key leave it NULL.
     idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
     # optional payload bag carrying intake-time parameters that the
-    # workflow's first step consumes. Stays JSONB so future ticket types add
+    # pipeline run's first stage consumes. Stays JSONB so future ticket types add
     # fields without schema churn.
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
     # Soft ref (no DB constraint) to the pipeline_runs row currently driving
@@ -51,9 +51,8 @@ class TicketRow(Base):
     current_run_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     # Per-ticket work branch. Intake-supplied (PR tickets: the head branch
     # LABEL — provenance/display only, checkout pins the head SHA) or minted
-    # at creation (yaaos/<slugified-title>-<shortid>). Nullable for tickets
-    # predating branch minting.
-    branch_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # at creation (yaaos/<slugified-title>-<shortid>). Every ticket has one.
+    branch_name: Mapped[str] = mapped_column(String, nullable=False)
     # Denormalized rollup written by domain/findings after each finding
     # report or verdict. Avoids a cross-module import at list time.
     findings_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

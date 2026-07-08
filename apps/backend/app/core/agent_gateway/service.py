@@ -76,7 +76,7 @@ LEASE_SECONDS: int = 30
 # engine directly — `domain/pipelines` registers itself at import time.
 # `record_agent_event` enqueues the SAME args to every registered consumer;
 # each consumer's task body owns deciding whether it recognizes
-# `workflow_execution_id` (a no-op/return when it doesn't — see
+# `run_id` (a no-op/return when it doesn't — see
 # `domain/pipelines.handle_agent_event`).
 _agent_event_consumers: list[TaskRef] = []
 
@@ -123,7 +123,7 @@ _ENVELOPE_KEYS: frozenset[str] = frozenset(
         "workspace_id",
         "traceparent",
         "completion_token",
-        "workflow_execution_id",
+        "run_id",
     }
 )
 
@@ -137,7 +137,7 @@ async def enqueue_command_payload(
     payload_fields: BaseModel,
     session: AsyncSession,
     traceparent: str | None = None,
-    workflow_execution_id: UUID | None = None,
+    run_id: UUID | None = None,
 ) -> None:
     """Insert an AgentCommand row in `pending` status from typed payload fields.
 
@@ -147,7 +147,7 @@ async def enqueue_command_payload(
 
     `payload_fields` carries only the command-kind-specific fields — no envelope
     keys. The envelope (`kind`, `command_id`, `workspace_id`, `traceparent`,
-    `completion_token`, `workflow_execution_id`) is built from the named parameters
+    `completion_token`, `run_id`) is built from the named parameters
     and merged LAST, so identity fields can never be overwritten by the caller.
 
     Merge order: `{**payload_fields.model_dump(mode="json"), **envelope}`.
@@ -168,8 +168,8 @@ async def enqueue_command_payload(
         span.set_attribute("command_id", str(command_id))
         span.set_attribute("workspace_id", str(workspace_id) if workspace_id is not None else "")
         span.set_attribute(
-            "workflow_id",
-            str(workflow_execution_id) if workflow_execution_id is not None else "",
+            "run_id",
+            str(run_id) if run_id is not None else "",
         )
         try:
             # Overwrite the caller-supplied traceparent with the dispatch span's
@@ -190,14 +190,12 @@ async def enqueue_command_payload(
                 "command_id": str(command_id),
                 "traceparent": effective_tp,
                 "completion_token": None,
-                "workflow_execution_id": str(workflow_execution_id)
-                if workflow_execution_id is not None
-                else None,
+                "run_id": str(run_id) if run_id is not None else None,
             }
             if workspace_id is not None:
                 envelope["workspace_id"] = str(workspace_id)
             # Merge: kind-specific fields first, envelope LAST — so identity fields
-            # (kind, command_id, traceparent, completion_token, workflow_execution_id,
+            # (kind, command_id, traceparent, completion_token, run_id,
             # workspace_id) can never be overwritten by the caller's payload_fields.
             final_payload = {**payload_fields.model_dump(mode="json"), **envelope}
             # The caller-supplied command_id is the row PK and FIFO sort key.
@@ -206,7 +204,7 @@ async def enqueue_command_payload(
                 id=command_id,
                 org_id=org_id,
                 workspace_id=workspace_id,
-                workflow_execution_id=workflow_execution_id,
+                run_id=run_id,
                 command_kind=kind_str,
                 payload=final_payload,
                 status="pending",
@@ -224,7 +222,7 @@ async def enqueue_command(
     command: AgentCommand,
     *,
     session: AsyncSession,
-    workflow_execution_id: UUID | None = None,
+    run_id: UUID | None = None,
 ) -> None:
     """Insert an AgentCommand row in `pending` status.
 
@@ -233,7 +231,7 @@ async def enqueue_command(
     `START_STAGE` transaction — the insert is atomic with the engine's
     parking on `pending_agent_command_id`.
 
-    `workflow_execution_id` is stamped on the row so the terminal-event
+    `run_id` is stamped on the row so the terminal-event
     ingestion path can resolve `command_id → run` directly, without a
     workspace-row lookup. NULL only for agent-scoped commands that do not
     correlate to a run (e.g. `ConfigUpdate`).
@@ -247,7 +245,7 @@ async def enqueue_command(
     `claim_next`.
 
     Opens an `agent_command.dispatch.{kind}` OTel span covering the full insert.
-    `org_id`/`actor_kind`/`workflow_id` are auto-stamped by the
+    `org_id`/`actor_kind`/`run_id` are auto-stamped by the
     `YaaosDimensionsSpanProcessor`. `command_id` and `workspace_id` are set
     explicitly here since they are command-scoped (not process-wide dimensions).
 
@@ -261,7 +259,7 @@ async def enqueue_command(
         workspace_id = None
     # Dump the full command and strip envelope keys so `enqueue_command_payload`
     # receives only the kind-specific fields. The envelope fields (kind, command_id,
-    # workspace_id, traceparent, completion_token, workflow_execution_id) are
+    # workspace_id, traceparent, completion_token, run_id) are
     # re-injected by `enqueue_command_payload` from the named parameters —
     # ensuring the gateway always owns those identity fields.
     full_dump = command.model_dump(mode="json")
@@ -276,7 +274,7 @@ async def enqueue_command(
         payload_fields=payload_fields,
         traceparent=traceparent,
         session=session,
-        workflow_execution_id=workflow_execution_id,
+        run_id=run_id,
     )
 
 
@@ -348,13 +346,13 @@ async def get_command_status(
     ).scalar_one_or_none()
 
 
-async def get_command_workflow_execution_id(
+async def get_command_run_id(
     command_id: UUID,
     *,
     session: AsyncSession,
 ) -> UUID | None:
-    """Return `workflow_execution_id` for the given `agent_commands` row, or
-    None when the row is not found or has no workflow correlation (agent-scoped
+    """Return `run_id` for the given `agent_commands` row, or
+    None when the row is not found or has no run correlation (agent-scoped
     commands like ConfigUpdate have NULL there).
 
     Pure read — no writes. Used by `core/workspace` failsafe-6 to synthesize
@@ -365,9 +363,7 @@ async def get_command_workflow_execution_id(
     from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
 
     row = (
-        await session.execute(
-            select(AgentCommandRow.workflow_execution_id).where(AgentCommandRow.id == command_id)
-        )
+        await session.execute(select(AgentCommandRow.run_id).where(AgentCommandRow.id == command_id))
     ).one_or_none()
     if row is None:
         return None
@@ -780,14 +776,14 @@ async def claim_next(
     row.completion_token_hash = hashlib.sha256(raw.encode()).hexdigest()
     await session.flush()
 
-    # Inject the raw token and workflow_execution_id into the returned DTO without
+    # Inject the raw token and run_id into the returned DTO without
     # re-persisting them to `row.payload`. `_CommandBase` is frozen, so
     # `model_copy(update=...)` returns a new typed instance of the concrete subtype.
-    # workflow_execution_id is read from the row's dedicated column (not the payload)
-    # so agent-side spans can carry workflow_id without a separate lookup.
+    # run_id is read from the row's dedicated column (not the payload)
+    # so agent-side spans can carry run_id without a separate lookup.
     updates: dict = {"completion_token": raw}
-    if row.workflow_execution_id is not None:
-        updates["workflow_execution_id"] = row.workflow_execution_id
+    if row.run_id is not None:
+        updates["run_id"] = row.run_id
     return _row_to_command(row).model_copy(update=updates)
 
 
@@ -997,7 +993,7 @@ async def record_agent_event(
     agent_id: UUID | None = None,
     session: AsyncSession,
 ) -> None:
-    """Resolve the run correlation directly from `agent_commands.workflow_execution_id`,
+    """Resolve the run correlation directly from `agent_commands.run_id`,
     then — if the event is terminal — enqueue every registered agent-event
     consumer (`pipelines.handle_agent_event`) via the outbox in the same
     transaction.
@@ -1009,10 +1005,10 @@ async def record_agent_event(
     retired by an earlier terminal event); the endpoint maps it to `410 Gone`
     with `{"error": "stale_claim"}`.
 
-    Workflow correlation is independent of the workspace row — the engine
-    stamps `workflow_execution_id` on the command at enqueue time. An agent
+    Run correlation is independent of the workspace row — the engine
+    stamps `run_id` on the command at enqueue time. An agent
     can therefore report a terminal event for a workspace that has been torn
-    down (`failure-report-precedes-disposal`), and the workflow still resumes.
+    down (`failure-report-precedes-disposal`), and the run still resumes.
 
     Enforces a per-command completion-capability-token check before any side
     effect: the token minted at `claim_next` is stored as
@@ -1036,7 +1032,7 @@ async def record_agent_event(
     from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
     from app.core.agent_gateway.types import AgentEventKind  # noqa: PLC0415
 
-    # Resolve workflow correlation directly from the command row — no
+    # Resolve run correlation directly from the command row — no
     # workspace-row dependency for the resumption path.
     cmd_row = (
         (await session.execute(select(AgentCommandRow).where(AgentCommandRow.id == event.command_id)))
@@ -1050,7 +1046,7 @@ async def record_agent_event(
     # org/agent ownership guard. Authorization binds to the COMMAND via the
     # one-time token minted at claim, not to the worker's mutable identity (which
     # legitimately rotates on re-auth). Run BEFORE any claim release, run-sink
-    # call, lean-row materialisation, or workflow enqueue. Constant-time compare;
+    # call, lean-row materialisation, or run enqueue. Constant-time compare;
     # the token is never logged. Skipped when the command never went through
     # `claim_next` (NULL hash — e.g. test-seeded rows).
     if cmd_row.completion_token_hash is not None:
@@ -1058,7 +1054,7 @@ async def record_agent_event(
         if not hmac.compare_digest(presented, cmd_row.completion_token_hash):
             raise StaleClaimError(f"command {event.command_id} completion token mismatch")
 
-    # `received` only updates the command row lease and does not require workflow
+    # `received` only updates the command row lease and does not require run
     # correlation — exit after the integrity gate so mismatched tokens are rejected.
     if event.kind == AgentEventKind.RECEIVED:
         await acknowledge_command_received(event.command_id, session=session)
@@ -1068,26 +1064,26 @@ async def record_agent_event(
         )
         return
 
-    holder_workflow_id = cmd_row.workflow_execution_id
+    holder_run_id = cmd_row.run_id
 
     if not event.is_terminal():
-        # Non-terminal events (progress) skip workflow-engine resumption —
-        # only `completed_*` events resume the workflow state machine.
+        # Non-terminal events (progress) skip run-engine resumption —
+        # only `completed_*` events resume the run state machine.
         # Republish to the org-scoped workspace-activity channel so the SPA's
         # SSE live-tail picks them up. Skipped when the command has no
-        # workflow correlation (agent-scoped ConfigUpdate has no live-tail
+        # run correlation (agent-scoped ConfigUpdate has no live-tail
         # subscriber to fan out to).
         log.debug(
             "agent.event.progress",
             command_id=str(event.command_id),
         )
-        if holder_workflow_id is not None:
+        if holder_run_id is not None:
             from app.core.auth import require_org_context  # noqa: PLC0415
             from app.core.sse import publish_workspace_activity  # noqa: PLC0415
 
             await publish_workspace_activity(
                 org_id=require_org_context(),
-                workflow_execution_id=holder_workflow_id,
+                run_id=holder_run_id,
                 payload=event.model_dump(mode="json"),
             )
         return
@@ -1110,9 +1106,9 @@ async def record_agent_event(
     # before the lean row exists, or agent-scoped commands).
     await get_report_sink().release_command_claim(event.command_id, session)
 
-    # Retire the command row and enqueue the workflow handler
-    # (only when there is a workflow to resume; agent-scoped commands without
-    # workflow correlation simply retire).
+    # Retire the command row and enqueue the run handler
+    # (only when there is a run to resume; agent-scoped commands without
+    # run correlation simply retire).
     await retire_command(event.command_id, session=session)
 
     # Fan out to the coding-agent run sink — only `InvokeClaudeCode` terminal
@@ -1172,11 +1168,11 @@ async def record_agent_event(
             session=session,
         )
 
-    if holder_workflow_id is None:
+    if holder_run_id is None:
         return
 
     await enqueue_agent_event(
-        workflow_execution_id=holder_workflow_id,
+        run_id=holder_run_id,
         agent_command_id=event.command_id,
         outcome_label=event.outcome_label
         or ("failure" if event.kind == AgentEventKind.COMPLETED_FAILURE else "success"),
@@ -1188,7 +1184,7 @@ async def record_agent_event(
 
 async def enqueue_agent_event(
     *,
-    workflow_execution_id: UUID,
+    run_id: UUID,
     agent_command_id: UUID,
     outcome_label: str,
     outputs: dict[str, Any] | None = None,
@@ -1201,11 +1197,11 @@ async def enqueue_agent_event(
     The shared tail of `record_agent_event`'s real-event path — also the
     entry point for callers that synthesize a terminal event without an
     inbound `AgentEvent` (e.g. `core/workspace`'s agent-loss failsafe,
-    which resolves `workflow_execution_id` from `agent_commands` directly
+    which resolves `run_id` from `agent_commands` directly
     and needs the same fan-out the run engine relies on).
     """
     consumer_args = {
-        "workflow_execution_id": str(workflow_execution_id),
+        "run_id": str(run_id),
         "agent_command_id": str(agent_command_id),
         "outcome_label": outcome_label,
         "outputs": outputs or {},

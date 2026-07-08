@@ -225,7 +225,7 @@ func NewRealHandler(cfg RealHandlerConfig) *RealHandler {
 // ErrUnknownWorkspace is returned by WriteFiles / RefreshWorkspaceAuth /
 // InvokeClaudeCode when no ProvisionWorkspace has run for the given
 // workspace_id. The supervisor surfaces this as a completed_failure
-// event; the backend's workflow engine treats it as a fatal step error.
+// event; the backend's run engine treats it as a fatal stage error.
 var ErrUnknownWorkspace = errors.New("workspace not provisioned")
 
 func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {

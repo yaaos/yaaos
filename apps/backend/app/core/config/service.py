@@ -124,7 +124,7 @@ class Settings(BaseSettings):
     yaaos_session_lifetime_seconds: int = 60 * 60 * 24 * 14  # 14 days
 
     # Orphan-ticket sweep grace window. A `running` ticket older than this
-    # threshold with no active workflow execution is flipped to `failed`.
+    # threshold with no active pipeline run is flipped to `failed`.
     yaaos_ticket_orphan_grace_seconds: int = 300  # 5 min
 
     # Pipeline-run stall sweep grace window. A `running` pipeline_runs row

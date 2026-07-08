@@ -9,7 +9,7 @@ Usage (inside a `@pytest.mark.service` test)::
             # drive the code under test
             ...
         spans = exporter.get_finished_spans()
-        err_spans = [s for s in spans if s.name == "workflow.command.MyKind"]
+        err_spans = [s for s in spans if s.name == "agent_command.dispatch.MyKind"]
         assert err_spans[0].status.status_code == StatusCode.ERROR
 """
 

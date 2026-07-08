@@ -1,7 +1,7 @@
 """Tests for `YaaosDimensionsSpanProcessor` and `_YaaosLogDimsFilter`.
 
 Verifies that standard yaaos dimensions (`yaaos.org_id`, `yaaos.user_id`,
-`yaaos.actor_kind`, `yaaos.workflow_id`, `yaaos.command_id`) are stamped on
+`yaaos.actor_kind`, `yaaos.run_id`, `yaaos.command_id`) are stamped on
 every new span and every log record when the corresponding contextvars are set.
 
 Test isolation: uses a local `TracerProvider` + `InMemorySpanExporter` (not the
@@ -23,8 +23,8 @@ from app.core.audit_log import ActorKind
 from app.core.auth import (
     command_id_var,
     org_context,
+    run_id_var,
     user_id_var,
-    workflow_execution_id_var,
 )
 from app.core.observability.service import (
     YaaosDimensionsSpanProcessor,
@@ -96,10 +96,10 @@ async def test_span_with_user_id_var_carries_user_id(
 
 
 @pytest.mark.asyncio
-async def test_span_during_workflow_dispatch_carries_workflow_and_command_id(
+async def test_span_during_run_dispatch_carries_run_and_command_id(
     span_fixture: tuple,
 ) -> None:
-    """A span started when workflow + command vars are set carries both dims."""
+    """A span started when run + command vars are set carries both dims."""
     provider, exporter = span_fixture
     tracer = provider.get_tracer("test")
     org_id = uuid.uuid4()
@@ -107,19 +107,19 @@ async def test_span_during_workflow_dispatch_carries_workflow_and_command_id(
     cmd_id = str(uuid.uuid4())
 
     async with org_context(org_id, ActorKind.SYSTEM):
-        wf_token = workflow_execution_id_var.set(wf_id)
+        wf_token = run_id_var.set(wf_id)
         cmd_token = command_id_var.set(cmd_id)
         try:
-            with tracer.start_as_current_span("workflow-span"):
+            with tracer.start_as_current_span("run-span"):
                 pass
         finally:
             command_id_var.reset(cmd_token)
-            workflow_execution_id_var.reset(wf_token)
+            run_id_var.reset(wf_token)
 
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
     attrs = spans[0].attributes or {}
-    assert attrs.get("yaaos.workflow_id") == wf_id, f"got attrs: {attrs}"
+    assert attrs.get("yaaos.run_id") == wf_id, f"got attrs: {attrs}"
     assert attrs.get("yaaos.command_id") == cmd_id, f"got attrs: {attrs}"
 
 
@@ -155,27 +155,27 @@ def test_span_outside_context_no_dims(span_fixture: tuple) -> None:
     attrs = spans[0].attributes or {}
     assert "yaaos.org_id" not in attrs
     assert "yaaos.user_id" not in attrs
-    assert "yaaos.workflow_id" not in attrs
+    assert "yaaos.run_id" not in attrs
     assert "yaaos.command_id" not in attrs
 
 
-def test_workflow_id_only_set_when_var_is_set(span_fixture: tuple) -> None:
-    """When only workflow_execution_id_var is set (no command), only workflow_id appears."""
+def test_run_id_only_set_when_var_is_set(span_fixture: tuple) -> None:
+    """When only run_id_var is set (no command), only run_id appears."""
     provider, exporter = span_fixture
     tracer = provider.get_tracer("test")
     wf_id = str(uuid.uuid4())
 
-    token = workflow_execution_id_var.set(wf_id)
+    token = run_id_var.set(wf_id)
     try:
         with tracer.start_as_current_span("wf-only-span"):
             pass
     finally:
-        workflow_execution_id_var.reset(token)
+        run_id_var.reset(token)
 
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
     attrs = spans[0].attributes or {}
-    assert attrs.get("yaaos.workflow_id") == wf_id
+    assert attrs.get("yaaos.run_id") == wf_id
     assert "yaaos.command_id" not in attrs
 
 
@@ -229,8 +229,8 @@ async def test_log_record_with_user_id_var_set() -> None:
 
 
 @pytest.mark.asyncio
-async def test_log_record_with_workflow_and_command_id_vars() -> None:
-    """A LogRecord produced during workflow dispatch scope carries workflow + command dims."""
+async def test_log_record_with_run_and_command_id_vars() -> None:
+    """A LogRecord produced during run dispatch scope carries run + command dims."""
     org_id = uuid.uuid4()
     wf_id = str(uuid.uuid4())
     cmd_id = str(uuid.uuid4())
@@ -238,15 +238,15 @@ async def test_log_record_with_workflow_and_command_id_vars() -> None:
     record = _make_log_record()
 
     async with org_context(org_id, ActorKind.SYSTEM):
-        wf_token = workflow_execution_id_var.set(wf_id)
+        wf_token = run_id_var.set(wf_id)
         cmd_token = command_id_var.set(cmd_id)
         try:
             filt.filter(record)
         finally:
             command_id_var.reset(cmd_token)
-            workflow_execution_id_var.reset(wf_token)
+            run_id_var.reset(wf_token)
 
-    assert getattr(record, "yaaos_workflow_execution_id", None) == wf_id
+    assert getattr(record, "yaaos_run_id", None) == wf_id
     assert getattr(record, "yaaos_command_id", None) == cmd_id
 
 
@@ -258,7 +258,7 @@ def test_log_record_outside_context_has_no_dims() -> None:
 
     assert not hasattr(record, "yaaos_org_id")
     assert not hasattr(record, "yaaos_user_id")
-    assert not hasattr(record, "yaaos_workflow_execution_id")
+    assert not hasattr(record, "yaaos_run_id")
     assert not hasattr(record, "yaaos_command_id")
 
 

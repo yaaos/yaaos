@@ -86,18 +86,18 @@ def test_ws_accepts_bearer_and_registers_sender() -> None:
 
 @pytest.mark.asyncio
 async def test_activity_batch_fans_out_to_sse() -> None:
-    """An incoming `activity_batch` carries `workflow_execution_id` (the
+    """An incoming `activity_batch` carries `run_id` (the
     agent learned it from the `subscribe` message it received) and the
     handler publishes each event to the org-scoped workspace-activity
     channel via `publish_workspace_activity`."""
     app = _app()
     agent_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     with _install_bearer_stub(agent_id) as (bearer, org_id):
         received: list[dict] = []
 
         async def _consume() -> None:
-            async for evt in subscribe_workspace_activity(org_id, workflow_id):
+            async for evt in subscribe_workspace_activity(org_id, run_id):
                 received.append(evt)
                 if len(received) == 2:
                     return
@@ -125,7 +125,7 @@ async def test_activity_batch_fans_out_to_sse() -> None:
                     ws.send_json(
                         {
                             "type": "activity_batch",
-                            "workflow_execution_id": str(workflow_id),
+                            "run_id": str(run_id),
                             "events": [
                                 {"kind": "agent.thought", "text": "hello"},
                                 {"kind": "agent.tool_use", "tool": "Read"},
@@ -156,7 +156,7 @@ async def test_publish_with_no_subscriber_drops_nothing_breaks_nothing() -> None
     crashes."""
     app = _app()
     agent_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     with _install_bearer_stub(agent_id) as (bearer, _):
 
         def _send_batch() -> None:
@@ -168,7 +168,7 @@ async def test_publish_with_no_subscriber_drops_nothing_breaks_nothing() -> None
                     ws.send_json(
                         {
                             "type": "activity_batch",
-                            "workflow_execution_id": str(workflow_id),
+                            "run_id": str(run_id),
                             "events": [{"kind": "agent.thought"}],
                         }
                     )

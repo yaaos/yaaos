@@ -534,14 +534,14 @@ async def activity_ws(websocket: WebSocket) -> None:
     `bearers.verify`.
 
     Protocol:
-      - **WorkspaceAgent → backend:** `{"type": "activity_batch", "workflow_execution_id": "...", "events": [...]}`.
+      - **WorkspaceAgent → backend:** `{"type": "activity_batch", "run_id": "...", "events": [...]}`.
         Backend publishes each event to the org-scoped channel via
-        `publish_workspace_activity(org_id, workflow_execution_id, payload)`.
-      - **Backend → WorkspaceAgent:** `{"type": "subscribe", "workspace_id": "...", "workflow_execution_id": "..."}` /
-        `{"type": "unsubscribe", "workspace_id": "...", "workflow_execution_id": "..."}`.
+        `publish_workspace_activity(org_id, run_id, payload)`.
+      - **Backend → WorkspaceAgent:** `{"type": "subscribe", "workspace_id": "...", "run_id": "..."}` /
+        `{"type": "unsubscribe", "workspace_id": "...", "run_id": "..."}`.
         Driven by the subscriber registry's 0→1 / 1→0 transitions.
         The agent caches the mapping so its `activity_batch` outbound
-        carries the right `workflow_execution_id` keyed by the
+        carries the right `run_id` keyed by the
         `workspace_id` it learned at subscribe time.
 
     Failure modes:
@@ -581,9 +581,9 @@ async def activity_ws(websocket: WebSocket) -> None:
                         continue
                     kind = msg.get("type")
                     if kind == "activity_batch":
-                        workflow_execution_id = msg.get("workflow_execution_id")
+                        run_id = msg.get("run_id")
                         events = msg.get("events") or []
-                        if not workflow_execution_id or not isinstance(events, list):
+                        if not run_id or not isinstance(events, list):
                             log.warning(
                                 "agent_gateway.ws.malformed_batch",
                                 agent_id=str(agent_id),
@@ -594,7 +594,7 @@ async def activity_ws(websocket: WebSocket) -> None:
                             if isinstance(event, dict):
                                 await publish_workspace_activity(
                                     org_id=require_org_context(),
-                                    workflow_execution_id=UUID(workflow_execution_id),
+                                    run_id=UUID(run_id),
                                     payload=event,
                                 )
                     else:

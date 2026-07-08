@@ -54,7 +54,7 @@ class PipelineRow(Base):
 
 
 class PipelineRunRow(Base):
-    """One pipeline run — replaces `workflow_executions`."""
+    """One pipeline run."""
 
     __tablename__ = "pipeline_runs"
 
@@ -63,7 +63,7 @@ class PipelineRunRow(Base):
     ticket_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
     # Soft ref — no DB constraint. The definition may be deleted later;
     # architecture explicitly calls this a soft ref (unlike the other FKs
-    # on this row), mirroring tickets.current_workflow_execution_id.
+    # on this row), mirroring tickets.current_run_id.
     pipeline_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     pipeline_name: Mapped[str] = mapped_column(String, nullable=False)
     definition_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

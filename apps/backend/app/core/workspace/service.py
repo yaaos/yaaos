@@ -420,7 +420,7 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     sibling pods keep their bearers and their workspaces untouched.
 
     For each expired workspace that holds an in-flight `current_command_id`,
-    the owning run is resolved from `agent_commands.workflow_execution_id`
+    the owning run is resolved from `agent_commands.run_id`
     (the durable correlation column). A synthetic terminal-failure event is enqueued
     via `agent_gateway.enqueue_agent_event` — the same agent-event consumer
     registry `record_agent_event` uses — so `domain/pipelines` resumes (fails
@@ -435,7 +435,7 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     """
     from app.core.agent_gateway import (  # noqa: PLC0415
         enqueue_agent_event,
-        get_command_workflow_execution_id,
+        get_command_run_id,
         revoke_all_for_agent,
     )
 
@@ -479,14 +479,14 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
         expired_count += 1
 
         # Synthesize a terminal failure for any in-flight command so the
-        # owning WorkflowExecution resumes (fails its step) rather than
+        # owning pipeline run resumes (fails its stage) rather than
         # waiting forever in AWAITING_AGENT. Correlation comes from
-        # agent_commands.workflow_execution_id — no workspace-row column needed.
+        # agent_commands.run_id — no workspace-row column needed.
         if current_command_id is not None:
-            holder_workflow_id = await get_command_workflow_execution_id(current_command_id, session=s)
-            if holder_workflow_id is not None:
+            holder_run_id = await get_command_run_id(current_command_id, session=s)
+            if holder_run_id is not None:
                 await enqueue_agent_event(
-                    workflow_execution_id=holder_workflow_id,
+                    run_id=holder_run_id,
                     agent_command_id=current_command_id,
                     outcome_label="failure",
                     session=s,
@@ -677,7 +677,7 @@ async def get_workspace_claim_state(
 
     Used by `core/agent_gateway` to apply the stale-claim guard and locate the
     workspace owner without crossing the module boundary via a raw Row.
-    Workflow-execution correlation lives on `agent_commands.workflow_execution_id`.
+    Run correlation lives on `agent_commands.run_id`.
     """
     row = (
         await session.execute(

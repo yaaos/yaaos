@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.core.auth import Action, org_id_var
-from app.core.coding_agent import ActivityLog, get_step_activity
+from app.core.coding_agent import ActivityLog, get_stage_activity
 from app.core.database import session as db_session
 from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
@@ -329,11 +329,10 @@ class StepActivityResponse(BaseModel):
     dependencies=[Depends(require(Action.REVIEWER_READ))],
 )
 async def stage_activity_endpoint(run_id: UUID, stage_execution_id: UUID) -> StepActivityResponse:
-    """Reuses `core/coding_agent.get_step_activity`, keyed on
-    `(coding_agent_runs.workflow_execution_id, step_id)` — the pipelines
-    engine stamps `workflow_execution_id=<run_id>` and
-    `step_id=str(stage_execution_id)` (TEXT column, pre-rename) at dispatch
-    time. 404s when the run doesn't belong to the caller's org."""
+    """Reuses `core/coding_agent.get_stage_activity`, keyed on
+    `(coding_agent_runs.run_id, stage_execution_id)` — both UUID columns, so
+    the join happens directly on the path params with no stringify hop.
+    404s when the run doesn't belong to the caller's org."""
     org_id = org_id_var.get()
     if org_id is None:
         raise _err(400, "no_org_context")
@@ -341,7 +340,7 @@ async def stage_activity_endpoint(run_id: UUID, stage_execution_id: UUID) -> Ste
         run = await s.get(PipelineRunRow, run_id)
         if run is None or run.org_id != org_id:
             raise _err(404, "not_found")
-        activity = await get_step_activity(run_id, str(stage_execution_id), session=s)
+        activity = await get_stage_activity(run_id, stage_execution_id, session=s)
     return StepActivityResponse(activity=activity)
 
 

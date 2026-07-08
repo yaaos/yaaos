@@ -47,8 +47,8 @@ async def test_sweeper_removes_stale_entries_and_keeps_fresh(redis_or_skip) -> N
     and one with the current timestamp. After running `_run_subscriber_sweeper`,
     only the fresh member should remain.
     """
-    wfx_id = uuid4()
-    key = f"workflow_subscribers:{wfx_id}"
+    run_id = uuid4()
+    key = f"run_subscribers:{run_id}"
     now = time.time()
     stale_ts = now - _SUBSCRIBER_STALE_THRESHOLD_SECONDS - 10
 
@@ -81,14 +81,14 @@ async def test_sweeper_removes_stale_agent_routes_and_keeps_fresh(redis_or_skip)
     only the fresh member should remain.
     """
     agent_id = uuid4()
-    wfx_stale = str(uuid4())
-    wfx_fresh = str(uuid4())
+    run_stale = str(uuid4())
+    run_fresh = str(uuid4())
     key = f"agent_routes:{agent_id}"
     now = time.time()
     stale_ts = now - _SUBSCRIBER_STALE_THRESHOLD_SECONDS - 10
 
-    await zset_add_member(key, wfx_stale, stale_ts)
-    await zset_add_member(key, wfx_fresh, now)
+    await zset_add_member(key, run_stale, stale_ts)
+    await zset_add_member(key, run_fresh, now)
 
     assert await zset_card(key) == 2
 
@@ -98,4 +98,4 @@ async def test_sweeper_removes_stale_agent_routes_and_keeps_fresh(redis_or_skip)
     assert card_after == 1, f"expected 1 fresh member to remain in agent_routes; got {card_after}"
 
     # Cleanup.
-    await zset_remove_member(key, wfx_fresh)
+    await zset_remove_member(key, run_fresh)

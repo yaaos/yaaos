@@ -1219,11 +1219,10 @@ export interface paths {
         };
         /**
          * Stage Activity Endpoint
-         * @description Reuses `core/coding_agent.get_step_activity`, keyed on
-         *     `(coding_agent_runs.workflow_execution_id, step_id)` — the pipelines
-         *     engine stamps `workflow_execution_id=<run_id>` and
-         *     `step_id=str(stage_execution_id)` (TEXT column, pre-rename) at dispatch
-         *     time. 404s when the run doesn't belong to the caller's org.
+         * @description Reuses `core/coding_agent.get_stage_activity`, keyed on
+         *     `(coding_agent_runs.run_id, stage_execution_id)` — both UUID columns, so
+         *     the join happens directly on the path params with no stringify hop.
+         *     404s when the run doesn't belong to the caller's org.
          */
         get: operations["stage_activity_endpoint_api_pipelines_runs__run_id__stages__stage_execution_id__activity_get"];
         put?: never;
@@ -1389,7 +1388,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sse/workspace_activity/{workflow_execution_id}": {
+    "/api/sse/workspace_activity/{run_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1398,14 +1397,14 @@ export interface paths {
         };
         /**
          * Stream Workspace Activity
-         * @description Subscribe an SSE client to the per-workflow activity event stream.
+         * @description Subscribe an SSE client to the per-run activity event stream.
          *
          *     Cross-org isolation is the channel key: subscribers attach to
-         *     `{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a
+         *     `{caller_org}:workspace_activity:{run_id}`. A request for a run owned by a
          *     different org subscribes to a channel nobody publishes to and yields an
          *     empty stream.
          */
-        get: operations["stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get"];
+        get: operations["stream_workspace_activity_api_sse_workspace_activity__run_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1576,7 +1575,7 @@ export interface paths {
          *     Avoids the SPA making three `/api/tickets?status=…` calls in a tight
          *     polling loop. `t.status` is the 6-state vocab
          *     (pending / running / hitl / done / failed / cancelled); precise hitl/failed
-         *     counts depend on the workflow-state projection landing on every
+         *     counts depend on the run-state projection landing on every
          *     transition.
          */
         get: operations["dashboard_api_tickets_dashboard_get"];
@@ -2886,7 +2885,7 @@ export interface components {
         };
         /**
          * PipelineRun
-         * @description Replaces WorkflowExecution — the Runs-tab timeline entry.
+         * @description The Runs-tab timeline entry for one pipeline run.
          */
         PipelineRun: {
             /** Completed At */
@@ -6424,14 +6423,14 @@ export interface operations {
             };
         };
     };
-    stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get: {
+    stream_workspace_activity_api_sse_workspace_activity__run_id__get: {
         parameters: {
             query?: never;
             header?: {
                 "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
-                workflow_execution_id: string;
+                run_id: string;
             };
             cookie?: {
                 yaaos_session?: string | null;

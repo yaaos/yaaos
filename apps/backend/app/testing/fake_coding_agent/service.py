@@ -3,7 +3,7 @@ plugin registered (the existing `stub_coding_agent` wraps a real plugin;
 this one stands alone).
 
 Each method returns a deterministic, schema-valid result so command-body
-tests can drive the workflow end-to-end without real plugin auth.
+tests can drive a review end-to-end without real plugin auth.
 """
 
 from __future__ import annotations

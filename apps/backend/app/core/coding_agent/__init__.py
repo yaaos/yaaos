@@ -29,7 +29,8 @@ from app.core.coding_agent.byok import (
 )
 from app.core.coding_agent.run_service import (
     create_run,
-    get_step_activity,
+    finalize_run,
+    get_stage_activity,
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.core.coding_agent.service import (
@@ -75,8 +76,9 @@ __all__ = [
     "build_byok_secrets_for_org",
     "create_run",
     "dispatch_invocation",
+    "finalize_run",
     "get_plugin",
-    "get_step_activity",
+    "get_stage_activity",
     "list_plugins",
     "register_plugin",
     "replace_plugin",

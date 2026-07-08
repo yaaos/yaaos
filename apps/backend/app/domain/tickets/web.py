@@ -55,7 +55,7 @@ async def dashboard() -> dict[str, Any]:
     Avoids the SPA making three `/api/tickets?status=…` calls in a tight
     polling loop. `t.status` is the 6-state vocab
     (pending / running / hitl / done / failed / cancelled); precise hitl/failed
-    counts depend on the workflow-state projection landing on every
+    counts depend on the run-state projection landing on every
     transition.
     """
     from datetime import UTC, datetime  # noqa: PLC0415

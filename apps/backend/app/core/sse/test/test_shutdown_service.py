@@ -66,8 +66,8 @@ async def test_shutdown_causes_workspace_activity_stream_to_emit_final_frame_and
     `_workspace_activity_stream` emits the final frame and raises StopAsyncIteration.
     """
     org_id = uuid.uuid4()
-    wfx_id = uuid.uuid4()
-    gen = _workspace_activity_stream(org_id, wfx_id)
+    run_id = uuid.uuid4()
+    gen = _workspace_activity_stream(org_id, run_id)
 
     # Drain the connect prelude
     prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
