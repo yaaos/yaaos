@@ -57,6 +57,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -396,7 +397,13 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	// Pre-spawn: the compiled prompt instructs the named skill to run from
 	// this checkout. A missing skill file means the invocation cannot
 	// possibly succeed — fail fast and deterministically instead of letting
-	// claude discover it mid-run.
+	// claude discover it mid-run. An empty SkillPath is rejected explicitly
+	// before the Join/Stat: filepath.Join(slot.path, "") == slot.path, which
+	// always exists, so without this guard an empty value would silently
+	// pass the check instead of failing it.
+	if cmd.SkillPath == "" {
+		return command.InvokeResult{}, errors.New("skill not found: (empty skill_path)")
+	}
 	if _, statErr := os.Stat(filepath.Join(slot.path, cmd.SkillPath)); statErr != nil {
 		return command.InvokeResult{}, fmt.Errorf("skill not found: %s", cmd.SkillPath)
 	}
@@ -539,21 +546,29 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 // otherwise can't be read) — distinguishes "wrote none" from "wrote too
 // much" for the backend. The file is left in place; it dies with the
 // workspace tempdir at Cleanup, not here.
+//
+// Reads via `io.LimitReader(f, artifactMaxBytes+1)` rather than
+// `os.Stat` + `os.ReadFile` — a Stat-then-Read pair is a TOCTOU race (the
+// file could grow between the two calls, letting a larger-than-cap read
+// through); capping the reader itself makes the enforcement atomic with
+// the read.
 func readArtifact(tmpDir, commandID string) (*string, string) {
 	path := filepath.Join(tmpDir, commandID+".md")
-	info, err := os.Stat(path)
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ""
 		}
-		return nil, fmt.Sprintf("artifact stat failed: %v", err)
+		return nil, fmt.Sprintf("artifact open failed: %v", err)
 	}
-	if info.Size() > artifactMaxBytes {
-		return nil, fmt.Sprintf("artifact exceeds %d bytes (was %d)", artifactMaxBytes, info.Size())
-	}
-	data, err := os.ReadFile(path)
+	defer func() { _ = f.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(f, artifactMaxBytes+1))
 	if err != nil {
 		return nil, fmt.Sprintf("artifact read failed: %v", err)
+	}
+	if len(data) > artifactMaxBytes {
+		return nil, fmt.Sprintf("artifact exceeds %d bytes", artifactMaxBytes)
 	}
 	body := string(data)
 	return &body, ""

@@ -221,6 +221,8 @@ ORG_SCOPED_PREFIXES: tuple[str, ...] = (
     "/api/actions",
     # Repo config + trigger bindings (`domain/repos`).
     "/api/repos",
+    # Read-only artifact bodies + version metadata (`domain/artifacts`).
+    "/api/artifacts",
 )
 
 

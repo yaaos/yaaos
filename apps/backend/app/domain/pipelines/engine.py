@@ -1652,7 +1652,10 @@ async def _handle_skill_stage_event(
                 await session.flush()
                 ctx = _system_command_context(run, refresh_exec)
                 assert run.workspace_id is not None
-                refresh_command_id = await dispatch_auth_refresh(run.workspace_id, ctx, session=session)
+                ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
+                refresh_command_id = await dispatch_auth_refresh(
+                    run.workspace_id, ctx, org_id=run.org_id, plugin_id=ticket.plugin_id, session=session
+                )
                 run.pending_agent_command_id = refresh_command_id
                 return
         # Infra failure or auth_expired cap exceeded — fail stage and run.
@@ -2080,7 +2083,7 @@ async def _handle_review_return(
     _publish_stage_state(session, run)
 
     if residuals and stage_exec.iteration < stage.review.max_iterations:
-        artifact = await get_artifact(_last_artifact_id(stage_exec), session=session)
+        artifact = await get_artifact(_last_artifact_id(stage_exec), org_id=run.org_id, session=session)
         await _dispatch_fix_invocation(
             run,
             stage,

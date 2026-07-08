@@ -34,7 +34,7 @@
 
 - Do not add union-dispatch or `UnmarshalJSON` override here. Union dispatch was removed; the sole decode path is `command.Decode`.
 - `InvokeClaudeCodeCommand.Invocation` is `json.RawMessage` — the agent passes it through without parsing; the backend owns the invocation schema.
-- `InvokeClaudeCodeCommand.SkillPath` is a backend-computed convention path (`.claude/skills/<skill_name>/SKILL.md`); `RealHandler.RunClaude` stats it, nothing more — no agent-side path construction.
+- `InvokeClaudeCodeCommand.SkillPath` is a backend-computed convention path (`.claude/skills/<skill_name>/SKILL.md`); `RealHandler.RunClaude` rejects an empty value and stats a non-empty one, nothing more — no agent-side path construction.
 - `AgentEvent.Artifact`/`ArtifactError` are top-level fields alongside `Outputs`, not inside it — the agent-collected artifact from `$TMPDIR/<command_id>.md` rides separately from the command's typed `ToWire()` output map. See [workspace.md](workspace.md).
 - `ClaimCommand` returns `[]byte`, not a typed struct. The caller (`supervisor.claimLoop`) passes the bytes to `command.Decode`. Do not change the return type to a concrete struct — doing so would require `protocol` to import `command`, breaking the layer graph.
 - `ProvisionWorkspaceCommand.Repo.HeadSHA`/`.BranchName` is a checkout instruction — a well-formed backend command sets exactly one (`HeadSHA` → detached pin; `BranchName` → named work branch). A legacy shape with both set (`BranchName` as a `--branch` clone-speed hint alongside a required `HeadSHA`) still decodes fine — `HeadSHA` wins the checkout. See `gitClone` in [workspace.md](workspace.md).

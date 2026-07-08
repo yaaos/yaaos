@@ -33,6 +33,26 @@ func realHandlerWithNoopClone(t *testing.T) *RealHandler {
 	})
 }
 
+// testSkillPath is the SkillPath every RunClaude test that expects to reach
+// the subprocess uses. RunClaude's pre-spawn check requires SkillPath be
+// both non-empty and present in the checkout (see § skill_path pre-spawn
+// check below), so any test exercising past that check needs a real file
+// at this relative path.
+const testSkillPath = ".claude/skills/test-skill/SKILL.md"
+
+// writeTestSkill writes a stub skill file into the checkout at `dir` so
+// RunClaude's pre-spawn skill-path check passes.
+func writeTestSkill(t *testing.T, dir string) {
+	t.Helper()
+	full := filepath.Join(dir, testSkillPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte("# skill"), 0o644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+}
+
 func newProvision(workspaceID string) *protocol.ProvisionWorkspaceCommand {
 	return &protocol.ProvisionWorkspaceCommand{
 		CommandHeader: protocol.CommandHeader{
@@ -262,7 +282,8 @@ func TestRealHandler_RunClaude_HappyPath_EchoesStdin(t *testing.T) {
 		t.Skip("cat not on PATH; subprocess test needs a POSIX shell env")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	// Build an invocation whose exec block runs `cat` — echoes stdin to
 	// stdout. Lets us verify the whole pipe: argv resolved, stdin piped,
@@ -278,6 +299,7 @@ func TestRealHandler_RunClaude_HappyPath_EchoesStdin(t *testing.T) {
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -302,7 +324,8 @@ func TestRealHandler_RunClaude_EnvOverridesParent(t *testing.T) {
 		t.Skip("sh not on PATH; subprocess test needs a POSIX shell")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	rawInv, _ := json.Marshal(map[string]any{
 		"exec": map[string]any{
@@ -314,6 +337,7 @@ func TestRealHandler_RunClaude_EnvOverridesParent(t *testing.T) {
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -330,6 +354,7 @@ func TestRealHandler_RunClaude_CwdIsWorkspacePath(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	wsPath := cr.Path
+	writeTestSkill(t, cr.Path)
 
 	rawInv, _ := json.Marshal(map[string]any{
 		"exec": map[string]any{
@@ -341,6 +366,7 @@ func TestRealHandler_RunClaude_CwdIsWorkspacePath(t *testing.T) {
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -357,7 +383,8 @@ func TestRealHandler_RunClaude_NonZeroExit_ReturnsError(t *testing.T) {
 		t.Skip("sh not on PATH")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	// claude's --output-format=stream-json puts the diagnostic on stdout,
 	// not stderr — assert both halves ride in the error string so the
@@ -372,6 +399,7 @@ func TestRealHandler_RunClaude_NonZeroExit_ReturnsError(t *testing.T) {
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err == nil {
 		t.Fatal("want error on non-zero exit")
@@ -388,7 +416,8 @@ func TestRealHandler_RunClaude_NonZeroExit_StdoutTailTruncated(t *testing.T) {
 		t.Skip("sh not on PATH")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	// Produce >8 KiB of stdout ending in a known sentinel so we can assert
 	// the tail (with truncation marker) survives while the head is cut.
@@ -405,6 +434,7 @@ func TestRealHandler_RunClaude_NonZeroExit_StdoutTailTruncated(t *testing.T) {
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-trunc", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err == nil {
 		t.Fatal("want error on non-zero exit")
@@ -715,7 +745,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		},
 	})
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
-	_ = cr
+	writeTestSkill(t, cr.Path)
 
 	emitter := &recordingEmitter{}
 	ctx := ContextWithEmitter(context.Background(), emitter)
@@ -727,6 +757,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 			"prompt text",
 			map[string]string{}, // intentionally empty — BYOK comes from the getter
 		),
+		SkillPath: testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("RunClaude: %v", err)
@@ -781,11 +812,13 @@ func TestRealHandler_RunClaude_FakeRunFunc_NonZeroExit_ReturnsError(t *testing.T
 		nil,
 	)
 	h := realHandlerWithFakeRun(t, fake)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if err == nil {
 		t.Fatal("want error on non-zero exit")
@@ -803,11 +836,13 @@ func TestRealHandler_RunClaude_FakeRunFunc_RunFuncReturnsError_PropagatesAsComma
 	// propagate it wrapped as a command error — no panic, no lost error.
 	fake := fakeRunFunc(nil, errors.New("subprocess startup failed"), nil)
 	h := realHandlerWithFakeRun(t, fake)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if err == nil {
 		t.Fatal("want error when RunFunc returns error")
@@ -830,10 +865,12 @@ func TestRealHandler_RunClaude_FakeRunFunc_CwdIsWorkspacePath(t *testing.T) {
 	)
 	h := realHandlerWithFakeRun(t, fake)
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{ //nolint:errcheck
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if capturedDir != cr.Path {
 		t.Errorf("RunFunc Dir: want %q got %q", cr.Path, capturedDir)
@@ -1224,6 +1261,28 @@ func TestRealHandler_RunClaude_SkillNotFound_ReturnsDeterministicFailure(t *test
 	}
 }
 
+func TestRealHandler_RunClaude_EmptySkillPath_ReturnsDeterministicFailure(t *testing.T) {
+	// An empty SkillPath must not silently pass the pre-spawn check: prior
+	// to this guard, filepath.Join(slot.path, "") == slot.path, which
+	// always exists, so the check became a no-op instead of catching a
+	// caller that forgot to set skill_path.
+	h := realHandlerWithNoopClone(t)
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+
+	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     "",
+	})
+	if err == nil {
+		t.Fatal("want error when skill_path is empty")
+	}
+	want := "skill not found: (empty skill_path)"
+	if err.Error() != want {
+		t.Errorf("err: want %q got %q", want, err.Error())
+	}
+}
+
 func TestRealHandler_RunClaude_SkillFound_Proceeds(t *testing.T) {
 	fake := fakeRunFunc(&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond}, nil, nil)
 	h := realHandlerWithFakeRun(t, fake)
@@ -1278,11 +1337,13 @@ func TestRealHandler_RunClaude_Artifact_PresentUnderCap(t *testing.T) {
 		},
 	)
 	h := realHandlerWithFakeRun(t, fake)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: cmdID, WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("RunClaude: %v", err)
@@ -1301,11 +1362,13 @@ func TestRealHandler_RunClaude_Artifact_PresentUnderCap(t *testing.T) {
 func TestRealHandler_RunClaude_Artifact_MissingFile_NilBodyNoError(t *testing.T) {
 	fake := fakeRunFunc(&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond}, nil, nil)
 	h := realHandlerWithFakeRun(t, fake)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("RunClaude: %v", err)
@@ -1332,11 +1395,13 @@ func TestRealHandler_RunClaude_Artifact_OverCap_NilBodyWithError(t *testing.T) {
 		},
 	)
 	h := realHandlerWithFakeRun(t, fake)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: cmdID, WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("RunClaude: %v", err)
@@ -1346,6 +1411,47 @@ func TestRealHandler_RunClaude_Artifact_OverCap_NilBodyWithError(t *testing.T) {
 	}
 	if res.ArtifactError == "" {
 		t.Error("ArtifactError: want set to distinguish over-cap from wrote-none, got empty")
+	}
+}
+
+func TestRealHandler_RunClaude_Artifact_ExactlyAtCap_Succeeds(t *testing.T) {
+	// Boundary case for the cap comparison: a file exactly `artifactMaxBytes`
+	// long must be accepted, not rejected — the over-cap test above only
+	// covers `+1`. Locks the off-by-one contract across the readArtifact
+	// implementation (Stat+ReadFile today; io.LimitReader after the TOCTOU
+	// fix) so a refactor can't silently shift the boundary.
+	const cmdID = "c-inv"
+	fake := fakeRunFunc(
+		&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond},
+		nil,
+		func(opts RunStreamingOptions) {
+			tmpDir := tmpDirFromEnv(opts.Env)
+			exact := make([]byte, artifactMaxBytes)
+			if err := os.WriteFile(filepath.Join(tmpDir, cmdID+".md"), exact, 0o644); err != nil {
+				t.Fatalf("write artifact: %v", err)
+			}
+		},
+	)
+	h := realHandlerWithFakeRun(t, fake)
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
+
+	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: cmdID, WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
+	})
+	if err != nil {
+		t.Fatalf("RunClaude: %v", err)
+	}
+	if res.Artifact == nil {
+		t.Fatal("want Artifact set for a file exactly at the cap, got nil")
+	}
+	if len(*res.Artifact) != artifactMaxBytes {
+		t.Errorf("Artifact length: want %d got %d", artifactMaxBytes, len(*res.Artifact))
+	}
+	if res.ArtifactError != "" {
+		t.Errorf("ArtifactError: want empty for exactly-at-cap, got %q", res.ArtifactError)
 	}
 }
 
@@ -1388,13 +1494,16 @@ func TestRealHandler_RunClaude_PushConditionality(t *testing.T) {
 		cmd.Repo.BranchName = "main"
 		cmd.History = 1
 		cmd.Auth = protocol.AuthBlock{}
-		if _, err := h.ProvisionWorkspace(context.Background(), cmd); err != nil {
+		cr, err := h.ProvisionWorkspace(context.Background(), cmd)
+		if err != nil {
 			t.Fatalf("provision: %v", err)
 		}
+		writeTestSkill(t, cr.Path)
 
-		_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		_, err = h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 			CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-detached"},
 			Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+			SkillPath:     testSkillPath,
 		})
 		if err != nil {
 			t.Fatalf("RunClaude: %v (detached HEAD should skip push, not fail)", err)
@@ -1414,6 +1523,7 @@ func TestRealHandler_RunClaude_PushConditionality(t *testing.T) {
 		if err != nil {
 			t.Fatalf("provision: %v", err)
 		}
+		writeTestSkill(t, cr.Path)
 
 		// Simulate a checkout onto a named work branch + a skill commit —
 		// the durable-before-boundary invariant this push rule serves.
@@ -1427,6 +1537,7 @@ func TestRealHandler_RunClaude_PushConditionality(t *testing.T) {
 		_, err = h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 			CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-named"},
 			Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+			SkillPath:     testSkillPath,
 		})
 		if err != nil {
 			t.Fatalf("RunClaude: %v", err)
@@ -1451,6 +1562,7 @@ func TestRealHandler_RunClaude_PushConditionality(t *testing.T) {
 		if err != nil {
 			t.Fatalf("provision: %v", err)
 		}
+		writeTestSkill(t, cr.Path)
 
 		// Local branch shares the remote's name + SHA — no new commits, so
 		// the push is "Everything up-to-date", not a failure. `--branch
@@ -1462,6 +1574,7 @@ func TestRealHandler_RunClaude_PushConditionality(t *testing.T) {
 		_, err = h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 			CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-noop"},
 			Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+			SkillPath:     testSkillPath,
 		})
 		if err != nil {
 			t.Fatalf("RunClaude: %v (no-op push should not fail)", err)

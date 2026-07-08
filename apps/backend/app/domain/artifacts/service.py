@@ -113,9 +113,16 @@ async def list_for_ticket(org_id: UUID, ticket_id: UUID, *, session: AsyncSessio
     return [ArtifactGroup(stage_name=name, versions=tuple(versions)) for name, versions in groups.items()]
 
 
-async def get(artifact_id: UUID, *, session: AsyncSession) -> Artifact:
-    """Return the artifact with body. Raises `ArtifactNotFoundError`."""
-    row = await session.get(ArtifactRow, artifact_id)
+async def get(artifact_id: UUID, *, org_id: UUID, session: AsyncSession) -> Artifact:
+    """Return the artifact with body, scoped to `org_id`. Raises
+    `ArtifactNotFoundError` when the row is absent OR belongs to a
+    different org — the caller can't distinguish the two, which is the
+    point (no cross-org existence leak)."""
+    row = (
+        await session.execute(
+            select(ArtifactRow).where(ArtifactRow.id == artifact_id, ArtifactRow.org_id == org_id)
+        )
+    ).scalar_one_or_none()
     if row is None:
         raise ArtifactNotFoundError(str(artifact_id))
     return Artifact.from_row(row)

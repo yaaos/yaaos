@@ -59,9 +59,12 @@ async def list_artifacts_endpoint(ticket_id: UUID) -> ListArtifactsResponse:
 
 @router.get("/{artifact_id}", dependencies=[Depends(require(Action.TICKETS_READ))])
 async def get_artifact_endpoint(artifact_id: UUID) -> ArtifactDetailResponse:
+    org_id = org_id_var.get()
+    if org_id is None:
+        raise _err(400, "no_org_context")
     async with db_session() as s:
         try:
-            artifact = await artifacts.get(artifact_id, session=s)
+            artifact = await artifacts.get(artifact_id, org_id=org_id, session=s)
         except ArtifactNotFoundError as exc:
             raise _err(404, "not_found") from exc
     return ArtifactDetailResponse(

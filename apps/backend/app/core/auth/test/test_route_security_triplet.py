@@ -64,6 +64,17 @@ def _enumerate_org_scoped_routes() -> list[tuple[str, str]]:
     return out
 
 
+def test_artifacts_prefix_is_org_scoped() -> None:
+    """`domain/artifacts` registers `/api/artifacts` but the prefix was
+    missing from `ORG_SCOPED_PREFIXES` — the middleware silently skipped
+    both the `X-Yaaos-Org-Slug` pre-check and the CSRF pre-check for every
+    request under this prefix."""
+    assert classify_route("/api/artifacts/00000000-0000-0000-0000-000000000000", "GET") is (
+        RouteSecurity.ORG_SCOPED
+    )
+    assert classify_route("/api/artifacts", "GET") is RouteSecurity.ORG_SCOPED
+
+
 @pytest.mark.asyncio
 async def test_org_scoped_prefixes_have_routes() -> None:
     """Sanity: each declared org-scoped prefix has at least one route."""

@@ -240,14 +240,23 @@ async def dispatch_cleanup(workspace_id: UUID, ctx: DispatchContext, *, session:
     )
 
 
-async def dispatch_auth_refresh(workspace_id: UUID, ctx: DispatchContext, *, session: AsyncSession) -> UUID:
-    """Enqueue the auth-refresh recovery AgentCommand for `workspace_id` —
-    dispatches a placeholder `CleanupWorkspaceCommand` wire payload; a real
-    `RefreshWorkspaceAuth` AgentCommand type doesn't exist yet."""
-    from app.core.agent_gateway import CleanupWorkspaceCommand  # noqa: PLC0415
+async def dispatch_auth_refresh(
+    workspace_id: UUID,
+    ctx: DispatchContext,
+    *,
+    org_id: UUID,
+    plugin_id: str,
+    session: AsyncSession,
+) -> UUID:
+    """Enqueue a `RefreshWorkspaceAuth` AgentCommand for `workspace_id`,
+    carrying a freshly-minted installation token so the agent rotates
+    credentials in place rather than tearing the workspace down."""
+    import app.core.vcs as _vcs  # noqa: PLC0415
+    from app.core.agent_gateway import RefreshWorkspaceAuthCommand  # noqa: PLC0415
 
-    cmd = CleanupWorkspaceCommand(
-        command_id=uuid7(), workspace_id=workspace_id, traceparent=ctx.traceparent or ""
+    new_token = await _vcs.get_installation_token(plugin_id, org_id)
+    cmd = RefreshWorkspaceAuthCommand(
+        command_id=uuid7(), workspace_id=workspace_id, traceparent=ctx.traceparent or "", new_token=new_token
     )
     return await dispatch_via_workspace(
         command=cmd, workspace_id=workspace_id, ctx=ctx, session=session, claim_workspace=False

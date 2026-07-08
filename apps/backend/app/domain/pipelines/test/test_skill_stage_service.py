@@ -377,20 +377,58 @@ async def test_workspace_dead_before_stage_triggers_reprovision(db_session) -> N
 
 
 @pytest.mark.asyncio
+async def test_auth_expired_dispatches_real_refresh_command(db_session) -> None:
+    """The auth-refresh recovery dispatch must enqueue a real
+    `RefreshWorkspaceAuth` AgentCommand carrying a freshly-minted token —
+    not a `CleanupWorkspace` command, which would tear the workspace down
+    instead of rotating credentials."""
+    org_id, _, run_id, skill_command_id = await _advance_to_skill_dispatch(db_session)
+
+    # `dispatch_auth_refresh` mints a fresh installation token via `core/vcs`,
+    # so the VCS stub must be active for this drain (unlike a plain
+    # CleanupWorkspace dispatch, which never touches VCS).
+    with register_stub_vcs(plugin_id="github"):
+        await _record(
+            org_id,
+            _failure_event(skill_command_id, reason="auth_expired: token expired"),
+            agent_id=None,
+            db_session=db_session,
+        )
+        await drain(db_session)
+
+    run = await db_session.get(PipelineRunRow, run_id)
+    assert run is not None
+    refresh_command_id = run.pending_agent_command_id
+    assert refresh_command_id is not None
+
+    row = (
+        await db_session.execute(
+            text("SELECT command_kind, payload FROM agent_commands WHERE id = :id"),
+            {"id": refresh_command_id},
+        )
+    ).one()
+    assert row.command_kind == "RefreshWorkspaceAuth"
+    assert row.payload.get("new_token")
+
+
+@pytest.mark.asyncio
 async def test_auth_expired_triggers_refresh_and_retry(db_session) -> None:
     """An auth_expired failure inserts a refresh-auth system row, dispatches
     dispatch_auth_refresh, and on success retries the skill invocation.
     A successful retry drives the run to completion."""
     org_id, _, run_id, skill_command_id = await _advance_to_skill_dispatch(db_session)
 
-    # Feed auth_expired failure on the skill stage.
-    await _record(
-        org_id,
-        _failure_event(skill_command_id, reason="auth_expired: token expired"),
-        agent_id=None,
-        db_session=db_session,
-    )
-    await drain(db_session)
+    # Feed auth_expired failure on the skill stage. `dispatch_auth_refresh`
+    # mints a fresh installation token via `core/vcs`, so the stub must be
+    # active for this drain.
+    with register_stub_vcs(plugin_id="github"):
+        await _record(
+            org_id,
+            _failure_event(skill_command_id, reason="auth_expired: token expired"),
+            agent_id=None,
+            db_session=db_session,
+        )
+        await drain(db_session)
 
     # Run is now parked on the refresh-auth command.
     run = await db_session.get(PipelineRunRow, run_id)
@@ -458,14 +496,17 @@ async def test_auth_expired_retry_cap_fails_on_second_attempt(db_session) -> Non
     hits the cap: the stage and run fail normally without another refresh."""
     org_id, _, run_id, skill_command_id = await _advance_to_skill_dispatch(db_session)
 
-    # First auth_expired → refresh-auth dispatched.
-    await _record(
-        org_id,
-        _failure_event(skill_command_id, reason="auth_expired: round 1"),
-        agent_id=None,
-        db_session=db_session,
-    )
-    await drain(db_session)
+    # First auth_expired → refresh-auth dispatched. `dispatch_auth_refresh`
+    # mints a fresh installation token via `core/vcs`, so the stub must be
+    # active for this drain.
+    with register_stub_vcs(plugin_id="github"):
+        await _record(
+            org_id,
+            _failure_event(skill_command_id, reason="auth_expired: round 1"),
+            agent_id=None,
+            db_session=db_session,
+        )
+        await drain(db_session)
 
     run = await db_session.get(PipelineRunRow, run_id)
     assert run is not None

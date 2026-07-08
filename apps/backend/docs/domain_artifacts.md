@@ -24,7 +24,7 @@ Owns the `artifacts` table — the only place a pipeline stage's produced docume
 
 - **Store a version** — `store` inserts a new non-final row; `version` is per-`(ticket_id, stage_name)` max+1 (one-run-per-ticket serializes writers, so no concurrent-insert race to guard against). Body is immutable from here on.
 - **Finalize** — `mark_final` flips `is_final` — the module's only mutation, and it never touches `body`. No org check: the sole caller (the pipelines engine) addresses a row it just created in the same run, before any HTTP org-scoping context exists.
-- **Read** — `latest_final` (engine input assembly + re-run read-through inheritance) only ever sees `is_final` rows, so a stage failing mid-loop leaves only non-final rows visible in `list_for_ticket`/`get` but never fed downstream. `list_for_ticket` groups by `stage_name` (the version-dropdown shape), metadata only. `get` returns the full body; raises `ArtifactNotFoundError`.
+- **Read** — `latest_final` (engine input assembly + re-run read-through inheritance) only ever sees `is_final` rows, so a stage failing mid-loop leaves only non-final rows visible in `list_for_ticket`/`get` but never fed downstream. `list_for_ticket` groups by `stage_name` (the version-dropdown shape), metadata only. `get` takes `org_id` and scopes the SELECT to it — a wrong-org id and an absent id both raise `ArtifactNotFoundError`, so a caller can't distinguish "doesn't exist" from "not yours".
 
 ### State machines
 
@@ -37,7 +37,7 @@ None — an artifact version is either non-final or final (`mark_final` is a one
 | Method | Path | Response | Errors |
 |---|---|---|---|
 | GET | `/api/artifacts?ticket_id={id}` | 200 `{artifacts: ArtifactGroup[]}` | 400 `no_org_context` |
-| GET | `/api/artifacts/{id}` | 200 `{id, stage_name, version, iteration, is_final, body, run_id, created_at}` | 404 |
+| GET | `/api/artifacts/{id}` | 200 `{id, stage_name, version, iteration, is_final, body, run_id, created_at}` | 400 `no_org_context`, 404 (absent or cross-org) |
 
 ## Data owned
 
@@ -45,5 +45,5 @@ None — an artifact version is either non-final or final (`mark_final` is a one
 
 ## How it's tested
 
-- `test/test_artifacts_service.py` (`@pytest.mark.service`) — version sequencing across repeated `store` calls for the same `(ticket_id, stage_name)`; `mark_final` gates `latest_final` (a non-final row is invisible to it); HTTP reads (`list_for_ticket` grouping shape, `get` 404 on unknown id).
+- `test/test_artifacts_service.py` (`@pytest.mark.service`) — version sequencing across repeated `store` calls for the same `(ticket_id, stage_name)`; `mark_final` gates `latest_final` (a non-final row is invisible to it); HTTP reads (`list_for_ticket` grouping shape, `get` 404 on unknown id, `get` 404 on a cross-org id).
 - `domain/pipelines/test/test_skill_stage_service.py` exercises `store`/`mark_final` end-to-end via the engine's skill-stage dispatch.
