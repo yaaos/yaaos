@@ -32,8 +32,9 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 1. **`BrokenIntegrationsNotice`** — amber banner when any MCP credential has `last_refresh_status="failed"` (from `/api/auth/me`).
 2. **`BuilderReadOnlyBanner`** — info banner; UI only. Server enforces `require(Action.CODING_AGENT_WRITE)`.
 3. **`AnthropicKeyCard`** — BYOK Anthropic key. Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
-4. **`RepoSkillsCard`** — per-repo skill name text inputs. Calls `GET /api/claude_code/repos` (`useClaudeCodeRepos`) for the live repo list joined with stored skill names. Each row (`RepoSkillRow`) has an uncontrolled text input and a Save button that fires `PUT /api/claude_code/repos/{encodeURIComponent(owner/repo)}` (`useSetRepoSkill`). Empty state shown when no repos are connected. Renders under its own `<ErrorBoundary>` + `<Suspense>`.
-5. **`DangerZone`** — `ConfirmModal` → `useUninstallCodingAgent`.
+4. **`DangerZone`** — `ConfirmModal` → `useUninstallCodingAgent`.
+
+Skill selection never appears here — a pipeline stage's `skill_name` picks the skill (see [domain_pipeline_settings.md](domain_pipeline_settings.md)).
 
 ## Forms
 

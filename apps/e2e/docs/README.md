@@ -51,7 +51,6 @@ No batch-seeded fixture. Each spec drives its own preconditions in `beforeEach` 
 | `seedGithubInstall()` | `POST /api/testing/seed/github_install` — writes `claude_code_settings` + an active `github_app_installations` row. Bypasses the install handshake; never pair with the install-handshake spec. Platform GitHub App credentials come from `yaaos_github_app_*` env vars. |
 | `seedLesson({repo_external_id, title, body})` | `POST /api/testing/seed/lesson`. |
 | `seedPausedRun(...)` | `POST /api/testing/seed/paused_run` — a pipeline run parked at an `always_hitl` boundary with an open pause row (drives the ticket Overview specs). |
-| `seedRepoSkill(...)` | Seeds a skill file into fake-github's served repo tree. |
 | `dispatchWebhook({event, payload})` | For `pull_request` events: auto-seeds PR JSON into fake-github (so subsequent `fetch_pr` returns 200), then forwards to fake-github's `/__test/dispatch_webhook`. |
 | `seedPRDiff({repo, number, diff, files})` | Sets a specific diff. Used by the secrets spec to inject `AKIA…`. |
 | `seedCompareDiverged(before, after)` | Forces fake-github's `/compare` to return `"diverged"`. |

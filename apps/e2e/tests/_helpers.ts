@@ -145,23 +145,6 @@ export async function publishWorkspaceActivity(opts: {
   });
 }
 
-/** Seed the `skill_name` for a connected repo. Used by e2e specs that render
- *  the Code Connect settings page and expect a non-null skill_name. The
- *  column is reserved for a future per-repo skill override — no dispatch
- *  path reads it today. The seed exists purely for SPA read-back assertions.
- */
-export async function seedRepoSkill(opts: {
-  orgSlug: string;
-  repoExternalId: string;
-  skillName: string;
-}): Promise<void> {
-  await jsonPost(`${YAAOS_URL}/api/testing/seed/repo_skill`, {
-    org_slug: opts.orgSlug,
-    repo_external_id: opts.repoExternalId,
-    skill_name: opts.skillName,
-  });
-}
-
 /** Insert a single lesson via the testing surface. For specs that need a
  *  pre-existing lesson as a *precondition*, not as the thing under test.
  */

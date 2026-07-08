@@ -5,9 +5,11 @@ replaced by the pipelines engine:
 
 - `agent_commands.workflow_execution_id` -> `run_id`
 - `coding_agent_runs.workflow_execution_id` -> `run_id`
-- `coding_agent_runs.step_id` (TEXT) -> `stage_execution_id` (UUID) — every
-  remaining row is new-engine-written and holds a stringified uuid7, so the
-  cast is safe.
+- `coding_agent_runs.step_id` (TEXT) -> `stage_execution_id` (UUID) — rows
+  written by the retired fixed workflow engine hold step *names* (e.g.
+  "CodeReview") that reference tables dropped in 660f6544dbe7; they are
+  deleted before the cast. Every surviving row is new-engine-written and
+  holds a stringified uuid7.
 - `tickets.branch_name` backfilled for any pre-branch-minting row, then set
   NOT NULL — every ticket has a work branch from here on.
 - `pipeline_findings` -> `findings` (incl. indexes/constraints) — the name is
@@ -41,9 +43,15 @@ def upgrade() -> None:
     op.alter_column("coding_agent_runs", "workflow_execution_id", new_column_name="run_id")
 
     # ── coding_agent_runs.step_id (TEXT) -> stage_execution_id (UUID) ───────
-    # Every remaining row was written by the pipelines engine, which always
-    # stamped `str(stage_execution_id)` (a stringified uuid7) — the cast is
-    # safe with no pre-cleanup needed.
+    # Old-engine rows hold step names ("CodeReview") — orphans of the tables
+    # dropped in 660f6544dbe7, not castable to uuid. Delete them; pipelines-
+    # engine rows always hold a stringified uuid7, so the cast is then safe.
+    op.execute(
+        sa.text(
+            "DELETE FROM coding_agent_runs WHERE step_id !~*"
+            " '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'"
+        )
+    )
     op.execute(sa.text("ALTER TABLE coding_agent_runs ALTER COLUMN step_id TYPE uuid USING step_id::uuid"))
     op.alter_column("coding_agent_runs", "step_id", new_column_name="stage_execution_id")
 

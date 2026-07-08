@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — five methods (`compile_invocation`, `byok_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — five methods (`compile_invocation`, `byok_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` table and the `/api/claude_code/defaults` HTTP route. Knows nothing about tickets, review jobs, audit log, or workspace paths. Skill selection is not this plugin's concern — a pipeline stage's own `skill_name` picks the skill (see [domain_pipelines.md](domain_pipelines.md)).
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
@@ -61,7 +61,6 @@ Never branches on `YAAOS_CODING_AGENT_STUB`. When that env var is set, `app/web.
 ## Data owned
 
 - `claude_code_settings` — one row per org: `cli_path` (optional; controls the binary name the remote agent resolves). Anthropic API key is stored in `byok_keys` (provider=`anthropic`), not here.
-- `claude_code_repos` — one row per `(org_id, repo_external_id)`. Columns: `skill_name` (nullable text — reserved for per-repo skill overrides in future; currently unused), `created_at`, `updated_at`.
 
 ## HTTP routes
 
@@ -69,9 +68,7 @@ All under `/api/claude_code/`:
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/repos` | `CODING_AGENT_READ` | Live VCS repos joined with stored `skill_name`. Repo list from `core/vcs.list_installation_repos("github", org_id)`. Returns `{repos: [{repo_external_id, skill_name}]}`. Repos absent from DB included with `skill_name=null`; DB rows for gone repos omitted. |
-| `GET` | `/repos/{repo_external_id:path}` | `CODING_AGENT_READ` | Skill name for one repo. `:path` type handles `owner/repo` slash. |
-| `PUT` | `/repos/{repo_external_id:path}` | `CODING_AGENT_WRITE` | Upsert skill name for one repo. |
+| `GET` | `/defaults` | `CODING_AGENT_READ` | Model / effort dropdown enums for the settings UI's stage-editor pickers. |
 
 ## How it's tested
 

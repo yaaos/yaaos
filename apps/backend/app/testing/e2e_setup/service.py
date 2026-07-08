@@ -112,25 +112,6 @@ async def seed_github_install(
         await s.commit()
 
 
-async def seed_repo_skill(*, org_slug: str, repo_external_id: str, skill_name: str) -> None:
-    """Write `skill_name` for a connected repo via the direct service-layer call.
-
-    Used by e2e specs that render the Code Connect settings page and expect a
-    non-null skill_name for the repo. No pipeline dispatch path reads this
-    field today — a pipeline stage's own `skill_name` is the mechanism that
-    picks a skill. The seed exists for SPA read-back assertions only.
-    """
-    from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
-    from app.plugins.claude_code import set_repo_skill  # noqa: PLC0415
-
-    org = await get_org_by_slug(org_slug)
-    if org is None:
-        raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
-    async with db_session() as s:
-        await set_repo_skill(org.id, repo_external_id, skill_name, session=s)
-        await s.commit()
-
-
 async def seed_pipeline(*, org_id: UUID, name: str, action_id: str = "github:create_pr") -> UUID:
     """Insert a minimal one-stage pipeline via the public
     ``domain.pipelines.create_pipeline`` service. ``action_id`` need not be a
@@ -964,7 +945,6 @@ __all__ = [
     "seed_member_for_org",
     "seed_paused_run",
     "seed_pipeline",
-    "seed_repo_skill",
     "seed_running_run",
     "seed_trigger_binding",
     "seed_user_with_session",
