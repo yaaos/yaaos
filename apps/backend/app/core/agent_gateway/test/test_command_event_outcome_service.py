@@ -108,7 +108,7 @@ async def test_command_event_recorded_returns_200_with_outcome(db_session) -> No
     `command_event_outcome = event_recorded`."""
     agent_id, org_id, token = await _setup_agent_with_bearer(db_session)
     cmd_id = uuid7()
-    wfx_id = uuid4()
+    run_id = uuid4()
 
     ws_id = await seed_workspace(
         org_id=org_id,
@@ -136,7 +136,7 @@ async def test_command_event_recorded_returns_200_with_outcome(db_session) -> No
         org_id=org_id,
         command=provision,
         session=db_session,
-        workflow_execution_id=wfx_id,
+        run_id=run_id,
     )
     await db_session.commit()
 
@@ -167,7 +167,7 @@ async def test_command_event_span_carries_outcome_attribute(db_session) -> None:
 
     agent_id, org_id, token = await _setup_agent_with_bearer(db_session)
     cmd_id = uuid7()
-    wfx_id = uuid4()
+    run_id = uuid4()
 
     ws_id = await seed_workspace(
         org_id=org_id,
@@ -195,7 +195,7 @@ async def test_command_event_span_carries_outcome_attribute(db_session) -> None:
         org_id=org_id,
         command=provision,
         session=db_session,
-        workflow_execution_id=wfx_id,
+        run_id=run_id,
     )
     await db_session.commit()
 

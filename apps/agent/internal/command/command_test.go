@@ -149,6 +149,29 @@ func TestDecodeRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("PushBranch", func(t *testing.T) {
+		raw := mustMarshal(t, map[string]any{
+			"command_id":       "cmd-push-1",
+			"workspace_id":     "ws-push-1",
+			"traceparent":      "tp-push-1",
+			"kind":             "PushBranch",
+			"completion_token": "ct-push-1",
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		hdr := cmd.Header()
+		assertHeader(t, hdr, "cmd-push-1", "ws-push-1", "tp-push-1", protocol.KindPushBranch)
+		if hdr.CompletionToken != "ct-push-1" {
+			t.Errorf("header.CompletionToken = %q, want ct-push-1", hdr.CompletionToken)
+		}
+		assertTimeout(t, cmd.Timeout(), 120*time.Second)
+		if _, ok := cmd.(*command.PushBranchCommand); !ok {
+			t.Errorf("expected *command.PushBranchCommand, got %T", cmd)
+		}
+	})
+
 	t.Run("ConfigUpdate", func(t *testing.T) {
 		// Nested `config` object — the exact shape the control plane emits
 		// (model_dump of ConfigUpdateCommand{config: AgentConfig{...}}). The
@@ -398,6 +421,7 @@ func TestSetTraceparent_AllKinds(t *testing.T) {
 		&command.RefreshWorkspaceAuthCommand{},
 		&command.InvokeClaudeCodeCommand{},
 		&command.CleanupWorkspaceCommand{},
+		&command.PushBranchCommand{},
 		&command.ConfigUpdateCommand{},
 		&command.ShutdownCommand{},
 		&command.CancelShutdownCommand{},

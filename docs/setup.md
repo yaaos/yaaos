@@ -105,7 +105,7 @@ yaaos requires **two distinct GitHub-side registrations** per deployment. Custom
    - **Setup URL:** `<deployment>/api/github/install_callback`; check "Redirect on update."
    - **Webhook URL:** `<deployment>/api/intake/github` (prod) or smee channel (laptop dev).
    - **Webhook secret:** high-entropy string; keep it.
-   - **Repository permissions:** Contents (read), Pull requests (write), Metadata (read), Issues (write).
+   - **Repository permissions:** Contents (read/write), Pull requests (write), Metadata (read), Issues (write). Contents write is required for the agent's `git push` (opening/updating PR branches); Pull requests write also covers submitting approving reviews and resolving review threads.
    - **Subscribe to events:** Pull request, Pull request review comment, Issue comment, Installation.
    - Leave "User authorization callback URL" blank — sign-in does **not** go through this App.
 3. After saving: grab App ID, slug, and generated PEM.

@@ -79,11 +79,11 @@ Event endpoints validate the `agent_commands` row for the inbound `command_id`. 
 
 ### Failure-report-precedes-disposal
 
-`release_claim` clears `current_command_id` before the workflow engine is resumed. Command-to-workflow correlation lives on `agent_commands.workflow_execution_id` — terminal events resolve their workflow via the command row, not the workspace row. The workspace row can be disposed after claim release without losing correlation.
+`release_claim` clears `current_command_id` before the run engine is resumed. Command-to-run correlation lives on `agent_commands.run_id` — terminal events resolve their run via the command row, not the workspace row. The workspace row can be disposed after claim release without losing correlation.
 
 ### `traceparent` on every wire payload
 
-W3C trace context is a required field on every AgentCommand and AgentEvent (it is optional on WorkspaceEvent and Heartbeat, which carry their own correlation identifiers). The intake endpoint records `current_traceparent()` at webhook arrival; the workflow execution row carries it forward; tasks restore it via [`core/observability.with_remote_parent_span`](../apps/backend/app/core/observability/traceparent.py). One trace_id covers webhook → terminal outcome across providers.
+W3C trace context is a required field on every AgentCommand and AgentEvent (it is optional on WorkspaceEvent and Heartbeat, which carry their own correlation identifiers). The intake endpoint records `current_traceparent()` at webhook arrival; the pipeline run row carries it forward; tasks restore it via [`core/observability.with_remote_parent_span`](../apps/backend/app/core/observability/traceparent.py). One trace_id covers webhook → terminal outcome across providers.
 
 ## Data at rest
 
@@ -103,12 +103,12 @@ W3C trace context is a required field on every AgentCommand and AgentEvent (it i
 | Threat | Defense |
 |---|---|
 | Inbound webhook from an attacker not GitHub | HMAC verification in [`plugins/github/service.verify_webhook_signature`](../apps/backend/app/plugins/github/service.py); intake type returns 401 on mismatch. |
-| Duplicate webhook delivery | `X-Github-Delivery` is the idempotency key on `domain/tickets.create_from_pr()`; second submission returns the existing ticket id with `created=False` without starting a new workflow. |
+| Duplicate webhook delivery | `X-Github-Delivery` is the idempotency key on `domain/tickets.create_from_pr()`; second submission returns the existing ticket id with `created=False` without starting a new run. |
 | Stale event redelivery from a workspace whose claim has rotated | Stale-claim guard. Both event endpoints return `410 {"error": "stale_claim"}` on a missing/retired command row. Agent receives `protocol.ErrStaleClaim` and abandons without retry. |
-| Two workflows racing the same workspace | Single-flight `try_claim` atomic CAS. |
+| Two runs racing the same workspace | Single-flight `try_claim` atomic CAS. |
 | Agent identity spoofing | STS replay verification: backend replays the agent's sigv4-signed `GetCallerIdentity` against AWS STS; trust anchored to AWS signature verification + audience binding. |
 | Activity event payloads carrying unexpected content | Producer-side discipline: `core/coding_agent` ActivityEvents are assumed source-free by the producer; payloads are not independently audited downstream. |
-| Worker exhaustion under long-running AgentCommands | Async event-driven engine — workers exit after dispatch and resume on terminal event. Verified by workflow state-machine tests. |
+| Worker exhaustion under long-running AgentCommands | Async event-driven engine — workers exit after dispatch and resume on terminal event. Verified by run state-machine tests. |
 
 ## Not defended against (yet)
 
@@ -119,7 +119,7 @@ W3C trace context is a required field on every AgentCommand and AgentEvent (it i
 ## Cross-references
 
 - [`apps/backend/docs/core_agent_gateway.md`](../apps/backend/docs/core_agent_gateway.md) — wire protocol mechanics.
-- [`apps/backend/docs/core_workspace.md`](../apps/backend/docs/core_workspace.md) — single-flight claim + recovery registry + cleanup failsafes.
-- [`apps/backend/docs/core_workflow.md`](../apps/backend/docs/core_workflow.md) — engine + state machine.
+- [`apps/backend/docs/core_workspace.md`](../apps/backend/docs/core_workspace.md) — single-flight claim + cleanup failsafes.
+- [`apps/backend/docs/domain_pipelines.md`](../apps/backend/docs/domain_pipelines.md) — run engine + state machine.
 - [`apps/backend/docs/core_audit_log.md`](../apps/backend/docs/core_audit_log.md) — audit shape + retention.
 - [`apps/agent/docs/README.md`](../apps/agent/docs/README.md) — agent deployment + IAM role.

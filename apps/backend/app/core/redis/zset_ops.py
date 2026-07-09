@@ -40,7 +40,7 @@ async def zset_remove_by_score(key: str, min_score: float, max_score: float) -> 
     """Remove all members of the sorted set at `key` with score in [min, max].
 
     Wraps ZREMRANGEBYSCORE on an exact key. Returns the count removed.
-    The sweeper iterates workflow_subscribers:* via Redis SCAN and calls
+    The sweeper iterates run_subscribers:* via Redis SCAN and calls
     this per key — Redis does not support glob ranges on ZREMRANGEBYSCORE.
     """
     result = await _get_client().zremrangebyscore(key, min_score, max_score)

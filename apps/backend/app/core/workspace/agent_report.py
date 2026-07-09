@@ -3,7 +3,7 @@
 Owns all workspace-state access needed by agent_gateway event ingestion:
 - heartbeat reconciliation (id→status map)
 - workspace-event kind→status application + lean row creation on first event
-- claim resolution (command_id → holder_workflow_id)
+- claim resolution (command_id → holder_run_id)
 - claim release on terminal agent events (failure-report-precedes-disposal)
 
 Registered into agent_gateway's single-slot registry by
@@ -14,8 +14,9 @@ Lean workspace row creation: when the agent reports a `created` or `ready`
 workspace event and no `workspaces` row exists yet, this module creates the
 row with `status='active'`, `owning_agent_id` from the reporting bearer, and
 `org_id`/`spec` resolved from the originating `agent_commands` row
-(by `command_id`). The `workspace_id` is minted up front in
-`ProvisionWorkspace.dispatch`; the row materialises only once an agent owns it.
+(by `command_id`). The `workspace_id` is minted up front by the caller of
+`core/workspace.dispatch_provision`; the row materialises only once an agent
+owns it.
 """
 
 from __future__ import annotations
@@ -201,16 +202,16 @@ class WorkspaceAgentReportSinkImpl:
         command_id: UUID,
         session: AsyncSession,
     ) -> UUID | None:
-        """Return the `workflow_execution_id` for `command_id`, or None when
-        no agent_commands row exists or has no workflow correlation.
+        """Return the `run_id` for `command_id`, or None when
+        no agent_commands row exists or has no run correlation.
 
-        Correlation lives on `agent_commands.workflow_execution_id` — the
-        shed `workspaces.current_holder_workflow_id` column is no longer read.
+        Correlation lives on `agent_commands.run_id` — no
+        workspace-row column is read.
         Pure read — no writes.
         """
-        from app.core.agent_gateway import get_command_workflow_execution_id  # noqa: PLC0415
+        from app.core.agent_gateway import get_command_run_id  # noqa: PLC0415
 
-        return await get_command_workflow_execution_id(command_id, session=session)
+        return await get_command_run_id(command_id, session=session)
 
     async def release_command_claim(
         self,
@@ -219,7 +220,7 @@ class WorkspaceAgentReportSinkImpl:
     ) -> None:
         """Release the single-flight claim on whichever workspace holds
         `command_id` by clearing `current_command_id`. Called on every
-        terminal agent event before the workflow engine is resumed —
+        terminal agent event before the run engine is resumed —
         failure-report-precedes-disposal ordering.
 
         No-op when no workspace holds the command (e.g. `ProvisionWorkspace`

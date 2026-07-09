@@ -135,6 +135,37 @@ async def plugin_registries_isolation():
                 yield
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def actions_registry_isolation():
+    """Bind a fresh copy of the actions registry for each test.
+
+    Same shape as `plugin_registries_isolation` — a test that registers or
+    swaps an action only affects its own copy; the next test rebinds from
+    the default.
+    """
+    from app.domain.actions import set_actions_for_tests  # noqa: PLC0415
+
+    with set_actions_for_tests():
+        yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def intake_registry_isolation():
+    """Bind a fresh copy of the intake registry (types + points) per test.
+
+    Ensures `plugins/github` (3 intake points) and `domain/pipelines` (the
+    `schedule` point) have registered, then copies the result for per-test
+    isolation — a test that registers its own type/point only affects its
+    own copy; the next test rebinds from the default.
+    """
+    import app.domain.pipelines  # noqa: PLC0415
+    import app.plugins.github  # noqa: PLC0415, F401
+    from app.core.intake import set_intake_for_tests  # noqa: PLC0415
+
+    with set_intake_for_tests():
+        yield
+
+
 @pytest_asyncio.fixture
 async def workspace_providers_isolation():
     """Bind an empty workspace-provider registry before the test.
@@ -151,8 +182,10 @@ async def workspace_providers_isolation():
 
 
 __all__ = [
+    "actions_registry_isolation",
     "bearer_verify_isolation",
     "email_inbox_isolation",
+    "intake_registry_isolation",
     "plugin_registries_isolation",
     "pubsub_isolation",
     "scheduler_registry_isolation",

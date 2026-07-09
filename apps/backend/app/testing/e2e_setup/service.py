@@ -112,23 +112,328 @@ async def seed_github_install(
         await s.commit()
 
 
-async def seed_repo_skill(*, org_slug: str, repo_external_id: str, skill_name: str) -> None:
-    """Write `skill_name` for a connected repo via the direct service-layer call.
-
-    Used by e2e specs that render the Code Connect settings page and expect a
-    non-null skill_name for the repo. The reviewer dispatch flow does NOT consume
-    this — it hardcodes skill='pr_review'. The seed exists for SPA read-back
-    assertions, not review correctness.
+async def seed_pipeline(*, org_id: UUID, name: str, action_id: str = "github:create_pr") -> UUID:
+    """Insert a minimal one-stage pipeline via the public
+    ``domain.pipelines.create_pipeline`` service. ``action_id`` need not be a
+    registered action — this seed only exercises trigger-binding + run
+    creation (`pipelines.start_run` succeeds synchronously regardless of
+    whether a later stage dispatch can resolve the action), not stage
+    execution.
     """
+    from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.domain.pipelines import ActionStage, PipelineDefinition, create_pipeline  # noqa: PLC0415
+
+    async with db_session() as s:
+        pipeline_id = await create_pipeline(
+            org_id=org_id,
+            definition=PipelineDefinition(
+                name=name, description="", stages=(ActionStage(action_id=action_id),)
+            ),
+            actor=Actor.system(),
+            session=s,
+        )
+        await s.commit()
+    return pipeline_id
+
+
+async def seed_trigger_binding(
+    *, org_id: UUID, repo_external_id: str, intake_point_id: str, pipeline_id: UUID
+) -> UUID:
+    """Insert a repo trigger binding via the public ``domain.repos.add_binding``
+    service. Returns the binding id."""
+    from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.domain.repos import TriggerBindingSpec, add_binding  # noqa: PLC0415
+
+    async with db_session() as s:
+        binding_id = await add_binding(
+            org_id,
+            repo_external_id,
+            spec=TriggerBindingSpec(intake_point_id=intake_point_id, pipeline_id=pipeline_id),
+            actor=Actor.system(),
+            session=s,
+        )
+        await s.commit()
+    return binding_id
+
+
+async def seed_paused_run(
+    *, org_slug: str, ticket_title: str, stage_name: str = "write-spec"
+) -> dict[str, str]:
+    """Seed a `pipeline_runs` row already `paused` at an `always_hitl`
+    boundary, with a stored final artifact and an open `run_pauses` row —
+    bypassing the run engine's coding-agent dispatch entirely (no invocation
+    is compiled, no workspace is provisioned, no real agent is involved).
+
+    Lets e2e specs exercise the ticket page's Overview attention block and
+    `POST /api/pipelines/runs/pauses/{id}/respond` without depending on a
+    live coding-agent completing a real skill invocation — faster and
+    deterministic for specs that only need a paused-run fixture.
+    `escalation_user_ids` is left empty; the responding org admin/owner
+    authorizes via `is_pause_responder`'s admin-union clause, not escalation
+    membership.
+
+    Row shapes mirror exactly what the engine itself writes on a real
+    always-HITL pause (see `domain/pipelines/test/test_boundary_pause_service.py`
+    `_advance_to_paused` + `engine._handle_main_return`/`_enter_pause`), via
+    raw SQL to avoid importing pipelines' Row types across the module
+    boundary. Returns `{"ticket_id", "run_id", "pause_id", "stage_execution_id"}`.
+    """
+    import json as _json  # noqa: PLC0415
+
+    from sqlalchemy import text as sa_text  # noqa: PLC0415
+
+    from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.domain.artifacts import mark_final, store  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
-    from app.plugins.claude_code import set_repo_skill  # noqa: PLC0415
+    from app.domain.pipelines import (  # noqa: PLC0415
+        BoundaryControl,
+        Kickoff,
+        PipelineDefinition,
+        SkillStage,
+        create_pipeline,
+    )
+    from app.domain.tickets import create_from_pr  # noqa: PLC0415
 
     org = await get_org_by_slug(org_slug)
     if org is None:
         raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
+
+    definition = PipelineDefinition(
+        name=f"seed-pipe-{uuid4().hex[:8]}",
+        stages=(
+            SkillStage(
+                name=stage_name,
+                skill_name=stage_name,
+                coding_agent_plugin_id="claude_code",
+                model="sonnet",
+                effort="medium",
+                boundary=BoundaryControl(),  # default mode="always_hitl"
+            ),
+        ),
+    )
+    stage = definition.stages[0]
+
     async with db_session() as s:
-        await set_repo_skill(org.id, repo_external_id, skill_name, session=s)
+        pipeline_id = await create_pipeline(
+            org_id=org.id, definition=definition, actor=Actor.system(), session=s
+        )
+        ticket_id, _ = await create_from_pr(
+            org_id=org.id,
+            source_external_id=f"seed-paused-run-{uuid4().hex[:8]}",
+            title=ticket_title,
+            description=None,
+            repo_external_id="acme/repo",
+            plugin_id="github",
+            idempotency_key=f"key-{uuid4().hex}",
+            payload={},
+            session=s,
+            branch_name="yaaos/seed-paused-run",
+        )
+        await s.execute(
+            sa_text("UPDATE tickets SET status = 'hitl' WHERE id = :id"),
+            {"id": ticket_id},
+        )
+
+        run_id = uuid4()
+        kickoff = Kickoff(intake_point_id="test", actor=Actor.system(), input_text="spec please")
+        await s.execute(
+            sa_text(
+                "INSERT INTO pipeline_runs"
+                " (id, org_id, ticket_id, pipeline_id, pipeline_name, definition_snapshot,"
+                "  state, phase, current_stage_index, kickoff)"
+                " VALUES (:id, :org_id, :ticket_id, :pipeline_id, :pipeline_name,"
+                "  cast(:snapshot as jsonb), 'paused', 'stages', 0, cast(:kickoff as jsonb))"
+            ),
+            {
+                "id": run_id,
+                "org_id": org.id,
+                "ticket_id": ticket_id,
+                "pipeline_id": pipeline_id,
+                "pipeline_name": definition.name,
+                "snapshot": _json.dumps({"stages": [stage.model_dump(mode="json")]}),
+                "kickoff": kickoff.model_dump_json(),
+            },
+        )
+        await s.execute(
+            sa_text("UPDATE tickets SET current_run_id = :run_id WHERE id = :id"),
+            {"run_id": run_id, "id": ticket_id},
+        )
+
+        stage_exec_id = uuid4()
+        artifact_body = "# Spec\n\nSeeded artifact body for e2e."
+        await s.execute(
+            sa_text(
+                "INSERT INTO stage_executions"
+                " (id, org_id, run_id, stage_index, kind, stage_name, skill_name, status,"
+                "  confidence, boundary_outcome, completed_at)"
+                " VALUES (:id, :org_id, :run_id, 0, 'skill', :stage_name, :stage_name,"
+                "  'completed', 'high', 'paused', now())"
+            ),
+            {"id": stage_exec_id, "org_id": org.id, "run_id": run_id, "stage_name": stage_name},
+        )
+        artifact_id = await store(
+            org_id=org.id,
+            ticket_id=ticket_id,
+            run_id=run_id,
+            stage_execution_id=stage_exec_id,
+            stage_name=stage_name,
+            body=artifact_body,
+            iteration=0,
+            session=s,
+        )
+        await mark_final(artifact_id, session=s)
+        await s.execute(
+            sa_text("UPDATE stage_executions SET loop_state = cast(:loop_state as jsonb) WHERE id = :id"),
+            {
+                "loop_state": _json.dumps(
+                    [
+                        {
+                            "phase": "main",
+                            "artifact_id": str(artifact_id),
+                            "confidence": 90,
+                            "paths_affected": [],
+                        }
+                    ]
+                ),
+                "id": stage_exec_id,
+            },
+        )
+
+        pause_id = uuid4()
+        await s.execute(
+            sa_text(
+                "INSERT INTO run_pauses"
+                " (id, org_id, run_id, stage_execution_id, tripped, escalation_user_ids)"
+                " VALUES (:id, :org_id, :run_id, :stage_execution_id, cast(:tripped as jsonb),"
+                "  ARRAY[]::uuid[])"
+            ),
+            {
+                "id": pause_id,
+                "org_id": org.id,
+                "run_id": run_id,
+                "stage_execution_id": stage_exec_id,
+                "tripped": _json.dumps({"always_hitl": True}),
+            },
+        )
         await s.commit()
+
+    return {
+        "ticket_id": str(ticket_id),
+        "run_id": str(run_id),
+        "pause_id": str(pause_id),
+        "stage_execution_id": str(stage_exec_id),
+    }
+
+
+async def seed_running_run(
+    *, org_slug: str, ticket_title: str, stage_name: str = "write-code"
+) -> dict[str, str]:
+    """Seed a `pipeline_runs` row in `running` state with one skill
+    `stage_executions` row in `running` status — bypassing the run engine
+    entirely (no invocation compiled, no workspace provisioned, no real agent).
+
+    Lets e2e specs exercise the ticket page's Runs-tab live activity pane and
+    Overview in-flight card without depending on a live coding-agent. Row shapes
+    mirror what the engine writes when it enters a skill stage (status='running',
+    no artifact, no pause). Returns `{"ticket_id", "run_id", "stage_execution_id"}`.
+    """
+    import json as _json  # noqa: PLC0415
+
+    from sqlalchemy import text as sa_text  # noqa: PLC0415
+
+    from app.core.audit_log import Actor  # noqa: PLC0415
+    from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
+    from app.domain.pipelines import (  # noqa: PLC0415
+        BoundaryControl,
+        Kickoff,
+        PipelineDefinition,
+        SkillStage,
+        create_pipeline,
+    )
+    from app.domain.tickets import create_from_pr  # noqa: PLC0415
+
+    org = await get_org_by_slug(org_slug)
+    if org is None:
+        raise ValueError(f"org {org_slug!r} not found — seed it first via bootstrap_owner")
+
+    definition = PipelineDefinition(
+        name=f"seed-pipe-{uuid4().hex[:8]}",
+        stages=(
+            SkillStage(
+                name=stage_name,
+                skill_name=stage_name,
+                coding_agent_plugin_id="claude_code",
+                model="sonnet",
+                effort="medium",
+                boundary=BoundaryControl(),
+            ),
+        ),
+    )
+    stage = definition.stages[0]
+
+    async with db_session() as s:
+        pipeline_id = await create_pipeline(
+            org_id=org.id, definition=definition, actor=Actor.system(), session=s
+        )
+        ticket_id, _ = await create_from_pr(
+            org_id=org.id,
+            source_external_id=f"seed-running-run-{uuid4().hex[:8]}",
+            title=ticket_title,
+            description=None,
+            repo_external_id="acme/repo",
+            plugin_id="github",
+            idempotency_key=f"key-{uuid4().hex}",
+            payload={},
+            session=s,
+            branch_name="yaaos/seed-running-run",
+        )
+        await s.execute(
+            sa_text("UPDATE tickets SET status = 'running' WHERE id = :id"),
+            {"id": ticket_id},
+        )
+
+        run_id = uuid4()
+        kickoff = Kickoff(intake_point_id="test", actor=Actor.system(), input_text="code it")
+        await s.execute(
+            sa_text(
+                "INSERT INTO pipeline_runs"
+                " (id, org_id, ticket_id, pipeline_id, pipeline_name, definition_snapshot,"
+                "  state, phase, current_stage_index, kickoff)"
+                " VALUES (:id, :org_id, :ticket_id, :pipeline_id, :pipeline_name,"
+                "  cast(:snapshot as jsonb), 'running', 'stages', 0, cast(:kickoff as jsonb))"
+            ),
+            {
+                "id": run_id,
+                "org_id": org.id,
+                "ticket_id": ticket_id,
+                "pipeline_id": pipeline_id,
+                "pipeline_name": definition.name,
+                "snapshot": _json.dumps({"stages": [stage.model_dump(mode="json")]}),
+                "kickoff": kickoff.model_dump_json(),
+            },
+        )
+        await s.execute(
+            sa_text("UPDATE tickets SET current_run_id = :run_id WHERE id = :id"),
+            {"run_id": run_id, "id": ticket_id},
+        )
+
+        stage_exec_id = uuid4()
+        await s.execute(
+            sa_text(
+                "INSERT INTO stage_executions"
+                " (id, org_id, run_id, stage_index, kind, stage_name, skill_name, status)"
+                " VALUES (:id, :org_id, :run_id, 0, 'skill', :stage_name, :stage_name, 'running')"
+            ),
+            {"id": stage_exec_id, "org_id": org.id, "run_id": run_id, "stage_name": stage_name},
+        )
+        await s.commit()
+
+    return {
+        "ticket_id": str(ticket_id),
+        "run_id": str(run_id),
+        "stage_execution_id": str(stage_exec_id),
+        "org_id": str(org.id),
+    }
 
 
 async def seed_lesson(*, repo_external_id: str, title: str, body: str) -> UUID:
@@ -638,7 +943,10 @@ __all__ = [
     "seed_github_install",
     "seed_lesson",
     "seed_member_for_org",
-    "seed_repo_skill",
+    "seed_paused_run",
+    "seed_pipeline",
+    "seed_running_run",
+    "seed_trigger_binding",
     "seed_user_with_session",
     "seed_workspace",
     "seed_workspace_agent",

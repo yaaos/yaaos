@@ -1,15 +1,12 @@
-"""Service tests for the lean workspace lifecycle + guaranteed finalizer + failure recording.
+"""Service tests for the lean workspace lifecycle.
 
 Covers:
 - Workspace row created on the agent's first `created`/`ready` event with
   `owning_agent_id` from the reporting bearer and `org_id`/`spec` from the
   originating `agent_commands` row.
+- The `ProvisionWorkspace`-success materialisation path: completion-token
+  verification, TTL/provider-id derivation, and idempotent replay.
 - `release_claim` runs before the next `try_claim` (failure-report-precedes-disposal).
-- `Workflow.finalizer_step_id` runs exactly once on terminal-fail before
-  the execution is marked `failed`.
-- The success path does NOT trigger a double-run of the finalizer step.
-- `failure_reason` label + `workflow.failed` audit row written on terminal-fail.
-- `release_claim` precedes the finalizer dispatch on the failure path.
 """
 
 from __future__ import annotations
@@ -33,161 +30,13 @@ from app.core.agent_gateway import (
     record_agent_event,
     record_workspace_event,
 )
-from app.core.audit_log import ActorKind, list_for_entity
+from app.core.audit_log import ActorKind
 from app.core.auth import org_context
-from app.core.tasks import drain_once, get_pending_task_names
-from app.core.workflow import (
-    AgentDispatchCommand,
-    Empty,
-    Outcome,
-    TerminalAction,
-    Workflow,
-    WorkflowState,
-    get_execution_summary,
-    step,
-)
 from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import WorkspaceStatus
 from app.testing.e2e_setup import seed_agent
-from app.testing.workflow_harness import set_engine_for_tests
 
 pytestmark = pytest.mark.service
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────
-
-
-async def _drain(db_session, *, max_iters: int = 50) -> None:
-    """Drain the outbox by dispatching `taskiq_enqueue` rows via the broker."""
-    from app.core.tasks import get_broker  # noqa: PLC0415
-
-    async def _dispatcher(kind: str, payload: dict) -> None:
-        assert kind == "taskiq_enqueue"
-        decorated = get_broker().find_task(payload["task_name"])
-        assert decorated is not None
-        await decorated.original_func(**payload["args"])
-
-    for _ in range(max_iters):
-        pending = await get_pending_task_names(db_session)
-        if not pending:
-            return
-        delivered = await drain_once(db_session, dispatcher=_dispatcher)
-        await db_session.commit()
-        if delivered == 0:
-            return
-
-
-class _DispatchingWs(AgentDispatchCommand):
-    """AgentDispatchCommand that enqueues a real `agent_commands` row and
-    records the returned command_id for inspection by the test.
-
-    Uses class attributes for org_id and workspace_id so the engine can
-    auto-instantiate via `_DispatchingWs()`. Tests set these class attributes
-    before calling register_workflow.
-    """
-
-    kind = "LeanLifecycleDispatch"
-    Inputs = Empty
-    Outputs = Empty
-    restart_safe = True
-    _org_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel; tests override
-    _workspace_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel
-    dispatched_command_id: UUID | None = None  # set on dispatch
-
-    async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
-        return Outcome.success()
-
-    async def dispatch(self, inputs: Empty, ctx, *, session):  # type: ignore[no-untyped-def]
-        del inputs
-        command_id = uuid7()
-        cmd = CleanupWorkspaceCommand(
-            command_id=command_id,
-            workspace_id=type(self)._workspace_id,
-            traceparent=ctx.traceparent or "",
-        )
-        await enqueue_command(
-            org_id=type(self)._org_id,
-            command=cmd,
-            session=session,
-            workflow_execution_id=UUID(ctx.workflow_execution_id),
-        )
-        type(self).dispatched_command_id = command_id
-        return command_id
-
-
-class _FailingWs(AgentDispatchCommand):
-    """AgentDispatchCommand that always signals failure via terminal event.
-
-    Uses class attributes for org_id and workspace_id so the engine can
-    auto-instantiate via `_FailingWs()`. Tests set these class attributes
-    before calling register_workflow.
-    """
-
-    kind = "LeanLifecycleFail"
-    Inputs = Empty
-    Outputs = Empty
-    restart_safe = True
-    _org_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel; tests override
-    _workspace_id: UUID = UUID("00000000-0000-0000-0000-000000000000")  # sentinel
-    dispatched_command_id: UUID | None = None  # set on dispatch
-
-    async def execute(self, inputs: Empty, ctx):  # type: ignore[no-untyped-def]
-        del inputs, ctx
-        return Outcome.success()
-
-    async def dispatch(self, inputs: Empty, ctx, *, session):  # type: ignore[no-untyped-def]
-        del inputs
-        command_id = uuid7()
-        cmd = CleanupWorkspaceCommand(
-            command_id=command_id,
-            workspace_id=type(self)._workspace_id,
-            traceparent=ctx.traceparent or "",
-        )
-        await enqueue_command(
-            org_id=type(self)._org_id,
-            command=cmd,
-            session=session,
-            workflow_execution_id=UUID(ctx.workflow_execution_id),
-        )
-        type(self).dispatched_command_id = command_id
-        return command_id
-
-
-class _NoopLocal:
-    """Local terminal step — drains the workflow to DONE."""
-
-    kind = "LeanLifecycleTerminal"
-    Inputs = Empty
-    Outputs = Empty
-    restart_safe = True
-
-    async def execute(self, inputs: Empty, ctx, *, session=None):  # type: ignore[no-untyped-def]
-        del inputs, ctx, session
-        return Outcome.success()
-
-
-class _FinalizerLocal:
-    """Local finalizer step — records that it was called."""
-
-    kind = "LeanLifecycleFinalizer"
-    Inputs = Empty
-    Outputs = Empty
-    restart_safe = True
-
-    call_count: int = 0
-
-    async def execute(self, inputs: Empty, ctx, *, session=None):  # type: ignore[no-untyped-def]
-        del inputs, ctx, session
-        _FinalizerLocal.call_count += 1
-        return Outcome.success()
-
-
-# Module-level StepRef objects — step_id equals the command kind.
-_dispatch_step = step(_DispatchingWs)
-_fail_step = step(_FailingWs)
-_noop_step = step(_NoopLocal)
-_finalizer_step = step(_FinalizerLocal)
 
 
 # ── Lean row creation ────────────────────────────────────────────────────
@@ -240,8 +89,6 @@ async def test_lean_row_created_on_first_workspace_event(db_session) -> None:
 async def test_lean_row_not_created_for_unknown_kind(db_session) -> None:
     """Non-`created`/`ready` kinds when no row exists → sink returns accepted=False.
     `record_workspace_event` raises StaleClaimError in that case; no row is inserted."""
-    from app.core.agent_gateway import StaleClaimError  # noqa: PLC0415
-
     org_id = uuid4()
     workspace_id = uuid7()
     command_id = uuid7()
@@ -461,9 +308,6 @@ async def test_provision_success_materialises_lean_row(db_session) -> None:
 async def test_provision_success_idempotent(db_session) -> None:
     """Replaying the terminal `completed_success` does not insert a duplicate
     workspace row."""
-    from app.core.audit_log import ActorKind  # noqa: PLC0415
-    from app.core.auth import org_context  # noqa: PLC0415
-
     org_id = uuid4()
     agent_result = await seed_agent(org_id=org_id)
     agent_id = UUID(str(agent_result["id"]))
@@ -503,7 +347,9 @@ async def test_provision_success_idempotent(db_session) -> None:
 @pytest.mark.asyncio
 async def test_release_claim_before_next_try_claim(db_session) -> None:
     """After a terminal agent event, `current_command_id` is cleared before
-    the workflow engine is resumed — so the next `try_claim` sees NULL."""
+    the run engine is resumed — so the next `try_claim` sees NULL."""
+    from datetime import timedelta  # noqa: PLC0415
+
     from app.core.workspace.dispatch import try_claim  # noqa: PLC0415
 
     org_id = uuid4()
@@ -511,8 +357,6 @@ async def test_release_claim_before_next_try_claim(db_session) -> None:
     command_id = uuid7()
 
     # Seed a workspace row that holds the current command claim.
-    from datetime import timedelta  # noqa: PLC0415
-
     agent_result = await seed_agent(org_id=org_id)
     ws = WorkspaceRow(
         id=workspace_id,
@@ -539,7 +383,7 @@ async def test_release_claim_before_next_try_claim(db_session) -> None:
     await db_session.flush()
 
     # Simulate a terminal agent event — this should call release_claim before
-    # routing to the workflow engine.
+    # routing to the run engine.
     event = AgentEvent(
         command_id=command_id,
         kind=AgentEventKind.COMPLETED_SUCCESS,
@@ -561,346 +405,7 @@ async def test_release_claim_before_next_try_claim(db_session) -> None:
     claimed = await try_claim(
         workspace_id=workspace_id,
         command_id=new_cmd_id,
-        workflow_execution_id=uuid4(),
+        run_id=uuid4(),
         session=db_session,
     )
     assert claimed, "try_claim should succeed after release_claim"
-
-
-# ── Finalizer: fires exactly once on terminal-fail ───────────────────────
-
-
-@pytest.mark.asyncio
-async def test_finalizer_fires_once_on_terminal_fail(db_session) -> None:
-    """When `Workflow.finalizer_step_id` is set and a terminal-fail occurs,
-    the engine routes to the finalizer exactly once before marking the
-    workflow `failed`."""
-    _FinalizerLocal.call_count = 0
-
-    org_id = uuid4()
-    workspace_id = uuid7()
-    _FailingWs._org_id = org_id
-    _FailingWs._workspace_id = workspace_id
-    _FailingWs.dispatched_command_id = None
-
-    workflow = Workflow(
-        name="finalizer-once-test",
-        version=1,
-        steps=(_fail_step, _finalizer_step),
-        entry=_fail_step,
-        finalizer=_finalizer_step,
-        transitions={
-            _fail_step: {
-                "success": TerminalAction.COMPLETE_WORKFLOW,
-                "failure": TerminalAction.FAIL_WORKFLOW,
-            },
-            _finalizer_step: {"success": TerminalAction.FAIL_WORKFLOW},
-        },
-    )
-
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(workflow)
-        wfx_id = await eng.start(
-            workflow_name="finalizer-once-test",
-            ticket_id=str(uuid4()),
-            session=db_session,
-        )
-        await db_session.commit()
-
-        # Drain start_step → AWAITING_AGENT.
-        await _drain(db_session)
-
-        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.AWAITING_AGENT.value
-
-        # Send a failure event for the main step.
-        assert _FailingWs.dispatched_command_id is not None
-        fail_event = AgentEvent(
-            command_id=_FailingWs.dispatched_command_id,
-            kind=AgentEventKind.COMPLETED_FAILURE,
-            outcome_label="failure",
-            outputs={"__failure_reason__": "provision_failed"},
-            reported_at=datetime.now(UTC),
-            traceparent="",
-        )
-        async with org_context(org_id, ActorKind.WORKSPACE):
-            await record_agent_event(fail_event, session=db_session)
-        await db_session.commit()
-
-        # Drain: handle_agent_event → route_workflow (fires finalizer) →
-        # start_step(cleanup) → route_workflow (records failed).
-        await _drain(db_session)
-
-        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.FAILED.value
-        # The finalizer step ran exactly once.
-        assert _FinalizerLocal.call_count == 1
-
-
-@pytest.mark.asyncio
-async def test_finalizer_does_not_refire_on_success(db_session) -> None:
-    """On the success path, the finalizer step runs as the normal terminal step
-    and does NOT re-fire — the engine only invokes it on terminal-fail."""
-    _FinalizerLocal.call_count = 0
-
-    org_id = uuid4()
-    workspace_id = uuid7()
-    _DispatchingWs._org_id = org_id
-    _DispatchingWs._workspace_id = workspace_id
-    _DispatchingWs.dispatched_command_id = None
-
-    # finalizer is set — but the success transition goes to
-    # TerminalAction.COMPLETE_WORKFLOW, bypassing the finalizer path.
-    workflow = Workflow(
-        name="finalizer-no-refire-test",
-        version=1,
-        steps=(_dispatch_step, _finalizer_step),
-        entry=_dispatch_step,
-        finalizer=_finalizer_step,
-        transitions={
-            _dispatch_step: {
-                "success": TerminalAction.COMPLETE_WORKFLOW,
-                "failure": TerminalAction.FAIL_WORKFLOW,
-            },
-            _finalizer_step: {"success": TerminalAction.FAIL_WORKFLOW},
-        },
-    )
-
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(workflow)
-        wfx_id = await eng.start(
-            workflow_name="finalizer-no-refire-test",
-            ticket_id=str(uuid4()),
-            session=db_session,
-        )
-        await db_session.commit()
-
-        # Drain start_step → AWAITING_AGENT.
-        await _drain(db_session)
-
-        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.AWAITING_AGENT.value
-
-        # Success event.
-        assert _DispatchingWs.dispatched_command_id is not None
-        success_event = AgentEvent(
-            command_id=_DispatchingWs.dispatched_command_id,
-            kind=AgentEventKind.COMPLETED_SUCCESS,
-            outcome_label="success",
-            outputs={},
-            reported_at=datetime.now(UTC),
-            traceparent="",
-        )
-        async with org_context(org_id, ActorKind.WORKSPACE):
-            await record_agent_event(success_event, session=db_session)
-        await db_session.commit()
-
-        await _drain(db_session)
-
-        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.DONE.value
-        # Finalizer did NOT run — success path doesn't trigger it.
-        assert _FinalizerLocal.call_count == 0
-
-
-# ── failure_reason + workflow.failed audit ────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_failure_reason_and_audit_written_on_terminal_fail(db_session) -> None:
-    """On terminal failure, `workflow_executions.failure_reason` is set and a
-    `workflow.failed` audit row is written with the correct payload."""
-    org_id = uuid4()
-    workspace_id = uuid7()
-    _FailingWs._org_id = org_id
-    _FailingWs._workspace_id = workspace_id
-    _FailingWs.dispatched_command_id = None
-
-    workflow = Workflow(
-        name="failure-record-test",
-        version=1,
-        steps=(_fail_step,),
-        entry=_fail_step,
-        transitions={
-            _fail_step: {
-                "success": TerminalAction.COMPLETE_WORKFLOW,
-                "failure": TerminalAction.FAIL_WORKFLOW,
-            },
-        },
-    )
-
-    ticket_id = str(uuid4())
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(workflow)
-        wfx_id = await eng.start(
-            workflow_name="failure-record-test",
-            ticket_id=ticket_id,
-            session=db_session,
-        )
-        await db_session.commit()
-
-        await _drain(db_session)
-
-        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.AWAITING_AGENT.value
-
-        assert _FailingWs.dispatched_command_id is not None
-        fail_event = AgentEvent(
-            command_id=_FailingWs.dispatched_command_id,
-            kind=AgentEventKind.COMPLETED_FAILURE,
-            outcome_label="failure",
-            outputs={"__failure_reason__": "provision_failed"},
-            reported_at=datetime.now(UTC),
-            traceparent="",
-        )
-        async with org_context(org_id, ActorKind.WORKSPACE):
-            await record_agent_event(fail_event, session=db_session)
-        await db_session.commit()
-
-        await _drain(db_session)
-
-        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.FAILED.value
-        assert wfx.failure_reason == "provision_failed"
-
-        # Verify the workflow.failed audit row was written.
-        # `_workflow_org_id` falls back to UUID(int=0) when there is no org context
-        # (no OrgContextMiddleware in test task bodies). The audit row lands with that org_id.
-        nil_org = UUID(int=0)
-        log_entries = await list_for_entity(
-            "workflow_execution",
-            UUID(wfx_id),
-            org_id=nil_org,
-        )
-        failed_entries = [e for e in log_entries if e.kind == "workflow.failed"]
-        assert len(failed_entries) == 1
-        payload = failed_entries[0].payload
-        assert payload["workflow_execution_id"] == wfx_id
-        assert payload["failure_reason"] == "provision_failed"
-
-
-@pytest.mark.asyncio
-async def test_failure_reason_without_structured_key_uses_label(db_session) -> None:
-    """When the agent event has no `__failure_reason__` key, `failure_reason`
-    falls back to the outcome label."""
-    org_id = uuid4()
-    workspace_id = uuid7()
-    _FailingWs._org_id = org_id
-    _FailingWs._workspace_id = workspace_id
-    _FailingWs.dispatched_command_id = None
-
-    workflow = Workflow(
-        name="failure-label-fallback-test",
-        version=1,
-        steps=(_fail_step,),
-        entry=_fail_step,
-        transitions={
-            _fail_step: {
-                "success": TerminalAction.COMPLETE_WORKFLOW,
-                "failure": TerminalAction.FAIL_WORKFLOW,
-            },
-        },
-    )
-
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(workflow)
-        wfx_id = await eng.start(
-            workflow_name="failure-label-fallback-test",
-            ticket_id=str(uuid4()),
-            session=db_session,
-        )
-        await db_session.commit()
-
-        await _drain(db_session)
-
-        assert _FailingWs.dispatched_command_id is not None
-        # No __failure_reason__ key in outputs.
-        fail_event = AgentEvent(
-            command_id=_FailingWs.dispatched_command_id,
-            kind=AgentEventKind.COMPLETED_FAILURE,
-            outcome_label="agent_failure",
-            outputs={},
-            reported_at=datetime.now(UTC),
-            traceparent="",
-        )
-        async with org_context(org_id, ActorKind.WORKSPACE):
-            await record_agent_event(fail_event, session=db_session)
-        await db_session.commit()
-
-        await _drain(db_session)
-
-        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.FAILED.value
-        assert wfx.failure_reason == "agent_failure"
-
-
-# ── Finalizer: pending failure context survives the round-trip ────────────
-
-
-@pytest.mark.asyncio
-async def test_finalizer_original_failure_reason_preserved(db_session) -> None:
-    """The `failure_reason` on the `workflow_executions` row reflects the
-    *original* failing step, not the finalizer step. Even when the finalizer
-    itself succeeds, the failure context is stored before the finalizer runs."""
-    _FinalizerLocal.call_count = 0
-
-    org_id = uuid4()
-    workspace_id = uuid7()
-    _FailingWs._org_id = org_id
-    _FailingWs._workspace_id = workspace_id
-    _FailingWs.dispatched_command_id = None
-
-    workflow = Workflow(
-        name="finalizer-failure-context-test",
-        version=1,
-        steps=(_fail_step, _finalizer_step),
-        entry=_fail_step,
-        finalizer=_finalizer_step,
-        transitions={
-            _fail_step: {
-                "success": TerminalAction.COMPLETE_WORKFLOW,
-                "failure": TerminalAction.FAIL_WORKFLOW,
-            },
-            _finalizer_step: {"success": TerminalAction.FAIL_WORKFLOW},
-        },
-    )
-
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(workflow)
-        wfx_id = await eng.start(
-            workflow_name="finalizer-failure-context-test",
-            ticket_id=str(uuid4()),
-            session=db_session,
-        )
-        await db_session.commit()
-
-        await _drain(db_session)
-
-        assert _FailingWs.dispatched_command_id is not None
-        fail_event = AgentEvent(
-            command_id=_FailingWs.dispatched_command_id,
-            kind=AgentEventKind.COMPLETED_FAILURE,
-            outcome_label="failure",
-            outputs={"__failure_reason__": "provision_failed"},
-            reported_at=datetime.now(UTC),
-            traceparent="",
-        )
-        async with org_context(org_id, ActorKind.WORKSPACE):
-            await record_agent_event(fail_event, session=db_session)
-        await db_session.commit()
-
-        await _drain(db_session)
-
-        wfx = await get_execution_summary(UUID(wfx_id), session=db_session)
-        assert wfx is not None
-        assert wfx.state == WorkflowState.FAILED.value
-        # Must reflect the original failure reason, not the finalizer's outcome.
-        assert wfx.failure_reason == "provision_failed"
-        assert _FinalizerLocal.call_count == 1

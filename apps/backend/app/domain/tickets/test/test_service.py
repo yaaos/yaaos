@@ -1,7 +1,7 @@
 """Service-level tests for ticket lifecycle ops.
 
 Covers: create_from_pr (idempotency + race-safe insert),
-attach_pr_to_ticket (pr_id IS NULL guard), set_workflow_execution,
+attach_pr_to_ticket (pr_id IS NULL guard),
 list_running_older_than, and list_tickets findings rollup columns.
 """
 
@@ -16,7 +16,7 @@ from app.domain.tickets import (
     create_from_pr,
     list_running_older_than,
     list_tickets,
-    set_workflow_execution,
+    mint_branch_name,
     update_findings_summary,
 )
 from app.domain.tickets.service import TicketFilter, get
@@ -91,6 +91,57 @@ async def test_create_from_pr_idempotent(db_session) -> None:  # type: ignore[no
 
 
 @pytest.mark.service
+async def test_create_from_pr_uses_supplied_branch_name(db_session) -> None:  # type: ignore[no-untyped-def]
+    """Intake-supplied `branch_name` (a PR ticket's own head branch) rides
+    straight into the row — no minting."""
+    org_id = uuid4()
+
+    ticket_id, created = await create_from_pr(
+        org_id=org_id,
+        source_external_id=f"myorg/repo#{uuid4().hex[:6]}",
+        title="My PR title",
+        description=None,
+        repo_external_id="myorg/repo",
+        plugin_id="github",
+        idempotency_key=f"delivery-{uuid4().hex}",
+        payload={},
+        branch_name="feature/already-exists",
+        session=db_session,
+    )
+    await db_session.commit()
+
+    assert created is True
+    ticket = await get(ticket_id, org_id=org_id)
+    assert ticket.branch_name == "feature/already-exists"
+
+
+@pytest.mark.service
+async def test_create_from_pr_mints_branch_name_when_omitted(db_session) -> None:  # type: ignore[no-untyped-def]
+    """No `branch_name` supplied → `mint_branch_name(title, ticket_id)` fills
+    it in deterministically after insert."""
+    org_id = uuid4()
+
+    ticket_id, created = await create_from_pr(
+        org_id=org_id,
+        source_external_id=f"myorg/repo#{uuid4().hex[:6]}",
+        title="Add the frobnicator",
+        description=None,
+        repo_external_id="myorg/repo",
+        plugin_id="github",
+        idempotency_key=f"delivery-{uuid4().hex}",
+        payload={},
+        session=db_session,
+    )
+    await db_session.commit()
+
+    assert created is True
+    ticket = await get(ticket_id, org_id=org_id)
+    assert ticket.branch_name is not None
+    assert ticket.branch_name == mint_branch_name("Add the frobnicator", ticket_id)
+    assert ticket.branch_name.startswith("yaaos/add-the-frobnicator-")
+
+
+@pytest.mark.service
 async def test_attach_pr_to_ticket_when_pr_id_is_null(db_session) -> None:  # type: ignore[no-untyped-def]
     org_id = uuid4()
     source_external_id = f"myorg/repo#{uuid4().hex[:6]}"
@@ -150,40 +201,6 @@ async def test_attach_pr_to_ticket_no_op_when_already_set(db_session) -> None:  
 
     ticket = await get(ticket_id, org_id=org_id)
     assert ticket.pr_id == first_pr_id
-
-
-@pytest.mark.service
-async def test_set_workflow_execution(db_session) -> None:  # type: ignore[no-untyped-def]
-    org_id = uuid4()
-    source_external_id = f"myorg/repo#{uuid4().hex[:6]}"
-    idempotency_key = f"delivery-{uuid4().hex}"
-    workflow_execution_id = uuid4()
-
-    ticket_id, _ = await create_from_pr(
-        org_id=org_id,
-        source_external_id=source_external_id,
-        title="PR",
-        description=None,
-        repo_external_id="myorg/repo",
-        plugin_id="github",
-        idempotency_key=idempotency_key,
-        payload={},
-        session=db_session,
-    )
-    await db_session.commit()
-    assert ticket_id is not None
-
-    await set_workflow_execution(ticket_id, workflow_execution_id=workflow_execution_id, session=db_session)
-    await db_session.commit()
-
-    # Verify by reading the row directly
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.domain.tickets.models import TicketRow  # noqa: PLC0415
-
-    async with db_session.begin_nested():
-        row = (await db_session.execute(select(TicketRow).where(TicketRow.id == ticket_id))).scalar_one()
-    assert row.current_workflow_execution_id == workflow_execution_id
 
 
 @pytest.mark.service

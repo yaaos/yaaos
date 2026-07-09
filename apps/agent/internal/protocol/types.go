@@ -22,6 +22,7 @@ const (
 	KindRefreshWorkspaceAuth CommandKind = "RefreshWorkspaceAuth"
 	KindInvokeClaudeCode     CommandKind = "InvokeClaudeCode"
 	KindCleanupWorkspace     CommandKind = "CleanupWorkspace"
+	KindPushBranch           CommandKind = "PushBranch"
 	KindConfigUpdate         CommandKind = "ConfigUpdate"
 	KindShutdown             CommandKind = "Shutdown"
 	KindCancelShutdown       CommandKind = "CancelShutdown"
@@ -38,19 +39,27 @@ type CommandHeader struct {
 	// echoes on every AgentEvent it posts for this command. The backend
 	// verifies it by hash before accepting the event.
 	CompletionToken string `json:"completion_token,omitempty"`
-	// WorkflowExecutionID is the workflow execution that dispatched this
-	// command. Stamped at enqueue time so agent-side spans can carry
-	// workflow_id without a separate lookup. Empty for agent-scoped commands
-	// (e.g. ConfigUpdate) that do not correlate to a workflow.
-	WorkflowExecutionID string `json:"workflow_execution_id,omitempty"`
+	// RunID is the pipeline run that dispatched this command. Stamped at
+	// enqueue time so agent-side spans can carry run_id without a separate
+	// lookup. Empty for agent-scoped commands (e.g. ConfigUpdate) that do
+	// not correlate to a run.
+	RunID string `json:"run_id,omitempty"`
 }
 
 // RepoRef matches the spec's nested `repo` object on ProvisionWorkspace.
+//
+// Checkout instruction: exactly one of HeadSHA (detached pin — the
+// fork-safe fetch-by-SHA path review flows use) or BranchName (named work
+// branch; the agent checks it out with `git checkout -B`, tracking the
+// remote when it already exists) is set by a well-formed backend command.
+// When both are present (legacy shape: BranchName as a `--branch` clone
+// hint alongside a required HeadSHA), HeadSHA wins and BranchName is used
+// only as a clone-speed hint — see gitClone.
 type RepoRef struct {
 	PluginID   string `json:"plugin_id"`
 	ExternalID string `json:"external_id"`
 	CloneURL   string `json:"clone_url"`
-	HeadSHA    string `json:"head_sha"`
+	HeadSHA    string `json:"head_sha,omitempty"`
 	BaseSHA    string `json:"base_sha,omitempty"`
 	BranchName string `json:"branch_name,omitempty"`
 }
@@ -69,6 +78,12 @@ type ProvisionWorkspaceCommand struct {
 	Auth           AuthBlock `json:"auth"`
 	TTLSeconds     int       `json:"ttl_seconds"`
 	MaxIdleSeconds int       `json:"max_idle_seconds"`
+	// GitUserName/GitUserEmail are the commit identity RealHandler.ProvisionWorkspace
+	// applies via `git config user.name`/`user.email` after clone —
+	// backend-supplied constants (e.g. "yaaos" / "yaaos[bot]@users.noreply.github.com").
+	// Without them the first skill commit on a named work branch fails.
+	GitUserName  string `json:"git_user_name"`
+	GitUserEmail string `json:"git_user_email"`
 }
 
 type WriteFilesEntry struct {
@@ -99,9 +114,24 @@ type InvokeClaudeCodeCommand struct {
 	MCPServers []map[string]any       `json:"mcp_servers,omitempty"`
 	Limits     InvokeClaudeCodeLimits `json:"limits"`
 	ResultSpec map[string]any         `json:"result_spec,omitempty"`
+	// SkillPath is the backend-computed conventional path of the named
+	// skill inside the checkout (`.claude/skills/<skill_name>/SKILL.md`).
+	// RealHandler.RunClaude stats this path before spawning claude; absent
+	// → completed_failure with failure_reason="skill not found: <path>".
+	SkillPath string `json:"skill_path"`
 }
 
 type CleanupWorkspaceCommand struct {
+	CommandHeader
+}
+
+// PushBranchCommand is push-failure recovery only: a bare re-push of the
+// workspace's current HEAD after a RefreshWorkspaceAuth credential
+// rotation, so claude is never re-run just to retry a push. WorkspaceID
+// (on CommandHeader) is required — the workspace is expected to already be
+// on its named work branch by ProvisionWorkspace's checkout invariant. No
+// kind-specific fields beyond the header.
+type PushBranchCommand struct {
 	CommandHeader
 }
 
@@ -117,6 +147,12 @@ const (
 	EventCompletedSkipped EventKind = "completed_skipped"
 )
 
+// Artifact carries the agent-collected file content read from
+// `$TMPDIR/<command_id>.md` after an InvokeClaudeCode subprocess exits.
+type Artifact struct {
+	Body string `json:"body"`
+}
+
 // AgentEvent is the agent → backend POST body for /api/v1/commands/{id}/events.
 type AgentEvent struct {
 	CommandID     string         `json:"command_id"`
@@ -130,6 +166,15 @@ type AgentEvent struct {
 	// CompletionToken echoes the originating command's CompletionToken so the
 	// backend can authorize this event by hash.
 	CompletionToken string `json:"completion_token,omitempty"`
+	// Artifact is set on InvokeClaudeCode terminal events when the skill
+	// wrote `$TMPDIR/<command_id>.md` within the agent's size cap. Nil when
+	// the skill wrote no artifact file — a legitimate outcome for review
+	// invocations and non-completed main-skill outcomes.
+	Artifact *Artifact `json:"artifact,omitempty"`
+	// ArtifactError is set when the artifact file exceeded the agent's size
+	// cap or otherwise couldn't be read — distinguishes "wrote none" from
+	// "wrote too much".
+	ArtifactError string `json:"artifact_error,omitempty"`
 }
 
 // ── Identity / heartbeat / claim ───────────────────────────────────────

@@ -508,23 +508,23 @@ async def test_redelivered_received_event_is_idempotent(db_session) -> None:
     assert row.status == "delivered"
 
 
-# ── workflow_execution_id wire-through ─────────────────────────────────────
+# ── run_id wire-through ─────────────────────────────────────
 
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_claim_injects_workflow_execution_id_on_dto(db_session) -> None:
-    """`claim_next` injects `workflow_execution_id` from the DB row onto the
+async def test_claim_injects_run_id_on_dto(db_session) -> None:
+    """`claim_next` injects `run_id` from the DB row onto the
     returned DTO so the field travels to the agent over the wire. When the
-    enqueued command carries a workflow_execution_id, the claimed DTO must
+    enqueued command carries a run_id, the claimed DTO must
     expose the same value; when it is NULL the DTO field is None."""
     org_id = uuid4()
-    wfx_id = uuid4()
+    run_id = uuid4()
     agent_id = await _make_agent(org_id=org_id)
 
-    # Enqueue with a workflow_execution_id.
+    # Enqueue with a run_id.
     cmd_with = _make_provision_cmd()
-    await enqueue_command(org_id=org_id, command=cmd_with, session=db_session, workflow_execution_id=wfx_id)
+    await enqueue_command(org_id=org_id, command=cmd_with, session=db_session, run_id=run_id)
     await db_session.flush()
 
     claimed_with = await claim_next(
@@ -536,11 +536,9 @@ async def test_claim_injects_workflow_execution_id_on_dto(db_session) -> None:
         session=db_session,
     )
     assert claimed_with is not None
-    assert claimed_with.workflow_execution_id == wfx_id, (
-        f"expected workflow_execution_id={wfx_id}, got {claimed_with.workflow_execution_id}"
-    )
+    assert claimed_with.run_id == run_id, f"expected run_id={run_id}, got {claimed_with.run_id}"
 
-    # Enqueue without a workflow_execution_id (agent-scoped / no correlation).
+    # Enqueue without a run_id (agent-scoped / no correlation).
     agent_id2 = await _make_agent(org_id=org_id)
     cmd_without = _make_provision_cmd()
     await enqueue_command(org_id=org_id, command=cmd_without, session=db_session)
@@ -555,13 +553,11 @@ async def test_claim_injects_workflow_execution_id_on_dto(db_session) -> None:
         session=db_session,
     )
     assert claimed_without is not None
-    assert claimed_without.workflow_execution_id is None, (
-        f"expected workflow_execution_id=None, got {claimed_without.workflow_execution_id}"
-    )
+    assert claimed_without.run_id is None, f"expected run_id=None, got {claimed_without.run_id}"
 
 
-def test_command_base_workflow_execution_id_round_trip() -> None:
-    """ProvisionWorkspaceCommand round-trips workflow_execution_id through
+def test_command_base_run_id_round_trip() -> None:
+    """ProvisionWorkspaceCommand round-trips run_id through
     JSON serialization. The field survives model_dump(mode='json') and
     validate_python reconstruction."""
     import json  # noqa: PLC0415
@@ -572,12 +568,12 @@ def test_command_base_workflow_execution_id_round_trip() -> None:
         RepoRef,
     )
 
-    wfx_id = uuid4()
+    run_id = uuid4()
     cmd = ProvisionWorkspaceCommand(
         command_id=uuid7(),
         workspace_id=uuid4(),
         traceparent="00-aabbccdd-1122-01",
-        workflow_execution_id=wfx_id,
+        run_id=run_id,
         repo=RepoRef(plugin_id="github", external_id="1", clone_url="url", head_sha="abc"),
         history=1,
         auth=AuthBlock(kind="github_installation", token="tok"),
@@ -586,17 +582,17 @@ def test_command_base_workflow_execution_id_round_trip() -> None:
     )
 
     payload = cmd.model_dump(mode="json")
-    assert payload["workflow_execution_id"] == str(wfx_id)
+    assert payload["run_id"] == str(run_id)
 
     # Round-trip via JSON string.
     raw = json.dumps(payload)
     restored = ProvisionWorkspaceCommand.model_validate_json(raw)
-    assert restored.workflow_execution_id == wfx_id
+    assert restored.run_id == run_id
 
     # Absent field defaults to None.
-    del payload["workflow_execution_id"]
+    del payload["run_id"]
     no_wf = ProvisionWorkspaceCommand.model_validate(payload)
-    assert no_wf.workflow_execution_id is None
+    assert no_wf.run_id is None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

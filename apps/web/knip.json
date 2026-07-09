@@ -10,5 +10,5 @@
   "project": ["src/**/*.{ts,tsx}"],
   "ignoreExportsUsedInFile": true,
   "ignore": ["src/shared/components/ui/**"],
-  "ignoreDependencies": ["tailwindcss", "openapi-typescript", "axe-core"]
+  "ignoreDependencies": ["tailwindcss", "openapi-typescript", "axe-core", "tw-animate-css"]
 }

@@ -77,7 +77,7 @@ func mustMarshalProvisionCmd(workspaceID, commandID string) []byte {
 		`"workspace_id":"` + workspaceID + `",` +
 		`"traceparent":"tp-` + commandID + `",` +
 		`"completion_token":"",` +
-		`"workflow_execution_id":""` +
+		`"run_id":""` +
 		`}`)
 }
 

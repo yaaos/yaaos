@@ -90,11 +90,17 @@ async def test_row_at_now_lands_in_current_week_child(_migrated_schema: None) ->
             await conn.execute(
                 text(
                     "INSERT INTO coding_agent_runs "
-                    "(id, org_id, workflow_execution_id, step_id, agent_command_id, "
+                    "(id, org_id, run_id, stage_execution_id, agent_command_id, "
                     " command_kind, plugin_id, status) "
-                    "VALUES (:id, :org, :wfe, 'review', :cmd, 'review', 'claude_code', 'running')"
+                    "VALUES (:id, :org, :rid_fk, :stage_exec, :cmd, 'review', 'claude_code', 'running')"
                 ),
-                {"id": run_id, "org": org_id, "wfe": uuid.uuid4(), "cmd": uuid.uuid4()},
+                {
+                    "id": run_id,
+                    "org": org_id,
+                    "rid_fk": uuid.uuid4(),
+                    "stage_exec": uuid.uuid4(),
+                    "cmd": uuid.uuid4(),
+                },
             )
             await conn.execute(
                 text(

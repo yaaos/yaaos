@@ -494,6 +494,10 @@ func (hangingForeverOps) Cleanup(ctx context.Context, _ *protocol.CleanupWorkspa
 	<-ctx.Done()
 	return command.CleanupResult{}, ctx.Err()
 }
+func (hangingForeverOps) PushBranch(ctx context.Context, _ *protocol.PushBranchCommand) (command.PushBranchResult, error) {
+	<-ctx.Done()
+	return command.PushBranchResult{}, ctx.Err()
+}
 
 func TestPool_TimeoutOnSend_EmitsFailureAndDropsRunner(t *testing.T) {
 	// Spawn handler that hangs forever; the command carries a 30ms timeout

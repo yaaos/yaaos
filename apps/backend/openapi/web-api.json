@@ -14,6 +14,67 @@
         "title": "AcceptRequest",
         "type": "object"
       },
+      "ActionInfo": {
+        "description": "Registry-listing shape for the \"Add an action\" picker.",
+        "properties": {
+          "action_id": {
+            "title": "Action Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          }
+        },
+        "required": [
+          "action_id",
+          "plugin_id",
+          "label"
+        ],
+        "title": "ActionInfo",
+        "type": "object"
+      },
+      "ActionStage": {
+        "description": "A synchronous control-plane action stage. No `name` — actions carry\nno artifact identity, send-back key, or re-run inheritance key.",
+        "properties": {
+          "action_id": {
+            "title": "Action Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "action",
+            "default": "action",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "title": "ActionStage",
+        "type": "object"
+      },
       "ActivityEvent": {
         "description": "One rendered event in a coding-agent activity stream.\n\nProduced by `plugins/claude_code._render_activity_log` from Claude Code\nstream-json events. Persisted inside the `ActivityLog.events` JSONB array.\n\nFields:\n- `seq` — monotonic integer; 0-based; assigned by `_render_activity_log`.\n- `ts` — UTC datetime of the render pass (post-hoc, not real-time stream).\n  Pydantic coerces ISO-8601 strings to `datetime` on construction.\n- `kind` — one of the six canonical values in `ActivityEventKind`.\n- `message` — pre-rendered one-liner for the SPA activity feed.\n- `detail` — kind-specific metadata dict (safe for cross-boundary transport).\n\nPer-kind `detail` shapes:\n- `session_start`: `{model: str, session_id: str | None}`\n- `subagent_dispatched`: `{subagent: str, tool_use_id: str, description: str | None}`\n- `tool_call_started`: `{tool: str, tool_use_id: str, input_summary: dict}`\n- `assistant_message`: `{}` (message carries the text excerpt)\n- `tool_call_finished`: `{tool_use_id: str, is_error: bool, size_bytes: int}`\n- `result`: `{duration_ms: int | None, num_turns: int | None}`",
         "properties": {
@@ -73,8 +134,115 @@
         "title": "ActivityLog",
         "type": "object"
       },
+      "Actor": {
+        "description": "Who-did-what. One value across the codebase.\n\nInvariants:\n  - kind=github_user → login required; user_id/agent_id/workspace_id None.\n  - kind=agent → agent_id required; login/user_id/workspace_id None.\n  - kind=system → all id fields None.\n  - kind=user → user_id required; login optional (display login);\n    agent_id/workspace_id None.\n  - kind=workspace → workspace_id required; everything else None.\n  - kind=sso → all id fields None (only the IdP knew); login optional.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Actor",
+        "type": "object"
+      },
+      "ActorKind": {
+        "enum": [
+          "github_user",
+          "agent",
+          "system",
+          "user",
+          "workspace",
+          "sso"
+        ],
+        "title": "ActorKind",
+        "type": "string"
+      },
+      "AddTriggerResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "AddTriggerResponse",
+        "type": "object"
+      },
       "AgentEvent": {
         "properties": {
+          "artifact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Artifact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifact_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Error"
+          },
           "attempt": {
             "default": 0,
             "title": "Attempt",
@@ -290,6 +458,135 @@
         "title": "AgentView",
         "type": "object"
       },
+      "Artifact": {
+        "description": "Agent-collected artifact body for an InvokeClaudeCode terminal event.\n\nPopulated when the skill wrote `$TMPDIR/<command_id>.md` and the file fit\nunder the agent's size cap. `AgentEvent.artifact_error` explains why this\nis null despite a completed invocation (over-cap or read failure);\nboth fields null means the skill legitimately wrote no artifact.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "Artifact",
+        "type": "object"
+      },
+      "ArtifactDetailResponse": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_final": {
+            "title": "Is Final",
+            "type": "boolean"
+          },
+          "iteration": {
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "stage_name",
+          "version",
+          "iteration",
+          "is_final",
+          "body",
+          "run_id",
+          "created_at"
+        ],
+        "title": "ArtifactDetailResponse",
+        "type": "object"
+      },
+      "ArtifactGroup": {
+        "description": "Versions grouped by `stage_name` — the version-dropdown shape.",
+        "properties": {
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactMeta"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stage_name",
+          "versions"
+        ],
+        "title": "ArtifactGroup",
+        "type": "object"
+      },
+      "ArtifactMeta": {
+        "description": "Metadata-only view of one artifact version — no body.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_final": {
+            "title": "Is Final",
+            "type": "boolean"
+          },
+          "iteration": {
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "run_id",
+          "iteration",
+          "is_final",
+          "created_at"
+        ],
+        "title": "ArtifactMeta",
+        "type": "object"
+      },
       "AuditEntryView": {
         "properties": {
           "actor_kind": {
@@ -359,6 +656,53 @@
           "created_at"
         ],
         "title": "AuditEntryView",
+        "type": "object"
+      },
+      "BoundaryControl": {
+        "description": "Flat per-stage \"what to do next\" setting; `on_*` evaluated only when\n`mode == \"conditional\"`.",
+        "properties": {
+          "mode": {
+            "default": "always_hitl",
+            "enum": [
+              "always_hitl",
+              "always_proceed",
+              "conditional"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "on_blocker_residuals": {
+            "default": false,
+            "title": "On Blocker Residuals",
+            "type": "boolean"
+          },
+          "on_confidence_below": {
+            "anyOf": [
+              {
+                "enum": [
+                  "medium",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Confidence Below"
+          },
+          "on_protected_code": {
+            "default": false,
+            "title": "On Protected Code",
+            "type": "boolean"
+          },
+          "on_should_fix_residuals": {
+            "default": false,
+            "title": "On Should Fix Residuals",
+            "type": "boolean"
+          }
+        },
+        "title": "BoundaryControl",
         "type": "object"
       },
       "CancelShutdownResult": {
@@ -570,6 +914,64 @@
         "title": "CreateLessonRequest",
         "type": "object"
       },
+      "CreatePipelineResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "CreatePipelineResponse",
+        "type": "object"
+      },
+      "Decision": {
+        "description": "One pause resolution recorded against a stage execution.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Login"
+          },
+          "instruction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction"
+          },
+          "resolved_at": {
+            "format": "date-time",
+            "title": "Resolved At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "actor_login",
+          "instruction",
+          "resolved_at"
+        ],
+        "title": "Decision",
+        "type": "object"
+      },
       "EmailView": {
         "properties": {
           "email": {
@@ -597,6 +999,270 @@
           "verified"
         ],
         "title": "EmailView",
+        "type": "object"
+      },
+      "Finding": {
+        "description": "Domain value object for one durable finding.",
+        "properties": {
+          "artifact_section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Section"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "code_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code File"
+          },
+          "code_line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Line"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "defect_in_artifact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defect In Artifact"
+          },
+          "defended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defended At"
+          },
+          "display_id": {
+            "title": "Display Id",
+            "type": "integer"
+          },
+          "display_prefix": {
+            "title": "Display Prefix",
+            "type": "string"
+          },
+          "external_comment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Comment Id"
+          },
+          "first_seen_iteration": {
+            "title": "First Seen Iteration",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "blocker",
+              "should_fix",
+              "nit"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "source_run_id": {
+            "format": "uuid",
+            "title": "Source Run Id",
+            "type": "string"
+          },
+          "source_stage_execution_id": {
+            "format": "uuid",
+            "title": "Source Stage Execution Id",
+            "type": "string"
+          },
+          "source_stage_name": {
+            "title": "Source Stage Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_events": {
+            "items": {
+              "$ref": "#/components/schemas/FindingStatusEvent"
+            },
+            "title": "Status Events",
+            "type": "array"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "title": "Ticket Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "ticket_id",
+          "source_run_id",
+          "source_stage_name",
+          "source_stage_execution_id",
+          "first_seen_iteration",
+          "display_prefix",
+          "display_id",
+          "severity",
+          "body",
+          "code_file",
+          "code_line",
+          "artifact_section",
+          "defect_in_artifact",
+          "status",
+          "status_events",
+          "defended_at",
+          "external_comment_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Finding",
+        "type": "object"
+      },
+      "FindingStatusEvent": {
+        "description": "Appended per transition AND per re-assertion (re-flag/re-sighting).",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "comment_external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment External Id"
+          },
+          "method": {
+            "enum": [
+              "review_verdict",
+              "user_overrode"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "stage_execution_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Execution Id"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "method",
+          "actor",
+          "at"
+        ],
+        "title": "FindingStatusEvent",
+        "type": "object"
+      },
+      "FromTemplateRequest": {
+        "properties": {
+          "template_id": {
+            "format": "uuid",
+            "title": "Template Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template_id"
+        ],
+        "title": "FromTemplateRequest",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -875,6 +1541,46 @@
         "title": "InstallationResponse",
         "type": "object"
       },
+      "IntakePoint": {
+        "description": "Plugin-contributed trigger metadata the Repos-page trigger picker\nlists. `id` is the value `domain/repos` trigger bindings target (e.g.\n`\"github:pr_opened\"`, `\"schedule\"`).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "webhook",
+              "schedule"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          }
+        },
+        "required": [
+          "id",
+          "plugin_id",
+          "label",
+          "kind"
+        ],
+        "title": "IntakePoint",
+        "type": "object"
+      },
       "IntegrationStatus": {
         "properties": {
           "allowed_tools": {
@@ -1068,6 +1774,118 @@
         "title": "Lesson",
         "type": "object"
       },
+      "ListActionsResponse": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ActionInfo"
+            },
+            "title": "Actions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "actions"
+        ],
+        "title": "ListActionsResponse",
+        "type": "object"
+      },
+      "ListArtifactsResponse": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactGroup"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "artifacts"
+        ],
+        "title": "ListArtifactsResponse",
+        "type": "object"
+      },
+      "ListIntakePointsResponse": {
+        "properties": {
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/IntakePoint"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "points"
+        ],
+        "title": "ListIntakePointsResponse",
+        "type": "object"
+      },
+      "ListPipelinesResponse": {
+        "properties": {
+          "pipelines": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineSummary"
+            },
+            "title": "Pipelines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pipelines"
+        ],
+        "title": "ListPipelinesResponse",
+        "type": "object"
+      },
+      "ListReposResponse": {
+        "properties": {
+          "repos": {
+            "items": {
+              "$ref": "#/components/schemas/RepoAccordionEntry"
+            },
+            "title": "Repos",
+            "type": "array"
+          }
+        },
+        "required": [
+          "repos"
+        ],
+        "title": "ListReposResponse",
+        "type": "object"
+      },
+      "ListRunsResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "ListRunsResponse",
+        "type": "object"
+      },
+      "ListTemplatesResponse": {
+        "properties": {
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateResponse"
+            },
+            "title": "Templates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "templates"
+        ],
+        "title": "ListTemplatesResponse",
+        "type": "object"
+      },
       "MemberView": {
         "properties": {
           "display_name": {
@@ -1174,6 +1992,429 @@
         "title": "PatchIntegrationRequest",
         "type": "object"
       },
+      "PauseDetail": {
+        "description": "Overview-tab payload for a `paused` run.",
+        "properties": {
+          "artifact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          },
+          "can_respond": {
+            "title": "Can Respond",
+            "type": "boolean"
+          },
+          "escalation_logins": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Escalation Logins",
+            "type": "array"
+          },
+          "pause_id": {
+            "format": "uuid",
+            "title": "Pause Id",
+            "type": "string"
+          },
+          "residuals": {
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "title": "Residuals",
+            "type": "array"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "tripped": {
+            "additionalProperties": true,
+            "title": "Tripped",
+            "type": "object"
+          }
+        },
+        "required": [
+          "pause_id",
+          "stage_name",
+          "tripped",
+          "artifact_id",
+          "residuals",
+          "escalation_logins",
+          "can_respond"
+        ],
+        "title": "PauseDetail",
+        "type": "object"
+      },
+      "PauseResolution": {
+        "description": "The `resolve_pause` request body shape.",
+        "properties": {
+          "action": {
+            "enum": [
+              "approve",
+              "instruct",
+              "send_back",
+              "kill"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "instruction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction"
+          },
+          "send_back_to_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Send Back To Stage"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "PauseResolution",
+        "type": "object"
+      },
+      "PipelineCallStage": {
+        "description": "Calls another org pipeline; expands recursively at flatten time.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "call",
+            "default": "call",
+            "title": "Kind",
+            "type": "string"
+          },
+          "pipeline_id": {
+            "format": "uuid",
+            "title": "Pipeline Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline_id"
+        ],
+        "title": "PipelineCallStage",
+        "type": "object"
+      },
+      "PipelineDefinition": {
+        "description": "The authored content — what POST/PUT accept. Shipped defaults are code\ninstances with pinned uuid7 ids.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "action": "#/components/schemas/ActionStage",
+                  "call": "#/components/schemas/PipelineCallStage",
+                  "review": "#/components/schemas/ReviewSkillStage",
+                  "skill": "#/components/schemas/SkillStage"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ReviewSkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ActionStage"
+                },
+                {
+                  "$ref": "#/components/schemas/PipelineCallStage"
+                }
+              ]
+            },
+            "minItems": 1,
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "stages"
+        ],
+        "title": "PipelineDefinition",
+        "type": "object"
+      },
+      "PipelineDetailResponse": {
+        "description": "Flat wire shape — `Pipeline.definition`'s fields ride at the top\nlevel alongside the stored-entity metadata.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "referenced": {
+            "title": "Referenced",
+            "type": "boolean"
+          },
+          "stages": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "action": "#/components/schemas/ActionStage",
+                  "call": "#/components/schemas/PipelineCallStage",
+                  "review": "#/components/schemas/ReviewSkillStage",
+                  "skill": "#/components/schemas/SkillStage"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ReviewSkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ActionStage"
+                },
+                {
+                  "$ref": "#/components/schemas/PipelineCallStage"
+                }
+              ]
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By Login"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "stages",
+          "updated_at",
+          "updated_by_login",
+          "referenced"
+        ],
+        "title": "PipelineDetailResponse",
+        "type": "object"
+      },
+      "PipelineRun": {
+        "description": "The Runs-tab timeline entry for one pipeline run.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kickoff": {
+            "$ref": "#/components/schemas/RunKickoffView"
+          },
+          "pipeline_name": {
+            "title": "Pipeline Name",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageExecution"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "paused",
+              "completed",
+              "failed",
+              "killed",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "pipeline_name",
+          "state",
+          "kickoff",
+          "created_at",
+          "completed_at",
+          "failure_reason",
+          "stages"
+        ],
+        "title": "PipelineRun",
+        "type": "object"
+      },
+      "PipelineSummary": {
+        "description": "One `list_pipelines` element — definition rows, unflattened.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "referenced": {
+            "title": "Referenced",
+            "type": "boolean"
+          },
+          "stage_count": {
+            "title": "Stage Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By Login"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "stage_count",
+          "updated_at",
+          "updated_by_login",
+          "referenced"
+        ],
+        "title": "PipelineSummary",
+        "type": "object"
+      },
+      "ProtectedPathSet": {
+        "description": "Gitignore-style glob set + owners, validated compilable at write.",
+        "properties": {
+          "globs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Globs",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "owner_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Owner User Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "globs",
+          "owner_user_ids"
+        ],
+        "title": "ProtectedPathSet",
+        "type": "object"
+      },
       "ProviderStatus": {
         "properties": {
           "last_used_at": {
@@ -1231,30 +2472,262 @@
         "title": "ProviderStatus",
         "type": "object"
       },
-      "RepoSkillRow": {
-        "description": "One entry in the repos list — the repo identifier and its stored skill name.",
+      "RepoAccordionEntry": {
         "properties": {
+          "auto_approve_enabled": {
+            "title": "Auto Approve Enabled",
+            "type": "boolean"
+          },
+          "has_protected_code": {
+            "title": "Has Protected Code",
+            "type": "boolean"
+          },
           "repo_external_id": {
             "title": "Repo External Id",
             "type": "string"
           },
+          "trigger_count": {
+            "title": "Trigger Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "repo_external_id",
+          "trigger_count",
+          "has_protected_code",
+          "auto_approve_enabled"
+        ],
+        "title": "RepoAccordionEntry",
+        "type": "object"
+      },
+      "RepoConfigResponse": {
+        "properties": {
+          "auto_approve_conditions": {
+            "additionalProperties": true,
+            "title": "Auto Approve Conditions",
+            "type": "object"
+          },
+          "auto_approve_enabled": {
+            "title": "Auto Approve Enabled",
+            "type": "boolean"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/TriggerBinding"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
+          "protected_mode": {
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "title": "Protected Mode",
+            "type": "string"
+          },
+          "protected_path_sets": {
+            "items": {
+              "$ref": "#/components/schemas/ProtectedPathSet"
+            },
+            "title": "Protected Path Sets",
+            "type": "array"
+          },
+          "repo_external_id": {
+            "title": "Repo External Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_external_id",
+          "protected_mode",
+          "protected_path_sets",
+          "auto_approve_enabled",
+          "auto_approve_conditions",
+          "bindings"
+        ],
+        "title": "RepoConfigResponse",
+        "type": "object"
+      },
+      "RepoSettingsSpec": {
+        "description": "`RepoSettings` sans identity — the PUT request body shape.",
+        "properties": {
+          "auto_approve_conditions": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Auto Approve Conditions",
+            "type": "object"
+          },
+          "auto_approve_enabled": {
+            "default": false,
+            "title": "Auto Approve Enabled",
+            "type": "boolean"
+          },
+          "protected_mode": {
+            "default": "deny",
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "title": "Protected Mode",
+            "type": "string"
+          },
+          "protected_path_sets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProtectedPathSet"
+            },
+            "title": "Protected Path Sets",
+            "type": "array"
+          }
+        },
+        "title": "RepoSettingsSpec",
+        "type": "object"
+      },
+      "RerunRequest": {
+        "properties": {
+          "from_stage": {
+            "title": "From Stage",
+            "type": "string"
+          },
+          "instruction": {
+            "title": "Instruction",
+            "type": "string"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "title": "Ticket Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "from_stage",
+          "instruction"
+        ],
+        "title": "RerunRequest",
+        "type": "object"
+      },
+      "RerunResponse": {
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "RerunResponse",
+        "type": "object"
+      },
+      "RespondPauseResponse": {
+        "properties": {
+          "run_state": {
+            "title": "Run State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_state"
+        ],
+        "title": "RespondPauseResponse",
+        "type": "object"
+      },
+      "ReviewConfig": {
+        "description": "Review skill name + max iterations; `None` on the owning stage means\nreview is off. Finding display prefixes come from the review skill's\nper-finding `category`, not from config.",
+        "properties": {
+          "max_iterations": {
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Max Iterations",
+            "type": "integer"
+          },
           "skill_name": {
+            "title": "Skill Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_name",
+          "max_iterations"
+        ],
+        "title": "ReviewConfig",
+        "type": "object"
+      },
+      "ReviewSkillStage": {
+        "description": "A stage whose main invocation speaks the review contract directly —\nproduces findings, no artifact, structurally cannot carry a review loop.",
+        "properties": {
+          "boundary": {
+            "$ref": "#/components/schemas/BoundaryControl"
+          },
+          "coding_agent_plugin_id": {
+            "title": "Coding Agent Plugin Id",
+            "type": "string"
+          },
+          "context_stages": {
             "anyOf": [
               {
-                "type": "string"
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Skill Name"
+            "title": "Context Stages"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "effort": {
+            "title": "Effort",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "review",
+            "default": "review",
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "skill_name": {
+            "title": "Skill Name",
+            "type": "string"
+          },
+          "wallclock_seconds": {
+            "default": 3600,
+            "title": "Wallclock Seconds",
+            "type": "integer"
           }
         },
         "required": [
-          "repo_external_id",
-          "skill_name"
+          "name",
+          "skill_name",
+          "coding_agent_plugin_id",
+          "model",
+          "effort",
+          "boundary"
         ],
-        "title": "RepoSkillRow",
+        "title": "ReviewSkillStage",
         "type": "object"
       },
       "Role": {
@@ -1267,6 +2740,184 @@
         "title": "Role",
         "type": "string"
       },
+      "RunKickoffView": {
+        "description": "Read-model projection of a run's `Kickoff` for the Runs tab.",
+        "properties": {
+          "actor_kind": {
+            "title": "Actor Kind",
+            "type": "string"
+          },
+          "actor_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Login"
+          },
+          "input_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Text"
+          },
+          "intake_point_id": {
+            "title": "Intake Point Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intake_point_id",
+          "actor_kind",
+          "actor_login",
+          "input_text"
+        ],
+        "title": "RunKickoffView",
+        "type": "object"
+      },
+      "RunOutcome": {
+        "description": "Overview-tab payload for a `terminal` run.",
+        "properties": {
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "paused",
+              "completed",
+              "failed",
+              "killed",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "pr_url",
+          "failure_reason"
+        ],
+        "title": "RunOutcome",
+        "type": "object"
+      },
+      "RunOverview": {
+        "description": "Server-computed Overview-tab payload, tagged on `status`.",
+        "properties": {
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pause": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PauseDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "paused",
+              "in_flight",
+              "terminal"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "RunOverview",
+        "type": "object"
+      },
+      "Schedule": {
+        "description": "A per-repo cron trigger binding.",
+        "properties": {
+          "cron": {
+            "title": "Cron",
+            "type": "string"
+          },
+          "kickoff_input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kickoff Input"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "notify_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Notify User Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "cron",
+          "notify_user_ids"
+        ],
+        "title": "Schedule",
+        "type": "object"
+      },
       "SetKeyRequest": {
         "properties": {
           "value": {
@@ -1278,23 +2929,6 @@
           "value"
         ],
         "title": "SetKeyRequest",
-        "type": "object"
-      },
-      "SetRepoSkillRequest": {
-        "properties": {
-          "skill_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Skill Name"
-          }
-        },
-        "title": "SetRepoSkillRequest",
         "type": "object"
       },
       "SetVcsRequest": {
@@ -1370,8 +3004,240 @@
         "title": "ShutdownResult",
         "type": "object"
       },
+      "SkillStage": {
+        "description": "A main-skill invocation stage; optionally carries a review loop.",
+        "properties": {
+          "boundary": {
+            "$ref": "#/components/schemas/BoundaryControl"
+          },
+          "coding_agent_plugin_id": {
+            "title": "Coding Agent Plugin Id",
+            "type": "string"
+          },
+          "context_stages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Stages"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "effort": {
+            "title": "Effort",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "skill",
+            "default": "skill",
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skill_name": {
+            "title": "Skill Name",
+            "type": "string"
+          },
+          "wallclock_seconds": {
+            "default": 3600,
+            "title": "Wallclock Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "skill_name",
+          "coding_agent_plugin_id",
+          "model",
+          "effort",
+          "boundary"
+        ],
+        "title": "SkillStage",
+        "type": "object"
+      },
+      "StageExecution": {
+        "description": "One stage-execution attempt, read-model shape for the Runs tab.\n\n`id` is the `stage_executions` row id — the SPA's Runs tab needs it to\ncall the per-stage activity endpoint\n(`GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity`).",
+        "properties": {
+          "action_result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Result"
+          },
+          "artifact_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "boundary_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "proceeded",
+                  "paused",
+                  "sent_back"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary Outcome"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/Decision"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "skill",
+              "review",
+              "action",
+              "system"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "review_iterations": {
+            "title": "Review Iterations",
+            "type": "integer"
+          },
+          "stage_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Index"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "stage_index",
+          "kind",
+          "stage_name",
+          "status",
+          "confidence",
+          "review_iterations",
+          "boundary_outcome",
+          "artifact_ids",
+          "action_result",
+          "decisions",
+          "failure_reason",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "StageExecution",
+        "type": "object"
+      },
       "StepActivityResponse": {
-        "description": "Persisted coding-agent activity blob for one workflow step.\n\n`activity` is null when the step ran no coding-agent invocation or the\nweekly partition holding its row has aged out.",
+        "description": "Persisted coding-agent activity blob for one stage execution.\n\n`activity` is null when the stage ran no coding-agent invocation (an\n`action`/`system` stage) or the weekly partition holding its row has\naged out (4-week TTL).",
         "properties": {
           "activity": {
             "anyOf": [
@@ -1388,6 +3254,136 @@
           "activity"
         ],
         "title": "StepActivityResponse",
+        "type": "object"
+      },
+      "TemplateResponse": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "action": "#/components/schemas/ActionStage",
+                  "call": "#/components/schemas/PipelineCallStage",
+                  "review": "#/components/schemas/ReviewSkillStage",
+                  "skill": "#/components/schemas/SkillStage"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ReviewSkillStage"
+                },
+                {
+                  "$ref": "#/components/schemas/ActionStage"
+                },
+                {
+                  "$ref": "#/components/schemas/PipelineCallStage"
+                }
+              ]
+            },
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "stages"
+        ],
+        "title": "TemplateResponse",
+        "type": "object"
+      },
+      "TriggerBinding": {
+        "description": "One repo intake→pipeline binding.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intake_point_id": {
+            "title": "Intake Point Id",
+            "type": "string"
+          },
+          "pipeline_id": {
+            "format": "uuid",
+            "title": "Pipeline Id",
+            "type": "string"
+          },
+          "pipeline_name": {
+            "title": "Pipeline Name",
+            "type": "string"
+          },
+          "repo_external_id": {
+            "title": "Repo External Id",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Schedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "repo_external_id",
+          "intake_point_id",
+          "pipeline_id",
+          "pipeline_name"
+        ],
+        "title": "TriggerBinding",
+        "type": "object"
+      },
+      "TriggerBindingSpec": {
+        "description": "Write input for `add_binding`.",
+        "properties": {
+          "intake_point_id": {
+            "title": "Intake Point Id",
+            "type": "string"
+          },
+          "pipeline_id": {
+            "format": "uuid",
+            "title": "Pipeline Id",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Schedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "intake_point_id",
+          "pipeline_id"
+        ],
+        "title": "TriggerBindingSpec",
         "type": "object"
       },
       "UpdateLessonRequest": {
@@ -1507,130 +3503,6 @@
           "settings"
         ],
         "title": "VcsStateResponse",
-        "type": "object"
-      },
-      "WorkflowRunView": {
-        "description": "One workflow execution for a ticket, with its ordered step list.",
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "current_step_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Current Step Id"
-          },
-          "failure_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Failure Reason"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "state": {
-            "title": "State",
-            "type": "string"
-          },
-          "steps": {
-            "items": {
-              "$ref": "#/components/schemas/WorkflowStepEntry"
-            },
-            "title": "Steps",
-            "type": "array"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          },
-          "workflow_name": {
-            "title": "Workflow Name",
-            "type": "string"
-          },
-          "workflow_version": {
-            "title": "Workflow Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "workflow_name",
-          "workflow_version",
-          "state",
-          "current_step_id",
-          "failure_reason",
-          "created_at",
-          "updated_at",
-          "steps"
-        ],
-        "title": "WorkflowRunView",
-        "type": "object"
-      },
-      "WorkflowStepEntry": {
-        "description": "One step in a workflow run, projected for the ticket Activity tab.",
-        "properties": {
-          "command_kind": {
-            "title": "Command Kind",
-            "type": "string"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "state": {
-            "title": "State",
-            "type": "string"
-          },
-          "step_id": {
-            "title": "Step Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "step_id",
-          "command_kind",
-          "state",
-          "started_at",
-          "completed_at"
-        ],
-        "title": "WorkflowStepEntry",
         "type": "object"
       },
       "WorkspaceEvent": {
@@ -2024,6 +3896,71 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/actions": {
+      "get": {
+        "operationId": "list_actions_endpoint_api_actions_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListActionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Actions Endpoint",
+        "tags": [
+          "actions"
+        ]
+      }
+    },
     "/api/api-keys": {
       "get": {
         "operationId": "list_providers_api_api_keys_get",
@@ -2333,6 +4270,156 @@
         "summary": "Validate Key",
         "tags": [
           "byok"
+        ]
+      }
+    },
+    "/api/artifacts": {
+      "get": {
+        "operationId": "list_artifacts_endpoint_api_artifacts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ticket_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ticket Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Artifacts Endpoint",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "get_artifact_endpoint_api_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Artifact Endpoint",
+        "tags": [
+          "artifacts"
         ]
       }
     },
@@ -3007,232 +5094,6 @@
         ]
       }
     },
-    "/api/claude_code/repos": {
-      "get": {
-        "description": "List repos connected to the org, joined with each repo's stored skill name.\n\nJoins the live GitHub repo list (from the VCS install) with stored\n`claude_code_repos` rows. Repos present in GitHub but absent from the DB\nare included with `skill_name=null`. Repos in the DB but absent from the\nGitHub list are omitted — the admin must reconnect via GitHub App settings.",
-        "operationId": "list_repos_api_claude_code_repos_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Repos Api Claude Code Repos Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Repos",
-        "tags": [
-          "claude_code"
-        ]
-      }
-    },
-    "/api/claude_code/repos/{repo_external_id}": {
-      "get": {
-        "description": "Read the stored skill name for one repo.\n\n`repo_external_id` contains a `/` (`owner/repo`) so the path segment uses\n`:path` to avoid the `%2F`-decoded-before-routing 405 bug.",
-        "operationId": "get_repo_skill_api_claude_code_repos__repo_external_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "repo_external_id",
-            "required": true,
-            "schema": {
-              "title": "Repo External Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RepoSkillRow"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Repo Skill",
-        "tags": [
-          "claude_code"
-        ]
-      },
-      "put": {
-        "description": "Write the skill name for one repo. Creates the identity row if absent.\n\n`repo_external_id` contains a `/` (`owner/repo`) so the path segment uses\n`:path` to avoid the `%2F`-decoded-before-routing 405 bug.",
-        "operationId": "set_repo_skill_route_api_claude_code_repos__repo_external_id__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "repo_external_id",
-            "required": true,
-            "schema": {
-              "title": "Repo External Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SetRepoSkillRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RepoSkillRow"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Set Repo Skill Route",
-        "tags": [
-          "claude_code"
-        ]
-      }
-    },
     "/api/coding-agents": {
       "get": {
         "operationId": "list_endpoint_api_coding_agents_get",
@@ -3775,6 +5636,71 @@
         "summary": "Repositories",
         "tags": [
           "github"
+        ]
+      }
+    },
+    "/api/intake/points": {
+      "get": {
+        "operationId": "list_intake_points_endpoint_api_intake_points_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntakePointsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Intake Points Endpoint",
+        "tags": [
+          "intake"
         ]
       }
     },
@@ -6120,10 +8046,223 @@
         ]
       }
     },
-    "/api/reviewer/cancel": {
+    "/api/pipelines": {
+      "get": {
+        "operationId": "list_pipelines_endpoint_api_pipelines_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListPipelinesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pipelines Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      },
       "post": {
-        "description": "Cancel any non-terminal workflow_executions for this ticket.",
-        "operationId": "cancel_jobs_api_reviewer_cancel_post",
+        "operationId": "create_pipeline_endpoint_api_pipelines_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineDefinition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatePipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Pipeline Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/from-template": {
+      "post": {
+        "operationId": "from_template_endpoint_api_pipelines_from_template_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FromTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatePipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "From Template Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs": {
+      "get": {
+        "description": "Registered before `/{pipeline_id}` — that pattern is a bare\nsingle-segment match (route matching happens before FastAPI's own UUID\nparsing) and would otherwise swallow `/runs`.",
+        "operationId": "list_runs_endpoint_api_pipelines_runs_get",
         "parameters": [
           {
             "in": "query",
@@ -6173,11 +8312,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "integer"
-                  },
-                  "title": "Response Cancel Jobs Api Reviewer Cancel Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ListRunsResponse"
                 }
               }
             },
@@ -6194,178 +8329,18 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Cancel Jobs",
+        "summary": "List Runs Endpoint",
         "tags": [
-          "reviewer"
+          "pipelines"
         ]
       }
     },
-    "/api/reviewer/findings/by-ticket/{ticket_id}": {
+    "/api/pipelines/runs/overview": {
       "get": {
-        "description": "List findings for the ticket's PR in the canonical schema.",
-        "operationId": "findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get",
+        "operationId": "run_overview_endpoint_api_pipelines_runs_overview_get",
         "parameters": [
-          {
-            "in": "path",
-            "name": "ticket_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Ticket Id",
-              "type": "string"
-            }
-          },
           {
             "in": "query",
-            "name": "include_terminal",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Include Terminal",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  "title": "Response Findings By Ticket Api Reviewer Findings By Ticket  Ticket Id  Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Findings By Ticket",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
-    "/api/reviewer/metrics": {
-      "get": {
-        "description": "Aggregate review counters.",
-        "operationId": "metrics_api_reviewer_metrics_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Metrics Api Reviewer Metrics Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Metrics",
-        "tags": [
-          "reviewer"
-        ]
-      }
-    },
-    "/api/reviewer/reviews/by-ticket/{ticket_id}": {
-      "get": {
-        "description": "Per-review timeline metadata.",
-        "operationId": "reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get",
-        "parameters": [
-          {
-            "in": "path",
             "name": "ticket_id",
             "required": true,
             "schema": {
@@ -6412,12 +8387,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  "title": "Response Reviews By Ticket Api Reviewer Reviews By Ticket  Ticket Id  Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/RunOverview"
                 }
               }
             },
@@ -6434,9 +8404,1002 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Reviews By Ticket",
+        "summary": "Run Overview Endpoint",
         "tags": [
-          "reviewer"
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/pauses/{pause_id}/respond": {
+      "post": {
+        "operationId": "respond_pause_endpoint_api_pipelines_runs_pauses__pause_id__respond_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pause_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pause Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PauseResolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RespondPauseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Respond Pause Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/rerun": {
+      "post": {
+        "operationId": "rerun_endpoint_api_pipelines_runs_rerun_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerun Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_endpoint_api_pipelines_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity": {
+      "get": {
+        "description": "Reuses `core/coding_agent.get_stage_activity`, keyed on\n`(coding_agent_runs.run_id, stage_execution_id)` — both UUID columns, so\nthe join happens directly on the path params with no stringify hop.\n404s when the run doesn't belong to the caller's org.",
+        "operationId": "stage_activity_endpoint_api_pipelines_runs__run_id__stages__stage_execution_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "stage_execution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Stage Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepActivityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stage Activity Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/templates": {
+      "get": {
+        "description": "Registered BEFORE `/{pipeline_id}` — the latter is a bare\nsingle-segment match (route matching precedes FastAPI's own UUID\nparsing) and would otherwise swallow the literal `templates` segment.",
+        "operationId": "list_templates_endpoint_api_pipelines_templates_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListTemplatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Templates Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/{pipeline_id}": {
+      "delete": {
+        "operationId": "delete_pipeline_endpoint_api_pipelines__pipeline_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Pipeline Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      },
+      "get": {
+        "operationId": "get_pipeline_endpoint_api_pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Pipeline Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      },
+      "put": {
+        "operationId": "update_pipeline_endpoint_api_pipelines__pipeline_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineDefinition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Pipeline Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/repos": {
+      "get": {
+        "operationId": "list_repos_endpoint_api_repos_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListReposResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Repos Endpoint",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/config": {
+      "get": {
+        "description": "Always 200 — an absent settings row is the model's defaults, and\n`unconfigured` is a state the Repos page renders, not an error.",
+        "operationId": "get_repo_config_endpoint_api_repos_config_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Repo Config Endpoint",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/settings": {
+      "put": {
+        "operationId": "put_repo_settings_endpoint_api_repos_settings_put",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoSettingsSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Repo Settings Endpoint",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/triggers": {
+      "post": {
+        "operationId": "add_trigger_endpoint_api_repos_triggers_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerBindingSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddTriggerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Trigger Endpoint",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/triggers/{binding_id}": {
+      "delete": {
+        "operationId": "remove_trigger_endpoint_api_repos_triggers__binding_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Binding Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Trigger Endpoint",
+        "tags": [
+          "repos"
         ]
       }
     },
@@ -6504,18 +9467,18 @@
         ]
       }
     },
-    "/api/sse/workspace_activity/{workflow_execution_id}": {
+    "/api/sse/workspace_activity/{run_id}": {
       "get": {
-        "description": "Subscribe an SSE client to the per-workflow activity event stream.\n\nCross-org isolation is the channel key: subscribers attach to\n`{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a\ndifferent org subscribes to a channel nobody publishes to and yields an\nempty stream.",
-        "operationId": "stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get",
+        "description": "Subscribe an SSE client to the per-run activity event stream.\n\nCross-org isolation is the channel key: subscribers attach to\n`{caller_org}:workspace_activity:{run_id}`. A request for a run owned by a\ndifferent org subscribes to a channel nobody publishes to and yields an\nempty stream.",
+        "operationId": "stream_workspace_activity_api_sse_workspace_activity__run_id__get",
         "parameters": [
           {
             "in": "path",
-            "name": "workflow_execution_id",
+            "name": "run_id",
             "required": true,
             "schema": {
               "format": "uuid",
-              "title": "Workflow Execution Id",
+              "title": "Run Id",
               "type": "string"
             }
           },
@@ -7110,7 +10073,7 @@
     },
     "/api/tickets/dashboard": {
       "get": {
-        "description": "Single-query Dashboard projection per E2a.3.\n\nResponse shape:\n`{stats: {in_flight, hitl_pending, completed_today, failed_today},\n   in_flight: [TicketRow ≤10],\n   needs_attention: [TicketRow ≤5]}`.\n\nAvoids the SPA making three `/api/tickets?status=…` calls in a tight\npolling loop. `t.status` is the 6-state vocab\n(pending / running / hitl / done / failed / cancelled); precise hitl/failed\ncounts depend on the workflow-state projection landing on every\ntransition.",
+        "description": "Single-query Dashboard projection per E2a.3.\n\nResponse shape:\n`{stats: {in_flight, hitl_pending, completed_today, failed_today},\n   in_flight: [TicketRow ≤10],\n   needs_attention: [TicketRow ≤5]}`.\n\nAvoids the SPA making three `/api/tickets?status=…` calls in a tight\npolling loop. `t.status` is the 6-state vocab\n(pending / running / hitl / done / failed / cancelled); precise hitl/failed\ncounts depend on the run-state projection landing on every\ntransition.",
         "operationId": "dashboard_api_tickets_dashboard_get",
         "parameters": [
           {
@@ -7178,7 +10141,7 @@
     },
     "/api/tickets/{ticket_id}": {
       "get": {
-        "description": "Per-ticket detail with the enrichment: `builder` (the trigger identity).\n\nReturns the Ticket pydantic fields plus:\n- `builder: {kind, user_id?, display_name, avatar_url?}` — `kind=\"user\"`\n   when the ticket's PR has an `author_login`; `kind=\"system\"` when\n   yaaos triggered the run with no human attribution.\n\nWorkflow-run data is served by the dedicated\n`GET /api/tickets/{id}/workflow-runs` endpoint.",
+        "description": "Per-ticket detail with the enrichment: `builder` (the trigger identity).\n\nReturns the Ticket pydantic fields plus:\n- `builder: {kind, user_id?, display_name, avatar_url?}` — `kind=\"user\"`\n   when the ticket's PR has an `author_login`; `kind=\"system\"` when\n   yaaos triggered the run with no human attribution.",
         "operationId": "detail_api_tickets__ticket_id__get",
         "parameters": [
           {
@@ -7249,101 +10212,6 @@
           }
         },
         "summary": "Detail",
-        "tags": [
-          "tickets"
-        ]
-      }
-    },
-    "/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}": {
-      "get": {
-        "description": "Return the persisted `ActivityLog` for one workflow step.\n\n`activity` is `null` when either the step never ran a coding-agent\ninvocation (non-`InvokeClaudeCode`) or the weekly partition holding its\nactivity row has aged out (4-week TTL).\n\nCross-tenant safety: 404s when the execution does not belong to the\nticket (and therefore not to the caller's org).",
-        "operationId": "step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Ticket Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "execution_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Execution Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "step_id",
-            "required": true,
-            "schema": {
-              "title": "Step Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StepActivityResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Step Activity",
         "tags": [
           "tickets"
         ]
@@ -7435,257 +10303,6 @@
           }
         },
         "summary": "Audit",
-        "tags": [
-          "tickets"
-        ]
-      }
-    },
-    "/api/tickets/{ticket_id}/hitl/history": {
-      "get": {
-        "description": "List past HITL exchanges (prompt + response + timestamps) for the\nticket per E2a.4 HITL tab \"History\" subsection.\n\nJoins `pending_human_decisions` against the ticket's\n`workflow_executions` rows. Newest exchange first.",
-        "operationId": "hitl_history_api_tickets__ticket_id__hitl_history_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Ticket Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  "title": "Response Hitl History Api Tickets  Ticket Id  Hitl History Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Hitl History",
-        "tags": [
-          "tickets"
-        ]
-      }
-    },
-    "/api/tickets/{ticket_id}/hitl/respond": {
-      "post": {
-        "description": "Submit a HITL response. Resolves the open `PendingHumanDecisionRow`\nfor the ticket's most recent awaiting-human workflow execution and\nre-enqueues the routing step via `core.workflow.resume_hitl`.\n\nRequest body: opaque dict — passes through to the workflow engine's\n`resume_hitl(response=...)`. The SPA's HITL renderer shapes this\nper the prompt's discriminated-union schema (E2a.4).\n\nReturns `{stage, next_state}` where `next_state` is the workflow\nstate immediately after the resume.",
-        "operationId": "hitl_respond_api_tickets__ticket_id__hitl_respond_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Ticket Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Response",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Hitl Respond Api Tickets  Ticket Id  Hitl Respond Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Hitl Respond",
-        "tags": [
-          "tickets"
-        ]
-      }
-    },
-    "/api/tickets/{ticket_id}/workflow-runs": {
-      "get": {
-        "description": "All workflow runs for the ticket, oldest first, with their step lists.\n\nEach step's `state` is pending | running | done | failed | skipped. Pure\nworkflow vocabulary — no AgentCommand references.",
-        "operationId": "workflow_runs_api_tickets__ticket_id__workflow_runs_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "ticket_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Ticket Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/WorkflowRunView"
-                  },
-                  "title": "Response Workflow Runs Api Tickets  Ticket Id  Workflow Runs Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Workflow Runs",
         "tags": [
           "tickets"
         ]

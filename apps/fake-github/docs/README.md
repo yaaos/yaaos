@@ -17,16 +17,24 @@ Not a yaaos backend module — absent from `tach.toml`, the module map, layering
 | `GET /repos/{owner}/{repo}` | `{full_name, default_branch: "main"}`. |
 | `GET /repos/{owner}/{repo}/pulls/{number}` | Seeded PR JSON. With `Accept: application/vnd.github.v3.diff`, returns raw diff. |
 | `GET .../pulls/{number}/files` | Seeded file list. |
-| `GET .../pulls?state=open` | All seeded PRs for the repo. |
+| `GET .../pulls?state=open&head=owner:branch` | Seeded + created PRs for the repo, optionally filtered by state and/or head branch. |
+| `POST .../pulls` | Opens a PR (`create_pr`). Idempotent per real GitHub: a second create for a head branch with an existing open PR returns 422 Validation Failed — callers fall back to the `head` filter above to find it. |
 | `GET .../pulls/{number}/comments` | Inline comments yaaos has posted (in-memory). |
 | `GET .../issues/{number}/comments` | Top-level comments yaaos has posted. |
-| `POST .../pulls/{number}/comments` | Records an inline review comment. Returns `{id}`. |
+| `POST .../pulls/{number}/comments` | Records an inline review comment; also opens a review thread (`review_threads`) anchored to it. Returns `{id}`. |
 | `POST .../pulls/{number}/comments/{parent}/replies` | Records an inline reply. |
 | `POST .../issues/{number}/comments` | Records a top-level (non-inline) PR comment. |
+| `POST .../pulls/{number}/reviews` | Submits a review (`approve_pr` uses `event="APPROVE"`); always attributed to `state.app_bot_login`. |
+| `GET .../pulls/{number}/reviews` | Reviews submitted so far, oldest first — `has_active_approval` reads the latest one by the app's bot login. |
 | `GET /installation/repositories` | Seeded repo list. Drives the catch-up poller and the Settings repo list. |
 | `GET .../compare/{before}...{after}` | `{status: <seeded or "ahead">, commits: [{commit: {message}}, ...]}`. Force-push spec seeds `"diverged"`; incremental-trigger specs seed commit messages via `seed_compare_commits`. |
+| `POST /graphql` | Minimal shim backing `resolve_finding_thread` — two operations, dispatched by string-matching the operation name in `query`: a `reviewThreads` query (lists a PR's threads + their comments' `databaseId`) and the `resolveReviewThread` mutation (marks a thread resolved). No general GraphQL engine. |
 
 Bearer-protected endpoints accept any bearer — the fake validates only that one is present.
+
+## Git HTTP smart protocol
+
+`app/git_backend.py` serves real bare git repos (`acme/review-happy`, `acme/review-nonconforming`, `acme/review-agentfail`) over the git smart-HTTP protocol via `git http-backend` (CGI): `GET /{owner}/{repo}/info/refs` (discovery, both `git-upload-pack` and `git-receive-pack` services) + `POST /{owner}/{repo}/git-upload-pack` (clone/fetch) + `POST /{owner}/{repo}/git-receive-pack` (push). Every bare repo is created with `http.receivepack=true` so the agent's `git push origin HEAD` and yaaos's `PushBranch` command succeed. `GET /__test/git_head_sha/{owner}/{repo}` returns the current HEAD SHA for building PR payloads against real commits.
 
 ## Test-control endpoints
 
@@ -59,6 +67,10 @@ App private key is not real RSA. yaaos's `_build_app_jwt` detects the missing `B
 - `compare_commits: dict[str, list[str]]` — `"before...after"` → commit messages returned by `/compare`.
 - `posted_comments` — what yaaos has POSTed (inline + top-level PR comments).
 - `_next_comment_id` — auto-increment counter.
+- `reviews: dict[str, list[dict]]` — `"owner/repo#number"` → reviews submitted, oldest first.
+- `review_threads: dict[str, dict]` — GraphQL node id → `{pr_key, comment_ids, resolved}`; one thread per inline comment.
+- `app_bot_login` — the `<app-slug>[bot]` login attributed to PRs/reviews created "as the app."
+- `_next_pr_number`, `_next_review_id` — auto-increment counters.
 
 `POST /__test/reset` clears everything and re-seeds defaults from `app/seeds.py`: PRs `acme/web#1`, `acme/api#1`; repo entries `acme/web`, `acme/api`.
 

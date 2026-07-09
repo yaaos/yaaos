@@ -145,7 +145,7 @@ class WorkspaceProvider(Protocol):
     """Plugin contract for workspace providers.
 
     The remote provider dispatches every operation as an AgentCommand and awaits
-    terminal events from the workflow engine — none of these methods are called
+    terminal events from the run engine — none of these methods are called
     synchronously in production. The Protocol shape exists so the stub can wrap
     the registered implementation without importing provider internals.
     """
@@ -173,7 +173,7 @@ class WorkspaceClaimState(BaseModel):
 
     Contains only what `core/agent_gateway` needs to apply the stale-claim guard
     and identify the workspace owner — no ORM Row crosses the module boundary.
-    Workflow-execution correlation is on `agent_commands.workflow_execution_id`.
+    Run correlation is on `agent_commands.run_id`.
     """
 
     workspace_id: UUID
@@ -187,10 +187,10 @@ class WorkspaceClaimState(BaseModel):
 class WorkspaceOwner(BaseModel):
     """Projection returned by `get_workspace_owner`.
 
-    Carries the two identifiers a Workspace WorkflowCommand's `dispatch` needs
-    to enqueue an AgentCommand pinned to the workspace's owning agent: the
-    `org_id` (for `enqueue_command`) and the `owning_agent_id` (for
-    `pin_command_to_agent`). No ORM Row crosses the module boundary.
+    Carries the two identifiers a workspace dispatch helper needs to enqueue
+    an AgentCommand pinned to the workspace's owning agent: the `org_id` (for
+    `enqueue_command`) and the `owning_agent_id` (for `pin_command_to_agent`).
+    No ORM Row crosses the module boundary.
     """
 
     workspace_id: UUID

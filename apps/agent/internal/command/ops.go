@@ -23,6 +23,7 @@ type WorkspaceOps interface {
 	RefreshAuth(ctx context.Context, cmd *protocol.RefreshWorkspaceAuthCommand) (RefreshResult, error)
 	RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (InvokeResult, error)
 	Cleanup(ctx context.Context, cmd *protocol.CleanupWorkspaceCommand) (CleanupResult, error)
+	PushBranch(ctx context.Context, cmd *protocol.PushBranchCommand) (PushBranchResult, error)
 }
 
 // AgentOps is the capability seam AgentCommands call to act on the supervisor.

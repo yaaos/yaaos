@@ -170,7 +170,7 @@ services:
         condition: service_healthy
 
   # Optional local OTel collector. Uncomment to enable; set YAAOS_DASH0_ENDPOINT,
-  # YAAOS_DASH0_DATASET, and YAAOS_BACKEND_DASH0_BEARER_TOKEN on the `web` service
+  # YAAOS_DASH0_DATASET, and YAAOS_BACKEND_DASH0_BEARER_TOKEN on the `api` service
   # pointing at this collector.
   #
   # otel-collector:

@@ -25,6 +25,23 @@ class FakeGitHubState:
         self.compare_commits: dict[str, list[str]] = {}
         self.posted_comments: list[dict[str, Any]] = []
         self._next_comment_id = 5000
+        # PRs opened via `create_pr` (POST /repos/{owner}/{repo}/pulls), on top
+        # of the pre-seeded ones in `seeded_prs`. Numbered from `_next_pr_number`
+        # so they never collide with seeded PR numbers (1, 2, ...).
+        self._next_pr_number = 100
+        # Reviews submitted via `POST .../pulls/{number}/reviews`. Keyed by
+        # `owner/repo#number` -> list of review dicts (oldest first), mirroring
+        # GitHub's `GET .../pulls/{number}/reviews` ordering. Read by
+        # `has_active_approval`.
+        self.reviews: dict[str, list[dict[str, Any]]] = {}
+        self._next_review_id = 6000
+        # Review threads created alongside each inline PR comment. Keyed by a
+        # synthetic GraphQL node id -> {"pr_key", "comment_ids", "resolved"}.
+        # Read/written by the `/graphql` shim backing `resolve_finding_thread`.
+        self.review_threads: dict[str, dict[str, Any]] = {}
+        # Login GitHub reports for reviews submitted "as the app" — mirrors the
+        # real `<app-slug>[bot]` shape the GitHub App API uses.
+        self.app_bot_login = "yaaos-test[bot]"
         # Installations minted by the `/apps/{slug}/installations/new`
         # picker stub. Maps install id (str) → account.login that
         # `GET /app/installations/{id}` should return.
@@ -53,6 +70,10 @@ class FakeGitHubState:
         self.compare_commits.clear()
         self.posted_comments.clear()
         self._next_comment_id = 5000
+        self._next_pr_number = 100
+        self.reviews.clear()
+        self._next_review_id = 6000
+        self.review_threads.clear()
         self.installations.clear()
         self._next_installation_id = 7000
         self.oauth_codes.clear()
@@ -72,6 +93,16 @@ class FakeGitHubState:
     def next_comment_id(self) -> int:
         v = self._next_comment_id
         self._next_comment_id += 1
+        return v
+
+    def next_pr_number(self) -> int:
+        v = self._next_pr_number
+        self._next_pr_number += 1
+        return v
+
+    def next_review_id(self) -> int:
+        v = self._next_review_id
+        self._next_review_id += 1
         return v
 
     def next_installation_id(self) -> int:

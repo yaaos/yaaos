@@ -11,9 +11,9 @@ from app.core.intake import (
     IntakeRejectedError,
     IntakeSideEffect,
     register_intake_type,
+    set_intake_for_tests,
 )
 from app.core.intake import web as _intake_web  # noqa: F401 — registers routes
-from app.core.intake.registry import _reset_registry_for_tests
 
 
 class _StubIntakeType:
@@ -34,16 +34,12 @@ class _StubIntakeType:
 
 @pytest_asyncio.fixture
 async def stub_intake(db_session):  # type: ignore[no-untyped-def]
-    """Register the stub intake type for the duration of the test."""
-    _reset_registry_for_tests()
-    register_intake_type(_StubIntakeType())
-    yield {}
-    _reset_registry_for_tests()
-    import importlib  # noqa: PLC0415
-
-    import app.core.intake as intake_mod  # noqa: PLC0415
-
-    importlib.reload(intake_mod)
+    """Register the stub intake type against an empty registry for the
+    duration of the test. `set_intake_for_tests` restores the prior
+    (autouse-bound) registry on exit — no manual reload needed."""
+    with set_intake_for_tests(scenario="empty"):
+        register_intake_type(_StubIntakeType())
+        yield {}
 
 
 def _app() -> FastAPI:

@@ -133,11 +133,13 @@ services:
       # allowlist this host so it replays the signed request there instead of
       # rejecting it as endpoint_disallowed. The dev compose does the same.
       YAAOS_STS_HOST_OVERRIDE: mock-aws:4566
-      # No YAAOS_CODING_AGENT_STUB: the cross-plane review e2e runs the REAL
-      # claude_code plugin (build_review_invocation + parse_review_output) end
-      # to end against the real Go agent + fake-claude. The Anthropic key is
-      # seeded fake by seed_github_install; fake-claude never validates it.
-      YAAOS_REVIEWER_CLASSIFIER_STUB: "1"
+      # No YAAOS_CODING_AGENT_STUB: pipeline runs dispatch through the REAL
+      # claude_code plugin end to end against the real Go agent + fake-claude
+      # whenever a spec actually exercises a real run (most e2e specs seed
+      # state directly and never dispatch a real coding-agent invocation).
+      # The Anthropic key is seeded fake by seed_github_install; fake-claude
+      # never validates it.
+      YAAOS_PR_COMMENT_CLASSIFIER_STUB: "1"
       YAAOS_REVIEW_DEBOUNCE_SECONDS: "0"
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
       YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"
@@ -194,8 +196,8 @@ services:
       LINEAR_API_BASE_URL: http://fake-linear:8080
       NOTION_API_BASE_URL: http://fake-notion:8080
       # No YAAOS_CODING_AGENT_STUB — see the web service block. The worker runs
-      # the real claude_code review path against the agent + fake-claude.
-      YAAOS_REVIEWER_CLASSIFIER_STUB: "1"
+      # the real claude_code dispatch path against the agent + fake-claude.
+      YAAOS_PR_COMMENT_CLASSIFIER_STUB: "1"
       YAAOS_REVIEW_DEBOUNCE_SECONDS: "0"
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
       YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"

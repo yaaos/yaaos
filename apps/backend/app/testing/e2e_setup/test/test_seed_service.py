@@ -7,15 +7,19 @@ present after seeding.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 
-from app.core.audit_log import list_for_org
-from app.core.auth import Role
+from app.core.audit_log import Actor, ActorKind, list_for_org
+from app.core.auth import Role, org_context
 from app.domain.orgs import get_membership, get_org_by_slug, get_org_full_by_slug
+from app.domain.pipelines import PauseResolution, list_runs_for_ticket, resolve_pause
 from app.testing.e2e_setup.service import (
     seed_bootstrap_owner,
     seed_github_install,
     seed_lesson,
+    seed_paused_run,
 )
 
 # ---------------------------------------------------------------------------
@@ -136,3 +140,93 @@ async def test_seed_lesson_returns_uuid_and_emits_audit(db_session) -> None:
     audit_rows = await list_for_org(org_id=DEFAULT_ORG_ID, actions=["lesson.created"], limit=10)
     lesson_audits = [r for r in audit_rows if str(r.entity_id) == str(lesson_id)]
     assert len(lesson_audits) == 1
+
+
+# ---------------------------------------------------------------------------
+# seed_paused_run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_seed_paused_run_writes_paused_run_and_open_pause(db_session) -> None:
+    """``seed_paused_run`` writes a `paused` run with a completed skill stage
+    (`boundary_outcome="paused"`) and a final artifact. Asserted via
+    `list_runs_for_ticket` — the module's own public read model — rather than
+    raw Row access, per the module-boundary rule on cross-module test reach."""
+    ids = await seed_bootstrap_owner(
+        email="owner@paused-run.test", github_id="gh-paused-1", org_slug="paused-run-org"
+    )
+    org = await get_org_by_slug("paused-run-org")
+    assert org is not None
+
+    result = await seed_paused_run(org_slug="paused-run-org", ticket_title="Seeded paused run")
+
+    async with org_context(org.id, ActorKind.SYSTEM, actor_id=None):
+        runs = await list_runs_for_ticket(UUID(result["ticket_id"]), session=db_session)
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.state == "paused"
+    assert str(run.id) == result["run_id"]
+    assert len(run.stages) == 1
+    stage = run.stages[0]
+    assert stage.status == "completed"
+    assert stage.boundary_outcome == "paused"
+    assert stage.confidence == "high"
+    assert len(stage.artifact_ids) == 1
+
+    from app.domain.artifacts import list_for_ticket  # noqa: PLC0415
+
+    groups = await list_for_ticket(org.id, UUID(result["ticket_id"]), session=db_session)
+    assert len(groups) == 1
+    assert groups[0].versions[0].is_final is True
+
+    assert ids["org_slug"] == "paused-run-org"
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_seed_paused_run_approve_resumes_to_completion(db_session) -> None:
+    """A seeded paused run's only stage resolves via `approve` straight to a
+    `completed` terminal state — `workspace_id is None` skips cleanup."""
+    owner_ids = await seed_bootstrap_owner(
+        email="owner@paused-run-2.test", github_id="gh-paused-2", org_slug="paused-run-org-2"
+    )
+    org = await get_org_by_slug("paused-run-org-2")
+    assert org is not None
+    owner_user_id = UUID(owner_ids["user_id"])
+
+    result = await seed_paused_run(org_slug="paused-run-org-2", ticket_title="Seeded paused run 2")
+
+    # Empty escalation set — the owner authorizes via `is_pause_responder`'s
+    # org-admin-union clause, same as the SPA's authenticated org owner would.
+    async with org_context(org.id, ActorKind.USER, actor_id=owner_user_id):
+        await resolve_pause(
+            UUID(result["pause_id"]),
+            resolution=PauseResolution(action="approve"),
+            actor=Actor.user(user_id=owner_user_id),
+            session=db_session,
+        )
+    await db_session.commit()
+
+    from app.core.tasks import drain_once, get_broker, get_pending_task_names  # noqa: PLC0415
+
+    async def _dispatcher(kind: str, payload: dict) -> None:
+        assert kind == "taskiq_enqueue"
+        decorated = get_broker().find_task(payload["task_name"])
+        assert decorated is not None
+        await decorated.original_func(**payload["args"])
+
+    for _ in range(10):
+        pending = await get_pending_task_names(db_session)
+        if not pending:
+            break
+        delivered = await drain_once(db_session, dispatcher=_dispatcher)
+        await db_session.commit()
+        if delivered == 0:
+            break
+
+    async with org_context(org.id, ActorKind.SYSTEM, actor_id=None):
+        runs = await list_runs_for_ticket(UUID(result["ticket_id"]), session=db_session)
+    assert len(runs) == 1
+    assert runs[0].state == "completed"

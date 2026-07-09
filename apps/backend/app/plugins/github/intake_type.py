@@ -4,16 +4,16 @@ Lives in `core/intake`'s registry. Verifies the HMAC signature, parses
 the payload, then branches on `X-Github-Event` + `payload.action`:
 
 Every branch returns `IntakeSideEffect` — handlers manage their own ticket
-and workflow inserts on the endpoint's session so they stay atomic with the
+and run inserts on the endpoint's session so they stay atomic with the
 HTTP boundary.
 
 | Event | Action | What happens |
 |---|---|---|
-| `pull_request` | `opened` (non-draft) / `reopened` / `ready_for_review` | Race-safe ticket+PR insert; `engine.start("pr_review_v1", …)` on the endpoint session. |
-| `pull_request` | `synchronize` | Refresh PR metadata only (incremental review is not wired). |
-| `pull_request` | `closed` | PR state → merged/closed, ticket completed, workflows cancelled. |
+| `pull_request` | `opened` (non-draft) / `reopened` / `ready_for_review` | Resolves the `github:pr_opened` intake point against `domain/repos` trigger bindings. Bound: race-safe ticket+PR insert, then `pipelines.start_run` per binding. Unbound: 2xx no-op — no ticket, no run. |
+| `pull_request` | `synchronize` | Refreshes PR metadata; on a bound repo also fires `github:pr_commits` (incremental review) on the same ticket. Unbound: metadata refresh only. |
+| `pull_request` | `closed` | PR state → merged/closed, ticket completed, any in-flight pipeline run cancelled. |
 | `pull_request` | `reopened` | PR state → open. |
-| `issue_comment` / `pull_request_review_comment` | `created` | Parse yaaos commands (cancel / full review); other comments are accepted as a no-op. |
+| `issue_comment` / `pull_request_review_comment` | `created` | Routed to `domain/pr_review.handle_pr_comment` (`@yaaos` grammar + free-text classification/batching) — safe for tickets with no bound pipeline too (`@yaaos re-review` no-ops with no trigger bindings; `cancel` no-ops with no current run). |
 | `reaction` | `created` | Accepted as a no-op (`ignored_reaction_not_wired`). |
 | `installation` | `created` / `unsuspend` / `new_permissions_accepted` | Upsert install row. |
 | `installation` | `deleted` / `suspend` | Mark install inactive. |
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
 import structlog
@@ -51,9 +51,7 @@ from app.core.intake import (
     IntakeOutcome,
     IntakeRejectedError,
     IntakeSideEffect,
-    parse_rereview,
 )
-from app.core.workflow import start as workflow_start
 
 log = structlog.get_logger("intake.github")
 
@@ -73,13 +71,24 @@ class _WebhookFilteredPayload(BaseModel):
     source_event_id: str
 
 
-class _RereviewRequestedPayload(BaseModel):
-    comment_external_id: str
+class _PipelineStartFailedPayload(BaseModel):
+    pipeline_id: UUID
+    reason: str
 
 
 class _ReactionReceivedPayload(BaseModel):
     reaction: str
     target_comment_external_id: str
+
+
+class _PrTicketPrep(NamedTuple):
+    """Shared ticket-creation result — see `GithubIntakeType._create_pr_ticket`."""
+
+    outcome: IntakeOutcome | None
+    ticket_id: UUID | None
+    vcs_pr: Any | None
+    repo_full: str
+    upserted_pr_id: UUID | None
 
 
 class GithubIntakeType:
@@ -218,15 +227,15 @@ class GithubIntakeType:
             if action == "opened" and pr_payload.get("draft", False):
                 await self._audit_filtered(payload, "draft", org_id=org_id, delivery=delivery)
                 return IntakeSideEffect(detail="filtered_draft")
-            return await self._prepare_pr_review(
+            return await self._prepare_review_or_run(
                 payload=payload, delivery=delivery, org_id=org_id, session=session
             )
 
         if action == "synchronize":
             if pr_external_id is None:
                 raise IntakeRejectedError("bad_request", "synchronize without pr number")
-            await self._handle_synchronize(payload=payload, org_id=org_id)
-            return IntakeSideEffect(detail="synchronize")
+            detail = await self._handle_synchronize(payload=payload, org_id=org_id)
+            return IntakeSideEffect(detail=detail)
 
         if action == "closed":
             if pr_external_id is None:
@@ -242,25 +251,28 @@ class GithubIntakeType:
 
         return IntakeSideEffect(detail="ignored")
 
-    async def _prepare_pr_review(
+    async def _create_pr_ticket(
         self,
         *,
         payload: dict[str, Any],
         delivery: str,
         org_id: UUID,
         session: AsyncSession,
-    ) -> IntakeOutcome:
-        """Race-safe ticket+PR upsert + workflow start for a PR-opened-style
-        event. All writes go through the endpoint's session so ticket,
-        PR back-reference, audit row, and workflow.start outbox enqueue
-        commit atomically. Filters forks and bot authors with an audit row
-        (no ticket created in that case)."""
-        from app.domain.tickets import (  # noqa: PLC0415
-            attach_pr_to_ticket,
-            create_from_pr,
-            set_workflow_execution,
-            upsert,
-        )
+    ) -> _PrTicketPrep:
+        """Shared ticket-creation step for a PR-opened-style event: fork/bot
+        filter, race-safe ticket insert (`branch_name` = the PR's own head
+        branch — the branch already exists on the remote), PR upsert,
+        `ticket.pr_bound` audit. All writes go through the endpoint's
+        session so they commit atomically with whatever the caller does
+        next (pipeline run start).
+
+        Used by both the unbound `pr_review_v1` fallback
+        (`_prepare_pr_review`) and the bound pipeline-run path
+        (`_prepare_pipeline_runs`) — `outcome` non-None on the returned
+        tuple means the caller should return it immediately (filtered or a
+        race-loser duplicate) without starting anything.
+        """
+        from app.domain.tickets import attach_pr_to_ticket, create_from_pr, upsert  # noqa: PLC0415
         from app.plugins.github.payload_parser import _parse_pr  # noqa: PLC0415
 
         pr_payload = payload.get("pull_request") or {}
@@ -269,10 +281,10 @@ class GithubIntakeType:
 
         if vcs_pr.is_fork:
             await self._audit_filtered(payload, "fork", org_id=org_id, delivery=delivery)
-            return IntakeSideEffect(detail="filtered_fork")
+            return _PrTicketPrep(IntakeSideEffect(detail="filtered_fork"), None, None, repo_full, None)
         if vcs_pr.author_type == "bot":
             await self._audit_filtered(payload, "bot_author", org_id=org_id, delivery=delivery)
-            return IntakeSideEffect(detail="filtered_bot")
+            return _PrTicketPrep(IntakeSideEffect(detail="filtered_bot"), None, None, repo_full, None)
 
         # Race-safe ticket insert keyed on `(org_id, source, source_external_id)`.
         # A concurrent delivery with the same PR external id collides on the
@@ -304,11 +316,12 @@ class GithubIntakeType:
             plugin_id=vcs_pr.plugin_id,
             idempotency_key=idempotency_key,
             payload=ticket_payload,
+            branch_name=vcs_pr.head_branch,
             session=session,
         )
         if not created:
-            # Loser of the race. The winner owns the workflow start; we exit clean.
-            return IntakeSideEffect(detail="duplicate_ticket")
+            # Loser of the race. The winner owns the run start; we exit clean.
+            return _PrTicketPrep(IntakeSideEffect(detail="duplicate_ticket"), None, None, repo_full, None)
 
         # PR upsert runs on the endpoint's session — same transaction as the
         # ticket insert above, so the FK on `pull_requests.ticket_id`
@@ -318,45 +331,108 @@ class GithubIntakeType:
         # attach_pr_to_ticket owns the ticket.pr_bound audit row.
         await attach_pr_to_ticket(ticket_id, org_id=org_id, pr_id=upserted_pr.id, session=session)
 
-        # Start the workflow on the endpoint's session — outbox row enqueued
-        # atomically with the ticket insert.
-        from app.core.observability import current_traceparent  # noqa: PLC0415
-        from app.domain.reviewer import TicketSnapshot  # noqa: PLC0415
+        return _PrTicketPrep(None, ticket_id, vcs_pr, repo_full, upserted_pr.id)
 
-        snapshot = TicketSnapshot(
-            ticket_id=ticket_id,
-            org_id=org_id,
-            plugin_id=vcs_pr.plugin_id,
-            repo_external_id=repo_full,
-            pr_id=upserted_pr.id,
-            pr_external_id=vcs_pr.external_id,
-            head_sha=vcs_pr.head_sha,
-            base_sha=vcs_pr.base_sha,
-            is_draft=vcs_pr.is_draft,
-            is_fork=vcs_pr.is_fork,
-            labels=tuple(ticket_payload["labels"]),
-            author_login=vcs_pr.author_login,
+    async def _prepare_review_or_run(
+        self,
+        *,
+        payload: dict[str, Any],
+        delivery: str,
+        org_id: UUID,
+        session: AsyncSession,
+    ) -> IntakeOutcome:
+        """Resolves the `github:pr_opened` intake point against
+        `domain/repos` trigger bindings. Bound repos start a pipeline run
+        per binding; an unbound repo is a 2xx no-op — no ticket, no run."""
+        from app.domain.repos import find_bindings  # noqa: PLC0415
+
+        repo_full = (payload.get("repository") or {}).get("full_name") or ""
+        bindings = await find_bindings(org_id, repo_full, "github:pr_opened", session=session)
+        if not bindings:
+            return IntakeSideEffect(detail="unbound_repo")
+        return await self._prepare_pipeline_runs(
+            bindings=bindings, payload=payload, delivery=delivery, org_id=org_id, session=session
         )
-        workflow_execution_id = await workflow_start(
-            workflow_name="pr_review_v1",
-            ticket_id=str(ticket_id),
-            traceparent=current_traceparent(),
-            workflow_input=snapshot,
-            session=session,
+
+    async def _prepare_pipeline_runs(
+        self,
+        *,
+        bindings: list[Any],
+        payload: dict[str, Any],
+        delivery: str,
+        org_id: UUID,
+        session: AsyncSession,
+    ) -> IntakeOutcome:
+        """Bound-repo path for `github:pr_opened`: the same ticket-creation
+        step as the unbound fallback, then `pipelines.start_run` per
+        binding. `start_run`'s two documented raises (`PipelineNotFoundError`
+        — a stale binding whose target pipeline no longer exists;
+        `PipelineValidationError` — flatten-time cycle/collision) are both
+        config problems, not delivery problems — webhooks never retry-loop
+        on either, so each is recorded as an audit row and the response
+        stays 2xx."""
+        from app.domain.pipelines import (  # noqa: PLC0415
+            Kickoff,
+            PipelineNotFoundError,
+            PipelineValidationError,
+            start_run,
         )
-        await set_workflow_execution(
-            ticket_id, workflow_execution_id=UUID(workflow_execution_id), session=session
+
+        prep = await self._create_pr_ticket(
+            payload=payload, delivery=delivery, org_id=org_id, session=session
         )
+        if prep.outcome is not None:
+            return prep.outcome
+        assert prep.ticket_id is not None and prep.vcs_pr is not None
+        vcs_pr = prep.vcs_pr
+
+        kickoff = Kickoff(
+            intake_point_id="github:pr_opened",
+            actor=Actor.github_user(vcs_pr.author_login),
+            input_text=None,
+            pr_base_sha=vcs_pr.base_sha,
+            pr_head_sha=vcs_pr.head_sha,
+        )
+        started = 0
+        for binding in bindings:
+            try:
+                await start_run(
+                    org_id=org_id,
+                    ticket_id=prep.ticket_id,
+                    pipeline_id=binding.pipeline_id,
+                    kickoff=kickoff,
+                    session=session,
+                )
+                started += 1
+            except (PipelineNotFoundError, PipelineValidationError) as exc:
+                await audit_for_ticket(
+                    prep.ticket_id,
+                    "ticket.pipeline_start_failed",
+                    _PipelineStartFailedPayload(pipeline_id=binding.pipeline_id, reason=str(exc)),
+                    actor=Actor.system(),
+                    org_id=org_id,
+                    session=session,
+                )
 
         log.info(
-            "intake.github.pr_review_started",
-            ticket_id=str(ticket_id),
-            workflow_execution_id=workflow_execution_id,
-            pr_external_id=vcs_pr.external_id,
+            "intake.github.pipeline_runs_started",
+            ticket_id=str(prep.ticket_id),
+            started=started,
+            bindings=len(bindings),
         )
-        return IntakeSideEffect(detail="pr_review_started")
+        return IntakeSideEffect(detail="pipeline_run_started" if started else "pipeline_start_failed")
 
-    async def _handle_synchronize(self, *, payload: dict[str, Any], org_id: UUID) -> None:
+    async def _handle_synchronize(self, *, payload: dict[str, Any], org_id: UUID) -> str:
+        """Refreshes PR metadata; on a bound repo also fires `github:pr_commits`
+        (incremental review) on the same ticket. Unbound repos keep today's
+        metadata-only refresh."""
+        from app.domain.pipelines import (  # noqa: PLC0415
+            Kickoff,
+            PipelineNotFoundError,
+            PipelineValidationError,
+            start_run,
+        )
+        from app.domain.repos import find_bindings  # noqa: PLC0415
         from app.domain.tickets import get_by_external, upsert  # noqa: PLC0415
         from app.plugins.github.payload_parser import _parse_pr  # noqa: PLC0415
 
@@ -368,18 +444,54 @@ class GithubIntakeType:
         existing_pr = await get_by_external("github", pr_external_id, org_id=org_id)
         if existing_pr is None:
             log.warning("intake.github.synchronize_unknown_pr", pr_external_id=pr_external_id)
-            return
+            return "synchronize_unknown_pr"
 
         fresh = _parse_pr(payload)
-        # Orchestrate the PR refresh on a self-owned session — no other
-        # writes need to share this transaction, so the wrap stays here
-        # rather than being plumbed in by the caller.
+        # Orchestrate the PR refresh (+ optional bound run start) on a
+        # self-owned session — no other writes need to share this
+        # transaction, so the wrap stays here rather than being plumbed in
+        # by the caller.
+        detail = "synchronize"
         async with db_session() as s:
             await upsert(fresh, ticket_id=existing_pr.ticket_id, org_id=org_id, session=s)
+
+            bindings = await find_bindings(org_id, repo_full, "github:pr_commits", session=s)
+            if bindings:
+                kickoff = Kickoff(
+                    intake_point_id="github:pr_commits",
+                    actor=Actor.github_user(fresh.author_login),
+                    input_text=None,
+                    pr_base_sha=fresh.base_sha,
+                    pr_head_sha=fresh.head_sha,
+                )
+                started = 0
+                for binding in bindings:
+                    try:
+                        await start_run(
+                            org_id=org_id,
+                            ticket_id=existing_pr.ticket_id,
+                            pipeline_id=binding.pipeline_id,
+                            kickoff=kickoff,
+                            session=s,
+                        )
+                        started += 1
+                    except (PipelineNotFoundError, PipelineValidationError) as exc:
+                        await audit_for_ticket(
+                            existing_pr.ticket_id,
+                            "ticket.pipeline_start_failed",
+                            _PipelineStartFailedPayload(pipeline_id=binding.pipeline_id, reason=str(exc)),
+                            actor=Actor.system(),
+                            org_id=org_id,
+                            session=s,
+                        )
+                detail = "pipeline_run_started" if started else "pipeline_start_failed"
             await s.commit()
+        return detail
 
     async def _handle_closed(self, *, payload: dict[str, Any], org_id: UUID) -> None:
-        import app.domain.reviewer as reviewer  # noqa: PLC0415
+        from app.core.audit_log import ActorKind  # noqa: PLC0415
+        from app.core.auth import org_context  # noqa: PLC0415
+        from app.domain.pipelines import RunAlreadyTerminalError, request_cancel  # noqa: PLC0415
         from app.domain.tickets import complete, get_by_external, get_by_pr, update_state  # noqa: PLC0415
 
         pr_payload = payload.get("pull_request") or {}
@@ -396,7 +508,13 @@ class GithubIntakeType:
         ticket = await get_by_pr(pr.id, org_id=org_id)
         if ticket and ticket.status == "running":
             await complete(ticket.id, org_id=org_id)
-            await reviewer.cancel_workflows_for_ticket(ticket.id)
+            if ticket.current_run_id is not None:
+                async with db_session() as s, org_context(org_id, ActorKind.GITHUB_USER, actor_id=None):
+                    try:
+                        await request_cancel(ticket.current_run_id, actor=Actor.system(), session=s)
+                        await s.commit()
+                    except RunAlreadyTerminalError:
+                        pass
 
     async def _handle_reopened(self, *, payload: dict[str, Any], org_id: UUID) -> None:
         from app.domain.tickets import get_by_external, update_state  # noqa: PLC0415
@@ -420,8 +538,7 @@ class GithubIntakeType:
         org_id: UUID,
         session: AsyncSession,
     ) -> IntakeOutcome:
-        import app.domain.reviewer as reviewer  # noqa: PLC0415
-        from app.core.intake import parse_yaaos_command  # noqa: PLC0415
+        from app.domain.pr_review import InboundComment, handle_pr_comment  # noqa: PLC0415
         from app.domain.tickets import get_by_external, get_by_pr  # noqa: PLC0415
 
         comment = payload.get("comment") or {}
@@ -437,8 +554,12 @@ class GithubIntakeType:
             if "pull_request" not in issue:
                 return IntakeSideEffect(detail="ignored_issue_comment")
             pr_number = issue.get("number")
+            in_reply_to_external_id = None
         else:
             pr_number = (payload.get("pull_request") or {}).get("number")
+            in_reply_to_external_id = (
+                str(comment.get("in_reply_to_id")) if comment.get("in_reply_to_id") else None
+            )
         if pr_number is None:
             return IntakeSideEffect(detail="ignored_no_pr")
         pr_external_id = f"{repo_full}#{pr_number}"
@@ -451,25 +572,20 @@ class GithubIntakeType:
             return IntakeSideEffect(detail="ignored_no_ticket")
 
         body = comment.get("body", "")
-        cmd = parse_yaaos_command(body)
-        if cmd is None and parse_rereview(body)[0]:
-            cmd = "full review"
-        if cmd is not None:
-            await audit_for_ticket(
-                ticket.id,
-                "ticket.rereview_requested",
-                _RereviewRequestedPayload(comment_external_id=str(comment.get("id", ""))),
-                actor=Actor.github_user(author_login),
-                org_id=org_id,
-                session=session,
-            )
-            if cmd == "cancel":
-                await reviewer.cancel_workflows_for_ticket(ticket.id)
-            elif cmd == "full review":
-                await reviewer.start_pr_review(ticket.id, org_id=org_id, trigger_reason="manual_full")
-            return IntakeSideEffect(detail=f"command_{cmd.replace(' ', '_')}")
+        comment_external_id = str(comment.get("id", ""))
 
-        return IntakeSideEffect(detail="comment_no_command")
+        await handle_pr_comment(
+            org_id=org_id,
+            ticket_id=ticket.id,
+            comment=InboundComment(
+                external_id=comment_external_id,
+                author_login=author_login,
+                body=body,
+                in_reply_to_external_id=in_reply_to_external_id,
+            ),
+            session=session,
+        )
+        return IntakeSideEffect(detail="comment_processed")
 
     async def _handle_reaction(
         self,

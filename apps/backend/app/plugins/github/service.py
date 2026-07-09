@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -332,7 +333,8 @@ class GitHubPlugin:
     ) -> list[str]:
         """Commit messages between `prev_sha` and `head_sha` via compare API.
 
-        Used by reviewer.handle_push to detect base-branch merges. The
+        No production caller today — this Protocol method has no wired
+        consumer since the reviewer's push-merge detection was deleted. The
         compare API returns up to 250 commits in `commits`; for incremental
         review windows that's plenty.
         """
@@ -360,6 +362,17 @@ class GitHubPlugin:
             return resp.status_code == 200
         except Exception:
             return False
+
+    async def get_default_branch(self, org_id: UUID, repo_external_id: str) -> str:
+        """Live lookup, not part of `VCSPlugin` — `github:create_pr` (an
+        Action, not a Protocol method) needs a base branch when opening a PR
+        from a yaaos-authored ticket branch; no stored config carries a
+        repo's default branch anywhere else in the tree."""
+        owner, repo = repo_external_id.split("/", 1)
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=10) as client:
+            resp = await client.get(f"/repos/{owner}/{repo}", headers=await self._api_headers(org_id))
+        resp.raise_for_status()
+        return str(resp.json()["default_branch"])
 
     async def post_finding(
         self,
@@ -457,6 +470,116 @@ class GitHubPlugin:
     ) -> None:
         # No-op for GitHub (GitHub marks outdated automatically on force push).
         return
+
+    async def create_pr(
+        self,
+        org_id: UUID,
+        repo_external_id: str,
+        *,
+        head_branch: str,
+        base_branch: str,
+        title: str,
+        body: str,
+    ) -> str:
+        """Open a PR; idempotent on an existing open PR for `head_branch`.
+
+        GitHub's real signal for "a PR already exists" is a 422 Validation
+        Failed on create — not a precondition GET. On 422 we look up the
+        existing open PR via the head-branch filter and return it instead.
+        """
+        owner, repo = repo_external_id.split("/", 1)
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            headers = await self._api_headers(org_id)
+            resp = await client.post(
+                f"/repos/{owner}/{repo}/pulls",
+                json={"title": title, "body": body, "head": head_branch, "base": base_branch},
+                headers=headers,
+            )
+            if resp.status_code == 422:
+                existing = await client.get(
+                    f"/repos/{owner}/{repo}/pulls",
+                    params={"head": f"{owner}:{head_branch}", "state": "open"},
+                    headers=headers,
+                )
+                existing.raise_for_status()
+                prs = existing.json()
+                if not prs:
+                    resp.raise_for_status()  # no existing PR either — surface the original 422
+                return f"{owner}/{repo}#{prs[0]['number']}"
+        resp.raise_for_status()
+        return f"{owner}/{repo}#{resp.json()['number']}"
+
+    async def approve_pr(self, org_id: UUID, external_id: str) -> None:
+        # Submits an approving review as the app. Never merges.
+        owner, repo, num = _split_external(external_id)
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            resp = await client.post(
+                f"/repos/{owner}/{repo}/pulls/{num}/reviews",
+                json={"event": "APPROVE"},
+                headers=await self._api_headers(org_id),
+            )
+        resp.raise_for_status()
+
+    async def has_active_approval(self, org_id: UUID, external_id: str) -> bool:
+        """GitHub is the source of truth — no local marker. Reviews come back
+        oldest-first; the app's latest review is the currently-effective one."""
+        owner, repo, num = _split_external(external_id)
+        bot_login = f"{get_settings().yaaos_github_app_slug}[bot]"
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            resp = await client.get(
+                f"/repos/{owner}/{repo}/pulls/{num}/reviews",
+                headers=await self._api_headers(org_id),
+            )
+        resp.raise_for_status()
+        ours = [r for r in resp.json() if (r.get("user") or {}).get("login") == bot_login]
+        if not ours:
+            return False
+        return ours[-1].get("state") == "APPROVED"
+
+    async def resolve_finding_thread(self, org_id: UUID, external_id: str, comment_external_id: str) -> None:
+        """GitHub has no REST endpoint for resolving a review thread — only the
+        GraphQL `resolveReviewThread` mutation. Two round trips: locate the
+        thread anchoring `comment_external_id`, then resolve it.
+        """
+        owner, repo, num = _split_external(external_id)
+        headers = await self._api_headers(org_id)
+        query = """
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviewThreads(first: 100) {
+                nodes { id isResolved comments(first: 50) { nodes { databaseId } } }
+              }
+            }
+          }
+        }
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            resp = await client.post(
+                "/graphql",
+                json={"query": query, "variables": {"owner": owner, "repo": repo, "number": num}},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            nodes = resp.json()["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+            target_id = int(comment_external_id)
+            thread_id = next(
+                (n["id"] for n in nodes if any(c["databaseId"] == target_id for c in n["comments"]["nodes"])),
+                None,
+            )
+            if thread_id is None:
+                raise VCSNotFoundError(f"no review thread found for comment {comment_external_id}")
+            mutation = """
+            mutation($threadId: ID!) {
+              resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
+            }
+            """
+            mut_resp = await client.post(
+                "/graphql",
+                json={"query": mutation, "variables": {"threadId": thread_id}},
+                headers=headers,
+            )
+        mut_resp.raise_for_status()
 
 
 async def record_app_install(
@@ -570,6 +693,36 @@ async def mark_installation_inactive(*, install_external_id: str, status: str) -
         await s.commit()
 
 
+# Category → short prefix for the rendered comment-body handle, e.g. "sec-1".
+_CATEGORY_PREFIX: dict[str, str] = {
+    "security": "sec",
+    "architecture": "arch",
+    "performance": "perf",
+    "correctness": "bug",
+    "testing": "test",
+    "documentation": "doc",
+    "style": "style",
+}
+
+
+def _category_prefix(category: str) -> str:
+    """Derive the short prefix string for a category.
+
+    Known categories map to fixed short codes. Unknown categories are
+    slugified (lowercase alnum, max 8 chars).
+    """
+    key = category.lower().strip()
+    if key in _CATEGORY_PREFIX:
+        return _CATEGORY_PREFIX[key]
+    slug = re.sub(r"[^a-z0-9]", "", key)[:8] or "find"
+    return slug
+
+
+def _finding_handle(category: str, finding_display_id: int) -> str:
+    """Render the display handle for a comment body, e.g. `sec-1`."""
+    return f"{_category_prefix(category)}-{finding_display_id}"
+
+
 def _format_finding_body(
     *,
     finding_display_id: int,
@@ -586,10 +739,7 @@ def _format_finding_body(
     Uses the canonical named primitive args from `VCSPlugin.post_finding`.
     No value object crosses this boundary.
     """
-    # Category prefix for the handle, e.g. "sec-1".
-    from app.domain.reviewer import finding_handle  # noqa: PLC0415
-
-    handle = finding_handle(category, finding_display_id)
+    handle = _finding_handle(category, finding_display_id)
     parts = [
         f"**[{handle}] {rule_violated}**",
         "",
@@ -666,11 +816,36 @@ async def _on_vcs_cleared(org_id: UUID, plugin_id: str, session: Any) -> None:
 
 
 def bootstrap() -> None:
+    from app.core.intake import IntakePoint, register_intake_point  # noqa: PLC0415
+    from app.domain.actions import register_action  # noqa: PLC0415
     from app.domain.orgs import register_onboarding_contributor, register_vcs_clear_hook  # noqa: PLC0415
+    from app.plugins.github.actions import (  # noqa: PLC0415
+        GitHubCreatePRAction,
+        GitHubReplyToCommentAction,
+        GitHubUpdatePRAction,
+    )
 
     register_vcs_plugin(_plugin)
     register_onboarding_contributor("github_app_installed", _onboarding_github_app_installed)
     register_vcs_clear_hook(_on_vcs_cleared)
+    register_action(GitHubCreatePRAction())
+    register_action(GitHubUpdatePRAction())
+    register_action(GitHubReplyToCommentAction())
+
+    # Trigger-binding picker entries — `domain/repos.add_binding` validates
+    # `intake_point_id` against this registry; the webhook rewire in
+    # `intake_type.py` resolves bindings for "github:pr_opened" and
+    # "github:pr_commits". "github:pr_comment" is the comment-response run
+    # target `domain/pr_review.maybe_start_batch_run` resolves.
+    register_intake_point(
+        IntakePoint(id="github:pr_opened", plugin_id="github", label="PR opened", kind="webhook")
+    )
+    register_intake_point(
+        IntakePoint(id="github:pr_commits", plugin_id="github", label="PR commits pushed", kind="webhook")
+    )
+    register_intake_point(
+        IntakePoint(id="github:pr_comment", plugin_id="github", label="PR comment", kind="webhook")
+    )
 
 
 def get_plugin() -> GitHubPlugin:

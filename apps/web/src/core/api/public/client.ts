@@ -16,10 +16,9 @@ import { getCurrentOrgSlug } from "./org-context";
 /** Lesson from backend schema. */
 export type Lesson = components["schemas"]["Lesson"];
 
-/** One workflow execution for a ticket, with its ordered step list. */
-export type WorkflowRunView = components["schemas"]["WorkflowRunView"];
-/** `GET /api/tickets/{id}/activity/...` — persisted step activity blob. */
-export type StepActivityResponse = components["schemas"]["StepActivityResponse"];
+/** `GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity` —
+ *  persisted coding-agent activity blob for one stage execution. */
+export type StageActivityResponse = components["schemas"]["StepActivityResponse"];
 
 // ── Activity event — shared by live stream + persisted step blob ──────────
 
@@ -27,8 +26,8 @@ export type StepActivityResponse = components["schemas"]["StepActivityResponse"]
  * Pre-rendered activity event captured from the coding-agent stream.
  *
  * `message` is rendered by the backend; `detail` carries kind-specific
- * extras for expanded views. Shared by `ActivityEventRow` and the live
- * `useWorkflowActivityStream` hook.
+ * extras for expanded views. `ActivityEventRow` maps the Runs tab's
+ * persisted stage-activity events onto this shape at the call site.
  */
 export type ReviewJobActivityEvent = {
   ts: string;
@@ -49,7 +48,7 @@ export type Ticket = {
   source_external_id: string;
   title: string;
   description: string | null;
-  // collapsed status — 6-state UI vocab: pending (queued, awaiting workflow start),
+  // collapsed status — 6-state UI vocab: pending (queued, awaiting run start),
   // running, hitl, done, failed, cancelled.
   status: "pending" | "running" | "hitl" | "done" | "failed" | "cancelled";
   plugin_id: string;
@@ -125,5 +124,33 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     throw new Error(`${r.status} ${path}: ${body}`);
   }
   if (r.status === 204) return undefined as T;
-  return (await r.json()) as T;
+  // Some 2xx handlers return a bare `Response(status_code=200)` with an
+  // empty body (e.g. `PUT /api/repos/settings`) rather than 204 — reading
+  // as text first and short-circuiting on empty avoids `r.json()` throwing
+  // a SyntaxError on `""`, which would otherwise surface as a false
+  // "couldn't save" error despite the request having succeeded.
+  const text = await r.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/**
+ * Extracts the backend's `{"detail": {"error": "<code>"}}` error code from an
+ * `apiFetch` rejection. Backend handlers raise `HTTPException(status_code,
+ * detail={"error": code})` for domain-specific 4xx outcomes (e.g.
+ * `invalid_definition`, `name_taken`, `referenced`) — this is the one place
+ * that parses `apiFetch`'s `"<status> <path>: <body>"` message shape back
+ * apart so callers can branch on the code instead of string-matching the
+ * whole message. Returns `null` when the error isn't in that shape (network
+ * error, validation error, etc.).
+ */
+export function apiErrorCode(err: unknown): string | null {
+  if (!(err instanceof Error)) return null;
+  const sep = err.message.indexOf(": ");
+  if (sep === -1) return null;
+  try {
+    const body = JSON.parse(err.message.slice(sep + 2)) as { detail?: { error?: string } };
+    return body.detail?.error ?? null;
+  } catch {
+    return null;
+  }
 }

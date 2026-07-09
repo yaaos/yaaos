@@ -45,12 +45,12 @@ async def test_sink_populates_run_row_and_activity_blob(db_session) -> None:
     wiring in the test environment."""
     org_id = uuid.uuid4()
     cmd_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    pipeline_run_id = uuid.uuid4()
 
     run_id = await create_run(
         org_id=org_id,
-        workflow_execution_id=wfe_id,
-        step_id="review",
+        run_id=pipeline_run_id,
+        stage_execution_id=uuid.uuid4(),
         agent_command_id=cmd_id,
         command_kind="InvokeClaudeCode",
         plugin_id="claude_code",
@@ -106,12 +106,12 @@ async def test_sink_populates_failure_status(db_session) -> None:
     """A completed_failure terminal event writes status=failure."""
     org_id = uuid.uuid4()
     cmd_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    pipeline_run_id = uuid.uuid4()
 
     await create_run(
         org_id=org_id,
-        workflow_execution_id=wfe_id,
-        step_id="review",
+        run_id=pipeline_run_id,
+        stage_execution_id=uuid.uuid4(),
         agent_command_id=cmd_id,
         command_kind="InvokeClaudeCode",
         plugin_id="claude_code",

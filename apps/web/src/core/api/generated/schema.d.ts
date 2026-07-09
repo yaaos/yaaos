@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Actions Endpoint */
+        get: operations["list_actions_endpoint_api_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/api-keys": {
         parameters: {
             query?: never;
@@ -55,6 +72,40 @@ export interface paths {
          *     plugin, not here.
          */
         post: operations["validate_key_api_api_keys__provider__validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Artifacts Endpoint */
+        get: operations["list_artifacts_endpoint_api_artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/artifacts/{artifact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Artifact Endpoint */
+        get: operations["get_artifact_endpoint_api_artifacts__artifact_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -289,61 +340,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude_code/repos": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Repos
-         * @description List repos connected to the org, joined with each repo's stored skill name.
-         *
-         *     Joins the live GitHub repo list (from the VCS install) with stored
-         *     `claude_code_repos` rows. Repos present in GitHub but absent from the DB
-         *     are included with `skill_name=null`. Repos in the DB but absent from the
-         *     GitHub list are omitted — the admin must reconnect via GitHub App settings.
-         */
-        get: operations["list_repos_api_claude_code_repos_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude_code/repos/{repo_external_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Repo Skill
-         * @description Read the stored skill name for one repo.
-         *
-         *     `repo_external_id` contains a `/` (`owner/repo`) so the path segment uses
-         *     `:path` to avoid the `%2F`-decoded-before-routing 405 bug.
-         */
-        get: operations["get_repo_skill_api_claude_code_repos__repo_external_id__get"];
-        /**
-         * Set Repo Skill Route
-         * @description Write the skill name for one repo. Creates the identity row if absent.
-         *
-         *     `repo_external_id` contains a `/` (`owner/repo`) so the path segment uses
-         *     `:path` to avoid the `%2F`-decoded-before-routing 405 bug.
-         */
-        put: operations["set_repo_skill_route_api_claude_code_repos__repo_external_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/coding-agents": {
         parameters: {
             query?: never;
@@ -491,6 +487,23 @@ export interface paths {
          *     when the App is installed; an empty list when it isn't.
          */
         get: operations["repositories_api_github_repositories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/intake/points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Intake Points Endpoint */
+        get: operations["list_intake_points_endpoint_api_intake_points_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1017,7 +1030,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/reviewer/cancel": {
+    "/api/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Pipelines Endpoint */
+        get: operations["list_pipelines_endpoint_api_pipelines_get"];
+        put?: never;
+        /** Create Pipeline Endpoint */
+        post: operations["create_pipeline_endpoint_api_pipelines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pipelines/from-template": {
         parameters: {
             query?: never;
             header?: never;
@@ -1026,18 +1057,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Cancel Jobs
-         * @description Cancel any non-terminal workflow_executions for this ticket.
-         */
-        post: operations["cancel_jobs_api_reviewer_cancel_post"];
+        /** From Template Endpoint */
+        post: operations["from_template_endpoint_api_pipelines_from_template_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/reviewer/findings/by-ticket/{ticket_id}": {
+    "/api/pipelines/runs": {
         parameters: {
             query?: never;
             header?: never;
@@ -1045,10 +1073,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Findings By Ticket
-         * @description List findings for the ticket's PR in the canonical schema.
+         * List Runs Endpoint
+         * @description Registered before `/{pipeline_id}` — that pattern is a bare
+         *     single-segment match (route matching happens before FastAPI's own UUID
+         *     parsing) and would otherwise swallow `/runs`.
          */
-        get: operations["findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get"];
+        get: operations["list_runs_endpoint_api_pipelines_runs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1057,18 +1087,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/reviewer/metrics": {
+    "/api/pipelines/runs/overview": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Metrics
-         * @description Aggregate review counters.
-         */
-        get: operations["metrics_api_reviewer_metrics_get"];
+        /** Run Overview Endpoint */
+        get: operations["run_overview_endpoint_api_pipelines_runs_overview_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1077,7 +1104,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/reviewer/reviews/by-ticket/{ticket_id}": {
+    "/api/pipelines/runs/pauses/{pause_id}/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Respond Pause Endpoint */
+        post: operations["respond_pause_endpoint_api_pipelines_runs_pauses__pause_id__respond_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pipelines/runs/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rerun Endpoint */
+        post: operations["rerun_endpoint_api_pipelines_runs_rerun_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pipelines/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Run Endpoint */
+        post: operations["cancel_run_endpoint_api_pipelines_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity": {
         parameters: {
             query?: never;
             header?: never;
@@ -1085,13 +1163,146 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Reviews By Ticket
-         * @description Per-review timeline metadata.
+         * Stage Activity Endpoint
+         * @description Reuses `core/coding_agent.get_stage_activity`, keyed on
+         *     `(coding_agent_runs.run_id, stage_execution_id)` — both UUID columns, so
+         *     the join happens directly on the path params with no stringify hop.
+         *     404s when the run doesn't belong to the caller's org.
          */
-        get: operations["reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get"];
+        get: operations["stage_activity_endpoint_api_pipelines_runs__run_id__stages__stage_execution_id__activity_get"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pipelines/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Templates Endpoint
+         * @description Registered BEFORE `/{pipeline_id}` — the latter is a bare
+         *     single-segment match (route matching precedes FastAPI's own UUID
+         *     parsing) and would otherwise swallow the literal `templates` segment.
+         */
+        get: operations["list_templates_endpoint_api_pipelines_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pipelines/{pipeline_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pipeline Endpoint */
+        get: operations["get_pipeline_endpoint_api_pipelines__pipeline_id__get"];
+        /** Update Pipeline Endpoint */
+        put: operations["update_pipeline_endpoint_api_pipelines__pipeline_id__put"];
+        post?: never;
+        /** Delete Pipeline Endpoint */
+        delete: operations["delete_pipeline_endpoint_api_pipelines__pipeline_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Repos Endpoint */
+        get: operations["list_repos_endpoint_api_repos_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Repo Config Endpoint
+         * @description Always 200 — an absent settings row is the model's defaults, and
+         *     `unconfigured` is a state the Repos page renders, not an error.
+         */
+        get: operations["get_repo_config_endpoint_api_repos_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Repo Settings Endpoint */
+        put: operations["put_repo_settings_endpoint_api_repos_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Trigger Endpoint */
+        post: operations["add_trigger_endpoint_api_repos_triggers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/repos/triggers/{binding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Trigger Endpoint */
+        delete: operations["remove_trigger_endpoint_api_repos_triggers__binding_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1122,7 +1333,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sse/workspace_activity/{workflow_execution_id}": {
+    "/api/sse/workspace_activity/{run_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1131,14 +1342,14 @@ export interface paths {
         };
         /**
          * Stream Workspace Activity
-         * @description Subscribe an SSE client to the per-workflow activity event stream.
+         * @description Subscribe an SSE client to the per-run activity event stream.
          *
          *     Cross-org isolation is the channel key: subscribers attach to
-         *     `{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a
+         *     `{caller_org}:workspace_activity:{run_id}`. A request for a run owned by a
          *     different org subscribes to a channel nobody publishes to and yields an
          *     empty stream.
          */
-        get: operations["stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get"];
+        get: operations["stream_workspace_activity_api_sse_workspace_activity__run_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1309,7 +1520,7 @@ export interface paths {
          *     Avoids the SPA making three `/api/tickets?status=…` calls in a tight
          *     polling loop. `t.status` is the 6-state vocab
          *     (pending / running / hitl / done / failed / cancelled); precise hitl/failed
-         *     counts depend on the workflow-state projection landing on every
+         *     counts depend on the run-state projection landing on every
          *     transition.
          */
         get: operations["dashboard_api_tickets_dashboard_get"];
@@ -1336,38 +1547,8 @@ export interface paths {
          *     - `builder: {kind, user_id?, display_name, avatar_url?}` — `kind="user"`
          *        when the ticket's PR has an `author_login`; `kind="system"` when
          *        yaaos triggered the run with no human attribution.
-         *
-         *     Workflow-run data is served by the dedicated
-         *     `GET /api/tickets/{id}/workflow-runs` endpoint.
          */
         get: operations["detail_api_tickets__ticket_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/activity/{execution_id}/{step_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Step Activity
-         * @description Return the persisted `ActivityLog` for one workflow step.
-         *
-         *     `activity` is `null` when either the step never ran a coding-agent
-         *     invocation (non-`InvokeClaudeCode`) or the weekly partition holding its
-         *     activity row has aged out (4-week TTL).
-         *
-         *     Cross-tenant safety: 404s when the execution does not belong to the
-         *     ticket (and therefore not to the caller's org).
-         */
-        get: operations["step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1388,82 +1569,6 @@ export interface paths {
          * @description Aggregated timeline: ticket events + PR events for the ticket's PR.
          */
         get: operations["audit_api_tickets__ticket_id__audit_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/hitl/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Hitl History
-         * @description List past HITL exchanges (prompt + response + timestamps) for the
-         *     ticket per E2a.4 HITL tab "History" subsection.
-         *
-         *     Joins `pending_human_decisions` against the ticket's
-         *     `workflow_executions` rows. Newest exchange first.
-         */
-        get: operations["hitl_history_api_tickets__ticket_id__hitl_history_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/hitl/respond": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Hitl Respond
-         * @description Submit a HITL response. Resolves the open `PendingHumanDecisionRow`
-         *     for the ticket's most recent awaiting-human workflow execution and
-         *     re-enqueues the routing step via `core.workflow.resume_hitl`.
-         *
-         *     Request body: opaque dict — passes through to the workflow engine's
-         *     `resume_hitl(response=...)`. The SPA's HITL renderer shapes this
-         *     per the prompt's discriminated-union schema (E2a.4).
-         *
-         *     Returns `{stage, next_state}` where `next_state` is the workflow
-         *     state immediately after the resume.
-         */
-        post: operations["hitl_respond_api_tickets__ticket_id__hitl_respond_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tickets/{ticket_id}/workflow-runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Workflow Runs
-         * @description All workflow runs for the ticket, oldest first, with their step lists.
-         *
-         *     Each step's `state` is pending | running | done | failed | skipped. Pure
-         *     workflow vocabulary — no AgentCommand references.
-         */
-        get: operations["workflow_runs_api_tickets__ticket_id__workflow_runs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1713,6 +1818,42 @@ export interface components {
             token: string;
         };
         /**
+         * ActionInfo
+         * @description Registry-listing shape for the "Add an action" picker.
+         */
+        ActionInfo: {
+            /** Action Id */
+            action_id: string;
+            /** Label */
+            label: string;
+            /** Plugin Id */
+            plugin_id: string | null;
+        };
+        /**
+         * ActionStage
+         * @description A synchronous control-plane action stage. No `name` — actions carry
+         *     no artifact identity, send-back key, or re-run inheritance key.
+         */
+        ActionStage: {
+            /** Action Id */
+            action_id: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "action";
+        };
+        /**
          * ActivityEvent
          * @description One rendered event in a coding-agent activity stream.
          *
@@ -1778,8 +1919,48 @@ export interface components {
              */
             events: components["schemas"]["ActivityEvent"][];
         };
+        /**
+         * Actor
+         * @description Who-did-what. One value across the codebase.
+         *
+         *     Invariants:
+         *       - kind=github_user → login required; user_id/agent_id/workspace_id None.
+         *       - kind=agent → agent_id required; login/user_id/workspace_id None.
+         *       - kind=system → all id fields None.
+         *       - kind=user → user_id required; login optional (display login);
+         *         agent_id/workspace_id None.
+         *       - kind=workspace → workspace_id required; everything else None.
+         *       - kind=sso → all id fields None (only the IdP knew); login optional.
+         */
+        Actor: {
+            /** Agent Id */
+            agent_id?: string | null;
+            kind: components["schemas"]["ActorKind"];
+            /** Login */
+            login?: string | null;
+            /** User Id */
+            user_id?: string | null;
+            /** Workspace Id */
+            workspace_id?: string | null;
+        };
+        /**
+         * ActorKind
+         * @enum {string}
+         */
+        ActorKind: "github_user" | "agent" | "system" | "user" | "workspace" | "sso";
+        /** AddTriggerResponse */
+        AddTriggerResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
         /** AgentEvent */
         AgentEvent: {
+            artifact?: components["schemas"]["Artifact"] | null;
+            /** Artifact Error */
+            artifact_error?: string | null;
             /**
              * Attempt
              * @default 0
@@ -1853,6 +2034,84 @@ export interface components {
             /** Version */
             version: string | null;
         };
+        /**
+         * Artifact
+         * @description Agent-collected artifact body for an InvokeClaudeCode terminal event.
+         *
+         *     Populated when the skill wrote `$TMPDIR/<command_id>.md` and the file fit
+         *     under the agent's size cap. `AgentEvent.artifact_error` explains why this
+         *     is null despite a completed invocation (over-cap or read failure);
+         *     both fields null means the skill legitimately wrote no artifact.
+         */
+        Artifact: {
+            /** Body */
+            body: string;
+        };
+        /** ArtifactDetailResponse */
+        ArtifactDetailResponse: {
+            /** Body */
+            body: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Final */
+            is_final: boolean;
+            /** Iteration */
+            iteration: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Stage Name */
+            stage_name: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * ArtifactGroup
+         * @description Versions grouped by `stage_name` — the version-dropdown shape.
+         */
+        ArtifactGroup: {
+            /** Stage Name */
+            stage_name: string;
+            /** Versions */
+            versions: components["schemas"]["ArtifactMeta"][];
+        };
+        /**
+         * ArtifactMeta
+         * @description Metadata-only view of one artifact version — no body.
+         */
+        ArtifactMeta: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Final */
+            is_final: boolean;
+            /** Iteration */
+            iteration: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Version */
+            version: number;
+        };
         /** AuditEntryView */
         AuditEntryView: {
             /** Actor Kind */
@@ -1881,6 +2140,36 @@ export interface components {
             payload: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * BoundaryControl
+         * @description Flat per-stage "what to do next" setting; `on_*` evaluated only when
+         *     `mode == "conditional"`.
+         */
+        BoundaryControl: {
+            /**
+             * Mode
+             * @default always_hitl
+             * @enum {string}
+             */
+            mode: "always_hitl" | "always_proceed" | "conditional";
+            /**
+             * On Blocker Residuals
+             * @default false
+             */
+            on_blocker_residuals: boolean;
+            /** On Confidence Below */
+            on_confidence_below?: ("medium" | "high") | null;
+            /**
+             * On Protected Code
+             * @default false
+             */
+            on_protected_code: boolean;
+            /**
+             * On Should Fix Residuals
+             * @default false
+             */
+            on_should_fix_residuals: boolean;
         };
         /**
          * CancelShutdownResult
@@ -1979,6 +2268,31 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** CreatePipelineResponse */
+        CreatePipelineResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /**
+         * Decision
+         * @description One pause resolution recorded against a stage execution.
+         */
+        Decision: {
+            /** Action */
+            action: string;
+            /** Actor Login */
+            actor_login: string | null;
+            /** Instruction */
+            instruction: string | null;
+            /**
+             * Resolved At
+             * Format: date-time
+             */
+            resolved_at: string;
+        };
         /** EmailView */
         EmailView: {
             /** Email */
@@ -1992,6 +2306,117 @@ export interface components {
             is_primary: boolean;
             /** Verified */
             verified: boolean;
+        };
+        /**
+         * Finding
+         * @description Domain value object for one durable finding.
+         */
+        Finding: {
+            /** Artifact Section */
+            artifact_section: string | null;
+            /** Body */
+            body: string;
+            /** Code File */
+            code_file: string | null;
+            /** Code Line */
+            code_line: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Defect In Artifact */
+            defect_in_artifact: string | null;
+            /** Defended At */
+            defended_at: string | null;
+            /** Display Id */
+            display_id: number;
+            /** Display Prefix */
+            display_prefix: string;
+            /** External Comment Id */
+            external_comment_id: string | null;
+            /** First Seen Iteration */
+            first_seen_iteration: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Org Id
+             * Format: uuid
+             */
+            org_id: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "blocker" | "should_fix" | "nit";
+            /**
+             * Source Run Id
+             * Format: uuid
+             */
+            source_run_id: string;
+            /**
+             * Source Stage Execution Id
+             * Format: uuid
+             */
+            source_stage_execution_id: string;
+            /** Source Stage Name */
+            source_stage_name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "resolved" | "dismissed";
+            /** Status Events */
+            status_events: components["schemas"]["FindingStatusEvent"][];
+            /**
+             * Ticket Id
+             * Format: uuid
+             */
+            ticket_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * FindingStatusEvent
+         * @description Appended per transition AND per re-assertion (re-flag/re-sighting).
+         */
+        FindingStatusEvent: {
+            actor: components["schemas"]["Actor"];
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Comment External Id */
+            comment_external_id?: string | null;
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "review_verdict" | "user_overrode";
+            /** Run Id */
+            run_id?: string | null;
+            /** Stage Execution Id */
+            stage_execution_id?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "resolved" | "dismissed";
+        };
+        /** FromTemplateRequest */
+        FromTemplateRequest: {
+            /**
+             * Template Id
+             * Format: uuid
+             */
+            template_id: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2118,6 +2543,25 @@ export interface components {
             /** Slug */
             slug?: string | null;
         };
+        /**
+         * IntakePoint
+         * @description Plugin-contributed trigger metadata the Repos-page trigger picker
+         *     lists. `id` is the value `domain/repos` trigger bindings target (e.g.
+         *     `"github:pr_opened"`, `"schedule"`).
+         */
+        IntakePoint: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "webhook" | "schedule";
+            /** Label */
+            label: string;
+            /** Plugin Id */
+            plugin_id: string | null;
+        };
         /** IntegrationStatus */
         IntegrationStatus: {
             /**
@@ -2192,6 +2636,41 @@ export interface components {
              */
             updated_at: string;
         };
+        /** ListActionsResponse */
+        ListActionsResponse: {
+            /** Actions */
+            actions: components["schemas"]["ActionInfo"][];
+        };
+        /** ListArtifactsResponse */
+        ListArtifactsResponse: {
+            /** Artifacts */
+            artifacts: components["schemas"]["ArtifactGroup"][];
+        };
+        /** ListIntakePointsResponse */
+        ListIntakePointsResponse: {
+            /** Points */
+            points: components["schemas"]["IntakePoint"][];
+        };
+        /** ListPipelinesResponse */
+        ListPipelinesResponse: {
+            /** Pipelines */
+            pipelines: components["schemas"]["PipelineSummary"][];
+        };
+        /** ListReposResponse */
+        ListReposResponse: {
+            /** Repos */
+            repos: components["schemas"]["RepoAccordionEntry"][];
+        };
+        /** ListRunsResponse */
+        ListRunsResponse: {
+            /** Runs */
+            runs: components["schemas"]["PipelineRun"][];
+        };
+        /** ListTemplatesResponse */
+        ListTemplatesResponse: {
+            /** Templates */
+            templates: components["schemas"]["TemplateResponse"][];
+        };
         /** MemberView */
         MemberView: {
             /** Display Name */
@@ -2235,6 +2714,189 @@ export interface components {
             /** Enabled */
             enabled?: boolean | null;
         };
+        /**
+         * PauseDetail
+         * @description Overview-tab payload for a `paused` run.
+         */
+        PauseDetail: {
+            /** Artifact Id */
+            artifact_id: string | null;
+            /** Can Respond */
+            can_respond: boolean;
+            /** Escalation Logins */
+            escalation_logins: string[];
+            /**
+             * Pause Id
+             * Format: uuid
+             */
+            pause_id: string;
+            /** Residuals */
+            residuals: components["schemas"]["Finding"][];
+            /** Stage Name */
+            stage_name: string;
+            /** Tripped */
+            tripped: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * PauseResolution
+         * @description The `resolve_pause` request body shape.
+         */
+        PauseResolution: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "approve" | "instruct" | "send_back" | "kill";
+            /** Instruction */
+            instruction?: string | null;
+            /** Send Back To Stage */
+            send_back_to_stage?: string | null;
+        };
+        /**
+         * PipelineCallStage
+         * @description Calls another org pipeline; expands recursively at flatten time.
+         */
+        PipelineCallStage: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "call";
+            /**
+             * Pipeline Id
+             * Format: uuid
+             */
+            pipeline_id: string;
+        };
+        /**
+         * PipelineDefinition
+         * @description The authored content — what POST/PUT accept. Shipped defaults are code
+         *     instances with pinned uuid7 ids.
+         */
+        PipelineDefinition: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /** Name */
+            name: string;
+            /** Stages */
+            stages: (components["schemas"]["SkillStage"] | components["schemas"]["ReviewSkillStage"] | components["schemas"]["ActionStage"] | components["schemas"]["PipelineCallStage"])[];
+        };
+        /**
+         * PipelineDetailResponse
+         * @description Flat wire shape — `Pipeline.definition`'s fields ride at the top
+         *     level alongside the stored-entity metadata.
+         */
+        PipelineDetailResponse: {
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Referenced */
+            referenced: boolean;
+            /** Stages */
+            stages: (components["schemas"]["SkillStage"] | components["schemas"]["ReviewSkillStage"] | components["schemas"]["ActionStage"] | components["schemas"]["PipelineCallStage"])[];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Updated By Login */
+            updated_by_login: string | null;
+        };
+        /**
+         * PipelineRun
+         * @description The Runs-tab timeline entry for one pipeline run.
+         */
+        PipelineRun: {
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Failure Reason */
+            failure_reason: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kickoff: components["schemas"]["RunKickoffView"];
+            /** Pipeline Name */
+            pipeline_name: string;
+            /** Stages */
+            stages: components["schemas"]["StageExecution"][];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "paused" | "completed" | "failed" | "killed" | "cancelled";
+        };
+        /**
+         * PipelineSummary
+         * @description One `list_pipelines` element — definition rows, unflattened.
+         */
+        PipelineSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Referenced */
+            referenced: boolean;
+            /** Stage Count */
+            stage_count: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Updated By Login */
+            updated_by_login: string | null;
+        };
+        /**
+         * ProtectedPathSet
+         * @description Gitignore-style glob set + owners, validated compilable at write.
+         */
+        ProtectedPathSet: {
+            /** Globs */
+            globs: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Owner User Ids */
+            owner_user_ids: string[];
+        };
         /** ProviderStatus */
         ProviderStatus: {
             /** Last Used At */
@@ -2248,15 +2910,142 @@ export interface components {
             /** Updated At */
             updated_at: string | null;
         };
-        /**
-         * RepoSkillRow
-         * @description One entry in the repos list — the repo identifier and its stored skill name.
-         */
-        RepoSkillRow: {
+        /** RepoAccordionEntry */
+        RepoAccordionEntry: {
+            /** Auto Approve Enabled */
+            auto_approve_enabled: boolean;
+            /** Has Protected Code */
+            has_protected_code: boolean;
             /** Repo External Id */
             repo_external_id: string;
+            /** Trigger Count */
+            trigger_count: number;
+        };
+        /** RepoConfigResponse */
+        RepoConfigResponse: {
+            /** Auto Approve Conditions */
+            auto_approve_conditions: {
+                [key: string]: unknown;
+            };
+            /** Auto Approve Enabled */
+            auto_approve_enabled: boolean;
+            /** Bindings */
+            bindings: components["schemas"]["TriggerBinding"][];
+            /**
+             * Protected Mode
+             * @enum {string}
+             */
+            protected_mode: "allow" | "deny";
+            /** Protected Path Sets */
+            protected_path_sets: components["schemas"]["ProtectedPathSet"][];
+            /** Repo External Id */
+            repo_external_id: string;
+        };
+        /**
+         * RepoSettingsSpec
+         * @description `RepoSettings` sans identity — the PUT request body shape.
+         */
+        RepoSettingsSpec: {
+            /**
+             * Auto Approve Conditions
+             * @default {}
+             */
+            auto_approve_conditions: {
+                [key: string]: unknown;
+            };
+            /**
+             * Auto Approve Enabled
+             * @default false
+             */
+            auto_approve_enabled: boolean;
+            /**
+             * Protected Mode
+             * @default deny
+             * @enum {string}
+             */
+            protected_mode: "allow" | "deny";
+            /**
+             * Protected Path Sets
+             * @default []
+             */
+            protected_path_sets: components["schemas"]["ProtectedPathSet"][];
+        };
+        /** RerunRequest */
+        RerunRequest: {
+            /** From Stage */
+            from_stage: string;
+            /** Instruction */
+            instruction: string;
+            /**
+             * Ticket Id
+             * Format: uuid
+             */
+            ticket_id: string;
+        };
+        /** RerunResponse */
+        RerunResponse: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+        };
+        /** RespondPauseResponse */
+        RespondPauseResponse: {
+            /** Run State */
+            run_state: string;
+        };
+        /**
+         * ReviewConfig
+         * @description Review skill name + max iterations; `None` on the owning stage means
+         *     review is off. Finding display prefixes come from the review skill's
+         *     per-finding `category`, not from config.
+         */
+        ReviewConfig: {
+            /** Max Iterations */
+            max_iterations: number;
             /** Skill Name */
-            skill_name: string | null;
+            skill_name: string;
+        };
+        /**
+         * ReviewSkillStage
+         * @description A stage whose main invocation speaks the review contract directly —
+         *     produces findings, no artifact, structurally cannot carry a review loop.
+         */
+        ReviewSkillStage: {
+            boundary: components["schemas"]["BoundaryControl"];
+            /** Coding Agent Plugin Id */
+            coding_agent_plugin_id: string;
+            /** Context Stages */
+            context_stages?: string[] | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Effort */
+            effort: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "review";
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            /** Skill Name */
+            skill_name: string;
+            /**
+             * Wallclock Seconds
+             * @default 3600
+             */
+            wallclock_seconds: number;
         };
         /**
          * Role
@@ -2268,15 +3057,67 @@ export interface components {
          * @enum {string}
          */
         Role: "owner" | "admin" | "builder";
+        /**
+         * RunKickoffView
+         * @description Read-model projection of a run's `Kickoff` for the Runs tab.
+         */
+        RunKickoffView: {
+            /** Actor Kind */
+            actor_kind: string;
+            /** Actor Login */
+            actor_login: string | null;
+            /** Input Text */
+            input_text: string | null;
+            /** Intake Point Id */
+            intake_point_id: string;
+        };
+        /**
+         * RunOutcome
+         * @description Overview-tab payload for a `terminal` run.
+         */
+        RunOutcome: {
+            /** Failure Reason */
+            failure_reason: string | null;
+            /** Pr Url */
+            pr_url: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "paused" | "completed" | "failed" | "killed" | "cancelled";
+        };
+        /**
+         * RunOverview
+         * @description Server-computed Overview-tab payload, tagged on `status`.
+         */
+        RunOverview: {
+            outcome?: components["schemas"]["RunOutcome"] | null;
+            pause?: components["schemas"]["PauseDetail"] | null;
+            run?: components["schemas"]["PipelineRun"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "paused" | "in_flight" | "terminal";
+        };
+        /**
+         * Schedule
+         * @description A per-repo cron trigger binding.
+         */
+        Schedule: {
+            /** Cron */
+            cron: string;
+            /** Kickoff Input */
+            kickoff_input?: string | null;
+            /** Name */
+            name: string;
+            /** Notify User Ids */
+            notify_user_ids: string[];
+        };
         /** SetKeyRequest */
         SetKeyRequest: {
             /** Value */
             value: string;
-        };
-        /** SetRepoSkillRequest */
-        SetRepoSkillRequest: {
-            /** Skill Name */
-            skill_name?: string | null;
         };
         /** SetVcsRequest */
         SetVcsRequest: {
@@ -2317,14 +3158,155 @@ export interface components {
             outcome: "draining" | "already_draining" | "already_shutdown" | "not_found";
         };
         /**
-         * StepActivityResponse
-         * @description Persisted coding-agent activity blob for one workflow step.
+         * SkillStage
+         * @description A main-skill invocation stage; optionally carries a review loop.
+         */
+        SkillStage: {
+            boundary: components["schemas"]["BoundaryControl"];
+            /** Coding Agent Plugin Id */
+            coding_agent_plugin_id: string;
+            /** Context Stages */
+            context_stages?: string[] | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Effort */
+            effort: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "skill";
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            review?: components["schemas"]["ReviewConfig"] | null;
+            /** Skill Name */
+            skill_name: string;
+            /**
+             * Wallclock Seconds
+             * @default 3600
+             */
+            wallclock_seconds: number;
+        };
+        /**
+         * StageExecution
+         * @description One stage-execution attempt, read-model shape for the Runs tab.
          *
-         *     `activity` is null when the step ran no coding-agent invocation or the
-         *     weekly partition holding its row has aged out.
+         *     `id` is the `stage_executions` row id — the SPA's Runs tab needs it to
+         *     call the per-stage activity endpoint
+         *     (`GET /api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity`).
+         */
+        StageExecution: {
+            /** Action Result */
+            action_result: {
+                [key: string]: unknown;
+            } | null;
+            /** Artifact Ids */
+            artifact_ids: string[];
+            /** Boundary Outcome */
+            boundary_outcome: ("proceeded" | "paused" | "sent_back") | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Confidence */
+            confidence: ("low" | "medium" | "high") | null;
+            /** Decisions */
+            decisions: components["schemas"]["Decision"][];
+            /** Failure Reason */
+            failure_reason: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "skill" | "review" | "action" | "system";
+            /** Review Iterations */
+            review_iterations: number;
+            /** Stage Index */
+            stage_index: number | null;
+            /** Stage Name */
+            stage_name: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Status */
+            status: string;
+        };
+        /**
+         * StepActivityResponse
+         * @description Persisted coding-agent activity blob for one stage execution.
+         *
+         *     `activity` is null when the stage ran no coding-agent invocation (an
+         *     `action`/`system` stage) or the weekly partition holding its row has
+         *     aged out (4-week TTL).
          */
         StepActivityResponse: {
             activity: components["schemas"]["ActivityLog"] | null;
+        };
+        /** TemplateResponse */
+        TemplateResponse: {
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Stages */
+            stages: (components["schemas"]["SkillStage"] | components["schemas"]["ReviewSkillStage"] | components["schemas"]["ActionStage"] | components["schemas"]["PipelineCallStage"])[];
+        };
+        /**
+         * TriggerBinding
+         * @description One repo intake→pipeline binding.
+         */
+        TriggerBinding: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Intake Point Id */
+            intake_point_id: string;
+            /**
+             * Pipeline Id
+             * Format: uuid
+             */
+            pipeline_id: string;
+            /** Pipeline Name */
+            pipeline_name: string;
+            /** Repo External Id */
+            repo_external_id: string;
+            schedule?: components["schemas"]["Schedule"] | null;
+        };
+        /**
+         * TriggerBindingSpec
+         * @description Write input for `add_binding`.
+         */
+        TriggerBindingSpec: {
+            /** Intake Point Id */
+            intake_point_id: string;
+            /**
+             * Pipeline Id
+             * Format: uuid
+             */
+            pipeline_id: string;
+            schedule?: components["schemas"]["Schedule"] | null;
         };
         /** UpdateLessonRequest */
         UpdateLessonRequest: {
@@ -2363,55 +3345,6 @@ export interface components {
             settings: {
                 [key: string]: unknown;
             };
-        };
-        /**
-         * WorkflowRunView
-         * @description One workflow execution for a ticket, with its ordered step list.
-         */
-        WorkflowRunView: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Current Step Id */
-            current_step_id: string | null;
-            /** Failure Reason */
-            failure_reason: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** State */
-            state: string;
-            /** Steps */
-            steps: components["schemas"]["WorkflowStepEntry"][];
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /** Workflow Name */
-            workflow_name: string;
-            /** Workflow Version */
-            workflow_version: number;
-        };
-        /**
-         * WorkflowStepEntry
-         * @description One step in a workflow run, projected for the ticket Activity tab.
-         */
-        WorkflowStepEntry: {
-            /** Command Kind */
-            command_kind: string;
-            /** Completed At */
-            completed_at: string | null;
-            /** Started At */
-            started_at: string | null;
-            /** State */
-            state: string;
-            /** Step Id */
-            step_id: string;
         };
         /** WorkspaceEvent */
         WorkspaceEvent: {
@@ -2562,6 +3495,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_actions_endpoint_api_actions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListActionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_providers_api_api_keys_get: {
         parameters: {
             query?: never;
@@ -2697,6 +3663,76 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_artifacts_endpoint_api_artifacts_get: {
+        parameters: {
+            query: {
+                ticket_id: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListArtifactsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_artifact_endpoint_api_artifacts__artifact_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                artifact_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDetailResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3066,115 +4102,6 @@ export interface operations {
             };
         };
     };
-    list_repos_api_claude_code_repos_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_repo_skill_api_claude_code_repos__repo_external_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                repo_external_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RepoSkillRow"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_repo_skill_route_api_claude_code_repos__repo_external_id__put: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                repo_external_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetRepoSkillRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RepoSkillRow"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_endpoint_api_coding_agents_get: {
         parameters: {
             query?: never;
@@ -3451,6 +4378,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_intake_points_endpoint_api_intake_points_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListIntakePointsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4601,7 +5561,114 @@ export interface operations {
             };
         };
     };
-    cancel_jobs_api_reviewer_cancel_post: {
+    list_pipelines_endpoint_api_pipelines_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPipelinesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_pipeline_endpoint_api_pipelines_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineDefinition"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    from_template_endpoint_api_pipelines_from_template_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FromTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_endpoint_api_pipelines_runs_get: {
         parameters: {
             query: {
                 ticket_id: string;
@@ -4622,9 +5689,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: number;
-                    };
+                    "application/json": components["schemas"]["ListRunsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4638,16 +5703,161 @@ export interface operations {
             };
         };
     };
-    findings_by_ticket_api_reviewer_findings_by_ticket__ticket_id__get: {
+    run_overview_endpoint_api_pipelines_runs_overview_get: {
         parameters: {
-            query?: {
-                include_terminal?: boolean;
+            query: {
+                ticket_id: string;
             };
             header?: {
                 "X-Yaaos-Org-Slug"?: string | null;
             };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOverview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    respond_pause_endpoint_api_pipelines_runs_pauses__pause_id__respond_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
             path: {
-                ticket_id: string;
+                pause_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PauseResolution"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespondPauseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rerun_endpoint_api_pipelines_runs_rerun_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RerunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RerunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_run_endpoint_api_pipelines_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stage_activity_endpoint_api_pipelines_runs__run_id__stages__stage_execution_id__activity_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                run_id: string;
+                stage_execution_id: string;
             };
             cookie?: {
                 yaaos_session?: string | null;
@@ -4661,9 +5871,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["StepActivityResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4677,7 +5885,7 @@ export interface operations {
             };
         };
     };
-    metrics_api_reviewer_metrics_get: {
+    list_templates_endpoint_api_pipelines_templates_get: {
         parameters: {
             query?: never;
             header?: {
@@ -4696,9 +5904,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ListTemplatesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4712,14 +5918,14 @@ export interface operations {
             };
         };
     };
-    reviews_by_ticket_api_reviewer_reviews_by_ticket__ticket_id__get: {
+    get_pipeline_endpoint_api_pipelines__pipeline_id__get: {
         parameters: {
             query?: never;
             header?: {
                 "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
-                ticket_id: string;
+                pipeline_id: string;
             };
             cookie?: {
                 yaaos_session?: string | null;
@@ -4733,9 +5939,262 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["PipelineDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_pipeline_endpoint_api_pipelines__pipeline_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineDefinition"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_pipeline_endpoint_api_pipelines__pipeline_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_repos_endpoint_api_repos_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReposResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_repo_config_endpoint_api_repos_config_get: {
+        parameters: {
+            query: {
+                repo: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_repo_settings_endpoint_api_repos_settings_put: {
+        parameters: {
+            query: {
+                repo: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoSettingsSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_trigger_endpoint_api_repos_triggers_post: {
+        parameters: {
+            query: {
+                repo: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerBindingSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddTriggerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_trigger_endpoint_api_repos_triggers__binding_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                binding_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -4782,14 +6241,14 @@ export interface operations {
             };
         };
     };
-    stream_workspace_activity_api_sse_workspace_activity__workflow_execution_id__get: {
+    stream_workspace_activity_api_sse_workspace_activity__run_id__get: {
         parameters: {
             query?: never;
             header?: {
                 "X-Yaaos-Org-Slug"?: string | null;
             };
             path: {
-                workflow_execution_id: string;
+                run_id: string;
             };
             cookie?: {
                 yaaos_session?: string | null;
@@ -5139,43 +6598,6 @@ export interface operations {
             };
         };
     };
-    step_activity_api_tickets__ticket_id__activity__execution_id___step_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-                execution_id: string;
-                step_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StepActivityResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     audit_api_tickets__ticket_id__audit_get: {
         parameters: {
             query?: {
@@ -5202,121 +6624,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    hitl_history_api_tickets__ticket_id__hitl_history_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    hitl_respond_api_tickets__ticket_id__hitl_respond_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    workflow_runs_api_tickets__ticket_id__workflow_runs_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path: {
-                ticket_id: string;
-            };
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkflowRunView"][];
                 };
             };
             /** @description Validation Error */

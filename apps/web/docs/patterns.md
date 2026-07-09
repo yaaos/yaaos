@@ -54,13 +54,15 @@ Use `vi.useFakeTimers({ toFake: ["Date"] })` (not full fake timers) when tests n
 ## testid conventions
 
 - Page container: `<page>-<state>` (e.g. `workspaces-page`, `ticket-detail`).
-- List containers: `<entity>-list` (`tickets-list`, `findings-list`, `lessons-list`, `audit-log`).
+- List containers: `<entity>-list` (`tickets-list`, `lessons-list`, `audit-log`).
 - List rows: `<entity>-row-<id>`.
 - Actions: `<action>-<entity>` (`cancel-jobs-button`, `lesson-save`, `teach-yaaos`).
 - Status badges: `<entity>-status` (`github-status`, `apikey-status`).
 - Form fields: `<form>-<field>` (`gh-app-id`, `anthropic-key`, `teach-title`).
 - Review cards carry `data-state="<status>"` — query via `[data-testid^="agent-card-"][data-state="posted"]`.
 - Workspaces page prefix: `workspaces-*`. Sections: `workspaces-section-active`, `workspaces-section-draining`, `workspaces-section-unconfigured`, `workspaces-section-inactive`. Cards: `workspaces-agent-card-${instance_id}`, `workspaces-agent-card-${instance_id}-status`. Empty state: `workspaces-empty`. See [domain_workspaces.md](domain_workspaces.md).
+- Ticket page tabs: `ticket-tab-<overview|runs|artifacts>`; tab bodies: `ticket-overview`, `ticket-runs`, `ticket-artifacts`. Overview's state card is always `attention-block` with `data-state="<paused|in_flight|<terminal-state>>"`, regardless of which branch rendered it. Pause actions: `approve-run`, `instruct-run`, `send-back-run`, `kill-run`. Overview in-flight card: `overview-live-ticker` (appears only when at least one live activity frame has arrived; shows the most recent frame's `message`; clicking switches to Runs tab). Runs tab: `run-card-${run_id}` (`data-state="<run.state>"`), `stage-row-${stage_name}`, `stage-activity-toggle-${stage_name}` (Activity accordion toggle button), `stage-activity-live` (live-tail pane while stage is running; also carries `data-connected="true"|"false"` — `"true"` once `EventSource.onopen` fires), `activity-event-row` (each activity frame row in the live or persisted pane), `rerun-from-stage`. Artifacts tab: `artifact-lineage-${stage_name}`. See [domain_tickets.md](domain_tickets.md).
+- Pipelines settings page: `pipelines-list` (Accordion), `pipeline-row-${id}`, `pipeline-new`, `pipeline-new-from-template`, `pipeline-new-card`, `pipeline-name`, `pipeline-description`, `pipeline-save`, `pipeline-delete`, `pipeline-add-stage` (+ `-skill`/`-review`/`-action`/`-call`), `pipeline-stage-row-${key}` (`key` is a client-only id, not the stage's server id), `pipeline-stage-edit-${key}`, `pipeline-stage-menu-${key}` (+ `-move-up-${key}`/`-move-down-${key}`/`-remove-${key}`), `pipeline-template-dialog`. Per-kind stage editor Sheet: `stage-editor`, `stage-name`, `stage-skill-name`, `stage-agent`, `stage-model`, `stage-effort`, `stage-review-enabled`, `stage-boundary-mode`, `stage-editor-save`. See [domain_pipeline_settings.md](domain_pipeline_settings.md).
 
 ## Accessibility (WCAG 2.2 AA)
 
@@ -125,7 +127,7 @@ Terse, bullets, no code snippets, no `Decisions` section, link don't repeat.
 
 ## Org Settings shell
 
-- `OrgSettingsLayout` is a passthrough `<div>` — no top chrome, no tab bar. Per-page role gating in each settings page.
+- `OrgSettingsLayout` (`shared/components/public/layout/org-settings-layout.tsx`) is a passthrough `<div>` — no top chrome, no tab bar. Per-page role gating in each settings page. Shared across `domain/org_settings` and `domain/pipeline_settings` (rule-of-three graduation — see [components.md](components.md)).
 - Coding-agent plugin settings dispatch through `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`. First-party plugins register at module load via side-effect import (`claude_code`); unregistered plugins get the built-in placeholder.
 - VCS empty-state: "Connect GitHub" card — single CTA fires `useStartGithubInstall`. Coding Agents install card: "Add Claude Code" button — installs directly via `useInstallCodingAgent`.
 
@@ -143,16 +145,26 @@ If a FE change could alter stored/posted/counted state without a corresponding A
 
 Module-scoped arrays. Canonical keys:
 
-- `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["tickets", id, "hitl-history"]`
-- `["workflow", "runs", ticket_id]` — workflow run step tree for one ticket (invalidated by `workflow_state_changed` SSE)
-- `["workflow", "activity", execution_id, step_id]` — persisted activity blob for one terminal step (lazy-loaded in the accordion)
-- `["reviewer", "metrics"]`, `["reviewer", "agents"]`, `["reviewer", "findings", ticket_id, includeTerminal]`
+- `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`
+- `["runs", ticket_id]` — every pipeline run for a ticket, newest first, with stage-execution lists (Runs tab; invalidated by `run_state_changed`/`stage_state_changed` SSE)
+- `["runs", "overview", ticket_id]` — server-computed Overview-tab payload, tagged `paused | in_flight | terminal` (invalidated by `run_state_changed` SSE)
+- `["runs", "stage-activity", run_id, stage_execution_id]` — persisted coding-agent activity blob for one stage execution (lazy-loaded in the Runs tab's per-row accordion)
+- `["artifacts", ticket_id]` — every artifact lineage for a ticket, grouped by stage name (Artifacts tab; invalidated by `artifact_stored` SSE)
+- `["artifacts", "version", artifact_id]` — one artifact version, body included
+- `["reviewer", "metrics"]`, `["reviewer", "agents"]`
 - `["agents", orgSlug]` — slug-scoped so different orgs don't share the entry
 - `["lessons", repos, q, created_by, sort]` — each field is the filter value or `"all"` / `""` as default
 - `["github", "installation"]`, `["github", "repositories"]`
 - `["plugin-health", pluginId]`
 - `["onboarding"]`
 - `["notifications", readState]`, `["notifications", "popover"]`
+- `["pipelines"]`, `["pipelines", id]` — org pipeline-definition list + one full definition (Pipelines settings page)
+- `["pipeline-templates"]` — the shipped, code-defined pipeline templates ("New from template" picker)
+- `["actions"]` — registered control-plane actions (Pipelines settings page's "Add stage" → action picker)
+- `["coding-agents"]`, `["claude-code", "defaults"]` — installed coding agents + `claude_code`'s model/effort dropdown values (Pipelines settings page's stage editor)
+- `["repos"]`, `["repos", repoExternalId]` — installed-repo accordion list + one repo's full config (Repos settings page)
+- `["intake-points"]` — registered intake points (Repos settings page's trigger-binding intake picker)
+- `["org-members"]` — active org members (Repos settings page's notify/owner multi-selects)
 
 Mutations and the SSE subscriber ([core_sse.md](core_sse.md)) invalidate exactly the keys they affect.
 

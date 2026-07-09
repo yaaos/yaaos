@@ -136,7 +136,7 @@ async def test_activity_ws_endpoint_enters_org_context(db_session) -> None:
 
         real_publish_workspace_activity = gw_web.publish_workspace_activity
 
-        async def _capturing_publish_workspace_activity(*, org_id, workflow_execution_id, payload):
+        async def _capturing_publish_workspace_activity(*, org_id, run_id, payload):
             captured.append(current_org_id())
             # Don't actually hit Redis in this test — just capture.
 
@@ -145,7 +145,7 @@ async def test_activity_ws_endpoint_enters_org_context(db_session) -> None:
         try:
             from starlette.testclient import TestClient  # noqa: PLC0415
 
-            workflow_id = uuid4()
+            run_id = uuid4()
             app = _app()
             with TestClient(app) as client:
                 with client.websocket_connect(
@@ -155,7 +155,7 @@ async def test_activity_ws_endpoint_enters_org_context(db_session) -> None:
                     ws.send_json(
                         {
                             "type": "activity_batch",
-                            "workflow_execution_id": str(workflow_id),
+                            "run_id": str(run_id),
                             "events": [{"kind": "progress", "message": "running"}],
                         }
                     )

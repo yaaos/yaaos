@@ -9,10 +9,10 @@ Owns: `mcp_review_tokens` (per-review bearer, 2h TTL), the FastAPI router for `P
 ## Why / invariants
 
 - **Raw token never stored** — only `sha256(raw)`. `mint_token` returns the raw exactly once.
-- **Token is review-scoped**, not user-scoped. `revoke_token(review_id)` is called by the reviewer's cleanup step — before the workspace is closed.
-- **`mint_token(review_id, *, org_id, session)` stores org on the token row.** The proxy reads `org_id` from `McpToken.org_id` without a round-trip into `domain/reviewer`. The `reviewer → mcp_proxy` direction is the only live edge; the former back-edge is gone.
+- **Token is scoped to a caller-chosen `review_id`**, not user-scoped. `review_id` is a soft reference (no DB constraint) — this module owns no opinion on what it identifies. `revoke_token(review_id)` drops all of a scope's rows; a caller invokes it before its workspace/checkout is torn down.
+- **`mint_token(review_id, *, org_id, session)` stores org on the token row.** The proxy reads `org_id` from `McpToken.org_id` without a round-trip into whatever module owns `review_id`.
 - **Read tools always pass; write tools require `allowed_tools` membership.** Claude Code's `--allowed-tools=mcp__<server>__<tool>` is defense-in-depth — the proxy is the actual gate.
-- **`expires_at < now()` → `-32002 broken_creds`** — same error code as a failed credential. The reviewer prefixes a warning callout.
+- **`expires_at < now()` → `-32002 broken_creds`** — same error code as a failed credential. `record_broken_creds`/`consume_broken_creds` track the observation for a future review-output warning surface — no caller drains it today.
 - **Audit:** one `mcp.<provider>.dispatched` row per method call. Payload includes `args_hash` (sha256 of canonicalized args) and `result_summary` (compact one-liner — never the full upstream payload).
 - **Own hourly sweep:** runs as a `@scheduled` worker task (`mcp_review_token_sweep`, cron `0 * * * *`). Exactly one worker pod enqueues each slot. `sweep_expired` is a backstop GC — expiry is enforced at `lookup_token`, so a slow sweep only delays deletion of dead rows.
 
@@ -22,7 +22,7 @@ Owns: `mcp_review_tokens` (per-review bearer, 2h TTL), the FastAPI router for `P
 
 ## Data owned
 
-`mcp_review_tokens` — `(token_hash) PK`, `review_id`, `org_id`, `expires_at`, `created_at`. `org_id` is stored at mint time so the proxy reads tenancy directly from the token row — no back-lookup into the reviewer is needed.
+`mcp_review_tokens` — `(token_hash) PK`, `review_id`, `org_id`, `expires_at`, `created_at`. `org_id` is stored at mint time so the proxy reads tenancy directly from the token row — no back-lookup into whatever owns `review_id` is needed.
 
 ## How it's tested
 

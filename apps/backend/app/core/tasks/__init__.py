@@ -2,11 +2,11 @@
 
 Public surface:
 
-    @task("route_workflow", queue="workflow", max_retries=3)
-    async def route_workflow(exec_id: str, ...): ...
+    @task("pipelines.route_run", queue="pipelines", max_retries=3)
+    async def route_run(run_id: str, ...): ...
 
     async with db_session() as s:
-        await tasks.enqueue(route_workflow, args={...}, session=s)
+        await tasks.enqueue(route_run, args={...}, session=s)
         await s.commit()
 
 `enqueue(session=)` writes an `outbox_entries` row in the caller's
@@ -31,6 +31,7 @@ from app.core.shutdown_registry import (
 # `@scheduled` consumer (self-exercising; proves the wiring).
 from app.core.tasks import scheduled_runs_prune as _scheduled_runs_prune  # noqa: F401
 from app.core.tasks.broker import get_broker, set_broker_for_tests
+from app.core.tasks.cron import CronExpr
 from app.core.tasks.drain import drain_once
 from app.core.tasks.scheduler import (
     schedule_task,
@@ -50,6 +51,7 @@ from app.core.tasks.service import (
 from app.core.tasks.types import TaskMetadata
 
 __all__ = [
+    "CronExpr",
     "ShutdownHook",
     "TaskMetadata",
     "TaskRef",

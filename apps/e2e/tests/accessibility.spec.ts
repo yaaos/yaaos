@@ -12,7 +12,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 
-import { YAAOS_URL, dispatchWebhook, loginAsOwner, prPayload } from "./_helpers";
+import { YAAOS_URL, loginAsOwner, seedPausedRun } from "./_helpers";
 
 async function expectNoViolations(page: Page): Promise<void> {
   const results = await new AxeBuilder({ page })
@@ -29,17 +29,9 @@ test.describe("a11y — anchor pages", () => {
 
   test("Tickets list has no WCAG AA violations", async ({ page, request }) => {
     await loginAsOwner(page, request);
-    // Seed one ticket via the real webhook path so the list isn't empty —
+    // Seed one ticket (paused pipeline run) so the list isn't empty —
     // axe-checking an empty page hides bugs in row markup.
-    await dispatchWebhook({
-      event: "pull_request",
-      payload: prPayload({
-        repo: "acme/api",
-        number: 101,
-        title: "A11y fixture ticket",
-        body: "Seeded so axe can scan a populated tickets table.",
-      }),
-    });
+    await seedPausedRun({ orgSlug: "acme", ticketTitle: "A11y fixture ticket" });
     await page.goto(`${YAAOS_URL}/org/acme/tickets`);
     await expect(page.getByTestId("tickets-list")).toContainText("A11y fixture ticket", {
       timeout: 20_000,
@@ -49,15 +41,7 @@ test.describe("a11y — anchor pages", () => {
 
   test("Ticket detail has no WCAG AA violations", async ({ page, request }) => {
     await loginAsOwner(page, request);
-    await dispatchWebhook({
-      event: "pull_request",
-      payload: prPayload({
-        repo: "acme/api",
-        number: 102,
-        title: "A11y detail fixture",
-        body: "Seeded so axe can scan the detail page composites.",
-      }),
-    });
+    await seedPausedRun({ orgSlug: "acme", ticketTitle: "A11y detail fixture" });
     await page.goto(`${YAAOS_URL}/org/acme/tickets`);
     await page.getByText("A11y detail fixture").click({ timeout: 20_000 });
     await expect(page.getByTestId("ticket-detail")).toBeVisible();

@@ -31,8 +31,8 @@ Each plugin exposes `plugin_id: str`. The `plugin_id` is the registry key, URL p
 
 ## Structural patterns
 
-- **Workflow engine** — every review run passes through [`core/workflow`](core_workflow.md); commands are typed Pydantic steps dispatched by category (Workspace / Local / HITL).
-- **`PRReviewAggregate`** — durable layer in [`domain/reviewer`](domain_reviewer.md); survives restarts; owns `Review` / `Finding` state across runs.
+- **Run engine** — every pipeline run passes through [`domain/pipelines`](domain_pipelines.md); stages (`skill`/`review`/`action`/`call`) are data-defined and dispatched by kind.
+- **Durable findings** — `domain/findings` owns the ticket-level `pipeline_findings` table; survives restarts; a review stage's reported findings materialize immediately, independent of the run.
 - **Plugin registry** — ContextVar-bound instances (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) keyed by `plugin_id`; per-test isolation binds a fresh copy so tests never share state.
 - **Two process lifecycles** — web (`app/web.py`) and worker (`app/worker.py`); each registers shutdown hooks independently via `app.core.shutdown_registry`.
 - **Composition roots** — `app/web.py` and `app/worker.py` own all side-effect imports; bootstrap order is load-bearing (see [`patterns.md § Bootstrap composition order`](patterns.md#bootstrap-composition-order)).
@@ -41,14 +41,14 @@ Each plugin exposes `plugin_id: str`. The `plugin_id` is the registry key, URL p
 
 Each flow is a labeled hop-list. Module docs have the detail.
 
-**Review lifecycle** (PR ready → findings posted):
-`plugins/github` webhook → [`core/intake`](core_intake.md) filter → ticket created → `engine.start("pr_review_v1", ticket_id=…)` → [`core/workflow`](core_workflow.md) drives `CheckShouldReview → SecretsScan → ProvisionWorkspace → CodeReview → PostFindings → CleanupWorkspace` → [`domain/reviewer.publish_findings`](domain_reviewer.md) validates the canonical schema and posts via [`core/vcs`](core_vcs.md). The skill owns all filtering — there is no admission pipeline.
+**Pipeline run lifecycle** (PR ready → findings posted):
+`plugins/github` webhook → [`core/intake`](core_intake.md) filter → `domain/repos` trigger-binding lookup → ticket created → `domain/pipelines.start_run(ticket_id=…)` → the run engine drives the flattened stage list (skill/review stages dispatch a coding-agent invocation and park on the terminal AgentEvent; action stages run synchronously) → a review stage's reported findings materialize as durable `domain/findings` rows → an action stage (e.g. `github:create_pr`) posts them via [`core/vcs`](core_vcs.md). The skill owns all filtering — there is no admission pipeline.
 
 **Session / auth chain** (inbound request):
 [`core/auth`](core_auth.md) middleware classify → [`core/sessions`](core_sessions.md) `require(Action.X)` → [`core/tenancy`](core_tenancy.md) `resolve_auth_org` → handler
 
-**Workflow-engine step dispatch**:
-[`core/tasks`](core_tasks.md) worker dequeues `route_workflow` → [`core/workflow`](core_workflow.md) resolves next command → Workspace/Local/HITL branch → outcome persisted → enqueues next step
+**Run-engine stage dispatch**:
+[`core/tasks`](core_tasks.md) worker dequeues `ROUTE_RUN` → [`domain/pipelines`](domain_pipelines.md) resolves the next stage → `START_STAGE` dispatches it (skill/review/action/system) → outcome persisted → enqueues the next `ROUTE_RUN`
 
 **SSE fanout**:
 domain module publishes `ActivityEvent` → [`core/sse`](core_sse.md) Redis pub/sub → SSE subscriber generators → browser

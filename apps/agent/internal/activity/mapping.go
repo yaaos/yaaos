@@ -2,9 +2,9 @@ package activity
 
 import "sync"
 
-// WorkspaceMapping caches the workspace_id → workflow_execution_id
+// WorkspaceMapping caches the workspace_id → run_id
 // translation that the backend ships in `subscribe` messages.
-// Outbound `activity_batch` frames need the workflow id
+// Outbound `activity_batch` frames need the run id
 // to address the right SSE channel, but the agent only ever knows
 // workspace ids — the mapping closes that gap without a backend
 // round-trip per batch.
@@ -21,10 +21,10 @@ func NewWorkspaceMapping() *WorkspaceMapping {
 	return &WorkspaceMapping{m: make(map[string]string)}
 }
 
-func (w *WorkspaceMapping) Set(workspaceID, workflowExecutionID string) {
+func (w *WorkspaceMapping) Set(workspaceID, runID string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.m[workspaceID] = workflowExecutionID
+	w.m[workspaceID] = runID
 }
 
 func (w *WorkspaceMapping) Get(workspaceID string) (string, bool) {

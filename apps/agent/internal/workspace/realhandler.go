@@ -14,19 +14,35 @@
 //                            No I/O — used by the supervisor when the
 //                            backend rotates a GitHub installation token
 //                            mid-flight.
-//   - RunClaude            — read `invocation.exec` from the wire
-//                            ({argv, stdin, env}), merge env
-//                            on top of `os.Environ()`, inject BYOK
-//                            secrets from the last ConfigUpdate (e.g.
-//                            ANTHROPIC_API_KEY), add TRACEPARENT for
-//                            span linkage, dispatch via the configured
-//                            `RunFunc` (production default:
-//                            `RunStreaming`) with the workspace tempdir
-//                            as cwd. Captured stdout is returned in the
-//                            typed InvokeResult. Zero biz logic — the
-//                            backend owns prompt assembly + argv flags.
+//   - RunClaude            — stats `cmd.SkillPath` inside the checkout
+//                            before spawning anything (absent → fail
+//                            deterministically with "skill not found:
+//                            <path>"); reads `invocation.exec` from the
+//                            wire ({argv, stdin, env}), merges env on top
+//                            of `os.Environ()`, injects BYOK secrets from
+//                            the last ConfigUpdate (e.g.
+//                            ANTHROPIC_API_KEY), sets a workspace-local
+//                            TMPDIR, adds TRACEPARENT for span linkage,
+//                            dispatches via the configured `RunFunc`
+//                            (production default: `RunStreaming`) with
+//                            the workspace tempdir as cwd. After exit —
+//                            regardless of claude's own exit status —
+//                            reads `$TMPDIR/<command_id>.md` (capped at
+//                            `artifactMaxBytes`) and pushes `origin HEAD`
+//                            iff HEAD is a named branch (detached PR-ticket
+//                            checkouts skip). Captured stdout + the
+//                            artifact are returned in the typed
+//                            InvokeResult. Zero biz logic — the backend
+//                            owns prompt assembly + argv flags + the
+//                            skill-path convention.
 //   - Cleanup              — `os.RemoveAll` the tempdir + drop the slot.
 //                            Idempotent on a missing workspace_id.
+//   - PushBranch           — push-failure recovery only: re-points `origin`
+//                            at a URL carrying the workspace's *current*
+//                            auth token (RefreshWorkspaceAuth only updates
+//                            the in-memory slot — the origin URL set at
+//                            clone time may hold a stale one) and runs
+//                            `git push origin HEAD`. No claude re-run.
 //
 // Concurrency: a single sync.Mutex serializes slot lookups + mutations.
 // Each method is short and non-blocking; the workspace process itself
@@ -41,6 +57,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -76,6 +93,18 @@ const (
 	claudeErrStderrCap     = 2048
 	claudeErrStdoutTailCap = 4096
 )
+
+// artifactMaxBytes caps the artifact file RunClaude reads from
+// `$TMPDIR/<command_id>.md`. A file over this cap ships no body — the
+// artifact_error field explains why so the backend can distinguish "wrote
+// none" from "wrote too much".
+const artifactMaxBytes = 2 * 1024 * 1024
+
+// workspaceTmpDirName is the workspace-relative TMPDIR RunClaude sets on
+// every claude subprocess. Workspace-local so artifact (and any other
+// scratch) files are torn down automatically by Cleanup's `os.RemoveAll` —
+// no per-file deletion, and files remain for debugging until then.
+const workspaceTmpDirName = ".yaaos-invoke-tmp"
 
 // excerptHead returns the first `limit` bytes of `b`, suffixed with a
 // truncation marker when bytes were cut. Returns "<empty>" for an empty input
@@ -197,7 +226,7 @@ func NewRealHandler(cfg RealHandlerConfig) *RealHandler {
 // ErrUnknownWorkspace is returned by WriteFiles / RefreshWorkspaceAuth /
 // InvokeClaudeCode when no ProvisionWorkspace has run for the given
 // workspace_id. The supervisor surfaces this as a completed_failure
-// event; the backend's workflow engine treats it as a fatal step error.
+// event; the backend's run engine treats it as a fatal stage error.
 var ErrUnknownWorkspace = errors.New("workspace not provisioned")
 
 func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {
@@ -241,6 +270,16 @@ func (h *RealHandler) ProvisionWorkspace(ctx context.Context, cmd *protocol.Prov
 		// Tear down the empty tempdir on clone failure so we don't leak.
 		_ = os.RemoveAll(path)
 		return command.ProvisionResult{}, fmt.Errorf("git clone: %w", cloneErr)
+	}
+
+	// Commit identity: backend-supplied constants, not agent policy. Every
+	// skill commit on a named work branch needs `user.name`/`user.email`
+	// set — detached-checkout review flows never commit, so this is a
+	// harmless no-op for them. Best-effort on an empty pair (older wire
+	// payloads / test fixtures that don't set these fields).
+	if err := configureGitIdentity(ctx, path, cmd.GitUserName, cmd.GitUserEmail); err != nil {
+		_ = os.RemoveAll(path)
+		return command.ProvisionResult{}, fmt.Errorf("git identity: %w", err)
 	}
 
 	// Startup-reconciliation manifest: write the workspace_id to a
@@ -355,6 +394,27 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 		return command.InvokeResult{}, errors.New("invocation.exec.argv missing or empty")
 	}
 
+	// Pre-spawn: the compiled prompt instructs the named skill to run from
+	// this checkout. A missing skill file means the invocation cannot
+	// possibly succeed — fail fast and deterministically instead of letting
+	// claude discover it mid-run. An empty SkillPath is rejected explicitly
+	// before the Join/Stat: filepath.Join(slot.path, "") == slot.path, which
+	// always exists, so without this guard an empty value would silently
+	// pass the check instead of failing it.
+	if cmd.SkillPath == "" {
+		return command.InvokeResult{}, errors.New("skill not found: (empty skill_path)")
+	}
+	if _, statErr := os.Stat(filepath.Join(slot.path, cmd.SkillPath)); statErr != nil {
+		return command.InvokeResult{}, fmt.Errorf("skill not found: %s", cmd.SkillPath)
+	}
+
+	// TMPDIR: workspace-local so the artifact file is cleaned up
+	// automatically with the workspace tempdir (see workspaceTmpDirName).
+	tmpDir := filepath.Join(slot.path, workspaceTmpDirName)
+	if err := os.MkdirAll(tmpDir, h.cfg.DirPerm); err != nil {
+		return command.InvokeResult{}, fmt.Errorf("create tmpdir: %w", err)
+	}
+
 	// Env layering, low-to-high priority:
 	//   1. Parent process env (PATH, HOME, …) so claude can find its
 	//      binary + write to $HOME/.claude state.
@@ -381,6 +441,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	for k, v := range inv.Exec.Env {
 		env = append(env, k+"="+v)
 	}
+	env = append(env, "TMPDIR="+tmpDir)
 	if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
 		env = append(env, tpEnv)
 	}
@@ -404,7 +465,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	emitter := EmitterFromContext(ctx)
 	var accumulated bytes.Buffer
 	_, endRun := tracing.StartSpan(ctx, "workspace.runclaude")
-	res, err := h.cfg.RunFunc(ctx, RunStreamingOptions{
+	res, runErr := h.cfg.RunFunc(ctx, RunStreamingOptions{
 		Argv:  inv.Exec.Argv,
 		Stdin: []byte(inv.Exec.Stdin),
 		Env:   env,
@@ -418,14 +479,31 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 			})
 		},
 	})
-	endRun(err)
+	endRun(runErr)
 	if res != nil {
 		// RunStreaming leaves res.Stdout empty when a callback is set;
 		// we replace it with the accumulated bytes so downstream code
 		// that reads res.Stdout sees the full output.
 		res.Stdout = accumulated.Bytes()
 	}
-	if err != nil {
+
+	// Artifact collection + conditional push happen for every
+	// InvokeClaudeCode exit, regardless of claude's own exit status — a
+	// failing invocation may still have written partial output, and a git
+	// push failure must not mask a real artifact. Both ship on the
+	// InvokeResult below even when this function ultimately returns an
+	// error (workspace.executeCommand reads the artifact fields off the
+	// Result on both the success and error paths).
+	artifactBody, artifactErr := readArtifact(tmpDir, cmd.CommandID)
+	pushErr := maybePushOriginHead(ctx, slot.path)
+
+	result := command.InvokeResult{
+		WorkspaceID:   cmd.WorkspaceID,
+		Artifact:      artifactBody,
+		ArtifactError: artifactErr,
+	}
+
+	if runErr != nil {
 		// `RunStreaming` returns `*exec.ExitError` on non-zero exit with
 		// res still populated; surface exit code + stderr + the tail of
 		// stdout so the supervisor's failure event carries actionable
@@ -435,26 +513,93 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 		// ctx.Err which the supervisor's pool already maps to a
 		// "timeout:" reason.
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && res != nil {
-			return command.InvokeResult{}, fmt.Errorf(
+		if errors.As(runErr, &exitErr) && res != nil {
+			return result, fmt.Errorf(
 				"claude exit %d: stderr=%s stdout_tail=%s",
 				res.ExitCode,
 				excerptHead(res.Stderr, claudeErrStderrCap),
 				excerptTail(res.Stdout, claudeErrStdoutTailCap),
 			)
 		}
-		return command.InvokeResult{}, fmt.Errorf("claude subprocess: %w", err)
+		return result, fmt.Errorf("claude subprocess: %w", runErr)
+	}
+	if pushErr != nil {
+		// Exit-push failure is a stage failure with the git stderr — the
+		// artifact still ships via `result` above even though this command
+		// reports completed_failure.
+		return result, fmt.Errorf("git push: %w", pushErr)
 	}
 
-	return command.InvokeResult{
-		WorkspaceID: cmd.WorkspaceID,
-		ExecResult: command.ExecResult{
-			ExitCode: res.ExitCode,
-			Stdout:   string(res.Stdout),
-			Stderr:   string(res.Stderr),
-			Duration: res.Duration,
-		},
-	}, nil
+	result.ExecResult = command.ExecResult{
+		ExitCode: res.ExitCode,
+		Stdout:   string(res.Stdout),
+		Stderr:   string(res.Stderr),
+		Duration: res.Duration,
+	}
+	return result, nil
+}
+
+// readArtifact reads `$TMPDIR/<command_id>.md`, enforcing artifactMaxBytes.
+// Returns (nil, "") when the skill wrote no artifact file — a legitimate
+// outcome for review invocations and non-completed main-skill outcomes.
+// Returns (nil, "<message>") when the file exists but exceeds the cap (or
+// otherwise can't be read) — distinguishes "wrote none" from "wrote too
+// much" for the backend. The file is left in place; it dies with the
+// workspace tempdir at Cleanup, not here.
+//
+// Reads via `io.LimitReader(f, artifactMaxBytes+1)` rather than
+// `os.Stat` + `os.ReadFile` — a Stat-then-Read pair is a TOCTOU race (the
+// file could grow between the two calls, letting a larger-than-cap read
+// through); capping the reader itself makes the enforcement atomic with
+// the read.
+func readArtifact(tmpDir, commandID string) (*string, string) {
+	path := filepath.Join(tmpDir, commandID+".md")
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ""
+		}
+		return nil, fmt.Sprintf("artifact open failed: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(f, artifactMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Sprintf("artifact read failed: %v", err)
+	}
+	if len(data) > artifactMaxBytes {
+		return nil, fmt.Sprintf("artifact exceeds %d bytes", artifactMaxBytes)
+	}
+	body := string(data)
+	return &body, ""
+}
+
+// headBranchName returns the short name of the branch HEAD points at.
+// Returns an error when HEAD is detached (PR-ticket workspaces; review
+// flows never commit) or `dir` isn't a git checkout at all — both cases
+// mean "nothing to push" to the caller.
+func headBranchName(ctx context.Context, dir string) (string, error) {
+	c := exec.CommandContext(ctx, "git", "symbolic-ref", "-q", "--short", "HEAD")
+	c.Dir = dir
+	out, err := c.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// maybePushOriginHead runs `git push origin HEAD` iff HEAD is a named
+// branch. Detached checkouts skip silently (nothing to push, not a
+// failure). A branch with no new commits is itself a push no-op (git exits
+// 0, "Everything up-to-date"). A genuine failure — most commonly a
+// non-fast-forward because something rewrote history upstream — surfaces
+// via runGit's captured + redacted stderr.
+func maybePushOriginHead(ctx context.Context, dir string) error {
+	branch, err := headBranchName(ctx, dir)
+	if err != nil || branch == "" {
+		return nil
+	}
+	return runGit(ctx, dir, "push", "origin", "HEAD")
 }
 
 func (h *RealHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
@@ -480,6 +625,51 @@ func (h *RealHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceC
 		Destroyed:   true,
 		Path:        slot.path,
 	}, nil
+}
+
+// PushBranch is push-failure recovery only: a bare re-push of the
+// workspace's current HEAD after a RefreshWorkspaceAuth credential
+// rotation, so claude is never re-run just to retry a push. Re-points
+// `origin` at a URL carrying the slot's *current* auth token before
+// pushing — RefreshAuth (above) only updates the in-memory slot, never the
+// git remote's stored URL, so a push run straight after a credential
+// rotation must not fall back to the (now possibly expired) token embedded
+// at clone time. Requires HEAD to be a named branch — provision's checkout
+// invariant guarantees this for any workspace this command is dispatched
+// against.
+func (h *RealHandler) PushBranch(ctx context.Context, cmd *protocol.PushBranchCommand) (command.PushBranchResult, error) {
+	h.mu.Lock()
+	slot, ok := h.slots[cmd.WorkspaceID]
+	h.mu.Unlock()
+	if !ok {
+		return command.PushBranchResult{}, ErrUnknownWorkspace
+	}
+	branch, err := headBranchName(ctx, slot.path)
+	if err != nil || branch == "" {
+		return command.PushBranchResult{}, fmt.Errorf("PushBranch: HEAD is not a named branch in %q", slot.path)
+	}
+	freshURL, err := pushURLWithCurrentToken(slot)
+	if err != nil {
+		return command.PushBranchResult{}, fmt.Errorf("auth: %w", err)
+	}
+	if err := runGit(ctx, slot.path, "remote", "set-url", "origin", freshURL); err != nil {
+		return command.PushBranchResult{}, fmt.Errorf("git remote set-url: %w", err)
+	}
+	if err := runGit(ctx, slot.path, "push", "origin", "HEAD"); err != nil {
+		return command.PushBranchResult{}, fmt.Errorf("git push: %w", err)
+	}
+	return command.PushBranchResult{WorkspaceID: cmd.WorkspaceID, Pushed: true}, nil
+}
+
+// pushURLWithCurrentToken rebuilds the push URL from the workspace's
+// remembered repo.CloneURL and its *current* in-memory auth token — never
+// the token embedded in the origin remote's URL at clone time.
+// RefreshWorkspaceAuth (see RefreshAuth above) only updates the in-memory
+// token; this is the seam that guarantees PushBranch always uses the
+// freshest one, so a push run right after a credential rotation can't
+// silently fall back to an expired clone-time token.
+func pushURLWithCurrentToken(slot *realSlot) (string, error) {
+	return injectAuth(slot.repo.CloneURL, protocol.AuthBlock{Kind: slot.authKind, Token: slot.authTok.Value()})
 }
 
 // safeJoin guards against path-escape attacks. The supplied `rel` must
@@ -508,29 +698,39 @@ func safeJoin(base, rel string) (string, error) {
 
 // gitClone shells out to the system `git` binary (present in the runtime
 // image — see `apps/agent/Dockerfile`) and produces a working tree at
-// `dest` checked out to `repo.HeadSHA`. The auth token is injected into
-// the clone URL via HTTPS basic auth (`https://x-access-token:<token>@…`)
-// for GitHub installation tokens — that's the supported pattern for
-// short-lived GitHub App installation tokens. Other auth kinds use the
-// same `x-access-token` form; specialised handling lands when
-// non-GitHub plugins arrive.
+// `dest`. The auth token is injected into the clone URL via HTTPS basic
+// auth (`https://x-access-token:<token>@…`) for GitHub installation
+// tokens — that's the supported pattern for short-lived GitHub App
+// installation tokens. Other auth kinds use the same `x-access-token`
+// form; specialised handling lands when non-GitHub plugins arrive.
+//
+// Checkout mode is decided by which of `repo.HeadSHA` / `repo.BranchName`
+// is set — a well-formed backend command sets exactly one:
+//
+//   - `repo.HeadSHA` set (today's behaviour, and the only mode a legacy
+//     caller with no branch_name ever exercises): detach HEAD at that
+//     SHA — fork-safe, works for a PR whose head lives in a fork the
+//     agent has no push access to. If `repo.BranchName` is ALSO set
+//     (legacy shape — a `--branch` clone-speed hint alongside a required
+//     head_sha), it's passed to the initial `git clone --branch` only;
+//     HeadSHA still wins the checkout.
+//   - `repo.HeadSHA` empty, `repo.BranchName` set: check out that branch
+//     as a local work branch (`git checkout -B`), tracking the remote
+//     branch when it already exists (falls back to creating a fresh
+//     local branch off the clone's default-branch HEAD otherwise) — the
+//     mode a pipeline stage that commits + pushes needs.
 //
 // Sequence:
-//  1. `git clone --depth=<history> [--branch=<name>] <url> .`
-//  2. If `head_sha` differs from what HEAD resolves to:
-//     `git fetch --depth=<history+1> origin <head_sha>` then
-//     `git checkout <head_sha>`.
-//  3. If `base_sha` is set on the wire:
-//     `git fetch --depth=1 origin <base_sha>` so the commit becomes a
-//     reachable object locally. The review prompt runs
-//     `git diff <base_sha>..HEAD` (two-dot range — compares the two
-//     trees; no walk of the commit graph between them is needed), so
-//     depth=1 of each endpoint is sufficient.
-//
-// Step 2 covers two cases the supervisor flow exercises: branch-name
-// supplied + HEAD has moved since the webhook fired (the wire's head_sha
-// is authoritative), and branch-name omitted (clone defaults to the
-// repo's default branch — we then pin to head_sha).
+//  1. `git clone --depth=<history> [--branch=<name>] <url> .` — the
+//     `--branch` flag is only added in detached-pin mode (see above);
+//     named-branch mode omits it because the branch may not exist on the
+//     remote yet.
+//  2. Checkout, per the mode above.
+//  3. If `base_sha` is set on the wire: `git fetch --depth=1 origin
+//     <base_sha>` so the commit becomes a reachable object locally. The
+//     review prompt runs `git diff <base_sha>..HEAD` (two-dot range —
+//     compares the two trees; no walk of the commit graph between them
+//     is needed), so depth=1 of each endpoint is sufficient.
 //
 // Output is intentionally captured + discarded; failures surface via
 // exit code + a sanitized error message that never includes the auth
@@ -540,8 +740,8 @@ func gitClone(ctx context.Context, dest string, repo protocol.RepoRef, auth prot
 	if repo.CloneURL == "" {
 		return errors.New("missing clone_url")
 	}
-	if repo.HeadSHA == "" {
-		return errors.New("missing head_sha")
+	if repo.HeadSHA == "" && repo.BranchName == "" {
+		return errors.New("missing head_sha or branch_name")
 	}
 	cloneURL, err := injectAuth(repo.CloneURL, auth)
 	if err != nil {
@@ -551,33 +751,31 @@ func gitClone(ctx context.Context, dest string, repo protocol.RepoRef, auth prot
 	if history > 0 {
 		args = append(args, fmt.Sprintf("--depth=%d", history))
 	}
-	if repo.BranchName != "" {
+	// The --branch clone hint only applies in detached-pin (head_sha) mode
+	// — a same-as-before speed optimization landing the initial clone
+	// close to head_sha before the follow-up fetch-by-SHA. In named-branch
+	// checkout mode the branch may not exist on the remote yet (a fresh
+	// work branch), so passing --branch there would fail the clone
+	// outright; checkoutNamedBranch below handles both cases explicitly.
+	if repo.HeadSHA != "" && repo.BranchName != "" {
 		args = append(args, "--branch", repo.BranchName)
 	}
 	args = append(args, cloneURL, dest)
 	if err := runGit(ctx, "", args...); err != nil {
 		return err
 	}
-	// Pin to head_sha. A `git rev-parse HEAD` would tell us if we already
-	// landed there from the clone, but the fetch+checkout pair is cheap
-	// enough to always run + simpler to reason about.
-	fetchDepth := history + 1
-	if history == 0 {
-		fetchDepth = 1
-	}
-	fetchArgs := []string{"fetch", fmt.Sprintf("--depth=%d", fetchDepth), "origin", repo.HeadSHA}
-	if err := runGit(ctx, dest, fetchArgs...); err != nil {
-		// Some hosts reject fetching by SHA — fall back to a full fetch.
-		// This is rare for GitHub (which allows it via the
-		// `uploadpack.allowReachableSHA1InWant` config that github.com
-		// sets by default) but cheap to defend against.
-		if err2 := runGit(ctx, dest, "fetch", "origin"); err2 != nil {
-			return fmt.Errorf("fetch fallback: %w", err2)
+
+	switch {
+	case repo.HeadSHA != "":
+		if err := checkoutDetachedSHA(ctx, dest, repo.HeadSHA, history); err != nil {
+			return err
+		}
+	case repo.BranchName != "":
+		if err := checkoutNamedBranch(ctx, dest, repo.BranchName, history); err != nil {
+			return err
 		}
 	}
-	if err := runGit(ctx, dest, "checkout", "--detach", repo.HeadSHA); err != nil {
-		return fmt.Errorf("checkout %s: %w", repo.HeadSHA, err)
-	}
+
 	// Fetch base_sha as a reachable object so the review prompt's
 	// `git diff base_sha..HEAD` (two-dot) finds both trees locally. No
 	// checkout — base only needs to be reachable as a revision. Same
@@ -588,6 +786,79 @@ func gitClone(ctx context.Context, dest string, repo protocol.RepoRef, auth prot
 			if err2 := runGit(ctx, dest, "fetch", "origin"); err2 != nil {
 				return fmt.Errorf("fetch base fallback: %w", err2)
 			}
+		}
+	}
+	return nil
+}
+
+// checkoutDetachedSHA pins HEAD to `headSHA`, detached — today's behaviour,
+// fork-safe (works for a PR head living in a fork the agent has no push
+// access to). A `git rev-parse HEAD` would tell us if the initial clone
+// already landed there, but the fetch+checkout pair is cheap enough to
+// always run + simpler to reason about.
+func checkoutDetachedSHA(ctx context.Context, dest, headSHA string, history int) error {
+	fetchDepth := history + 1
+	if history == 0 {
+		fetchDepth = 1
+	}
+	fetchArgs := []string{"fetch", fmt.Sprintf("--depth=%d", fetchDepth), "origin", headSHA}
+	if err := runGit(ctx, dest, fetchArgs...); err != nil {
+		// Some hosts reject fetching by SHA — fall back to a full fetch.
+		// This is rare for GitHub (which allows it via the
+		// `uploadpack.allowReachableSHA1InWant` config that github.com
+		// sets by default) but cheap to defend against.
+		if err2 := runGit(ctx, dest, "fetch", "origin"); err2 != nil {
+			return fmt.Errorf("fetch fallback: %w", err2)
+		}
+	}
+	if err := runGit(ctx, dest, "checkout", "--detach", headSHA); err != nil {
+		return fmt.Errorf("checkout %s: %w", headSHA, err)
+	}
+	return nil
+}
+
+// checkoutNamedBranch checks out `branch` as a local work branch via `git
+// checkout -B`. When the remote already has the branch, the local branch is
+// created from — and tracks — `origin/<branch>` (git's default
+// `branch.autoSetupMerge` behaviour wires the upstream automatically for a
+// `-B <name> <remote-tracking-ref>` checkout). When the remote doesn't have
+// it yet (a fresh work branch for a pipeline stage that will push it for
+// the first time), the local branch is created off whatever ref the
+// initial clone landed on (the repo's default branch) with no upstream.
+func checkoutNamedBranch(ctx context.Context, dest, branch string, history int) error {
+	fetchDepth := history
+	if fetchDepth <= 0 {
+		fetchDepth = 1
+	}
+	fetchArgs := []string{"fetch", fmt.Sprintf("--depth=%d", fetchDepth), "origin", branch}
+	if err := runGit(ctx, dest, fetchArgs...); err == nil {
+		if err := runGit(ctx, dest, "checkout", "-B", branch, "origin/"+branch); err != nil {
+			return fmt.Errorf("checkout tracking %s: %w", branch, err)
+		}
+		return nil
+	}
+	// Remote doesn't have this branch yet — create a fresh local branch off
+	// the clone's current HEAD (the repo's default branch).
+	if err := runGit(ctx, dest, "checkout", "-B", branch); err != nil {
+		return fmt.Errorf("checkout new branch %s: %w", branch, err)
+	}
+	return nil
+}
+
+// configureGitIdentity sets the workspace's local `git config user.name`/
+// `user.email` — the commit identity every skill commit on a named work
+// branch needs. Best-effort no-op when both are empty (older wire payloads
+// / test fixtures that don't set these fields; detached-checkout review
+// flows never commit, so an unset identity there is harmless).
+func configureGitIdentity(ctx context.Context, dir, name, email string) error {
+	if name != "" {
+		if err := runGit(ctx, dir, "config", "user.name", name); err != nil {
+			return fmt.Errorf("git config user.name: %w", err)
+		}
+	}
+	if email != "" {
+		if err := runGit(ctx, dir, "config", "user.email", email); err != nil {
+			return fmt.Errorf("git config user.email: %w", err)
 		}
 	}
 	return nil

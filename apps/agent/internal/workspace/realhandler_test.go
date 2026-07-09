@@ -33,6 +33,26 @@ func realHandlerWithNoopClone(t *testing.T) *RealHandler {
 	})
 }
 
+// testSkillPath is the SkillPath every RunClaude test that expects to reach
+// the subprocess uses. RunClaude's pre-spawn check requires SkillPath be
+// both non-empty and present in the checkout (see § skill_path pre-spawn
+// check below), so any test exercising past that check needs a real file
+// at this relative path.
+const testSkillPath = ".claude/skills/test-skill/SKILL.md"
+
+// writeTestSkill writes a stub skill file into the checkout at `dir` so
+// RunClaude's pre-spawn skill-path check passes.
+func writeTestSkill(t *testing.T, dir string) {
+	t.Helper()
+	full := filepath.Join(dir, testSkillPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte("# skill"), 0o644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+}
+
 func newProvision(workspaceID string) *protocol.ProvisionWorkspaceCommand {
 	return &protocol.ProvisionWorkspaceCommand{
 		CommandHeader: protocol.CommandHeader{
@@ -262,7 +282,8 @@ func TestRealHandler_RunClaude_HappyPath_EchoesStdin(t *testing.T) {
 		t.Skip("cat not on PATH; subprocess test needs a POSIX shell env")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	// Build an invocation whose exec block runs `cat` — echoes stdin to
 	// stdout. Lets us verify the whole pipe: argv resolved, stdin piped,
@@ -278,6 +299,7 @@ func TestRealHandler_RunClaude_HappyPath_EchoesStdin(t *testing.T) {
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -302,7 +324,8 @@ func TestRealHandler_RunClaude_EnvOverridesParent(t *testing.T) {
 		t.Skip("sh not on PATH; subprocess test needs a POSIX shell")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	rawInv, _ := json.Marshal(map[string]any{
 		"exec": map[string]any{
@@ -314,6 +337,7 @@ func TestRealHandler_RunClaude_EnvOverridesParent(t *testing.T) {
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -330,6 +354,7 @@ func TestRealHandler_RunClaude_CwdIsWorkspacePath(t *testing.T) {
 	h := realHandlerWithNoopClone(t)
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
 	wsPath := cr.Path
+	writeTestSkill(t, cr.Path)
 
 	rawInv, _ := json.Marshal(map[string]any{
 		"exec": map[string]any{
@@ -341,6 +366,7 @@ func TestRealHandler_RunClaude_CwdIsWorkspacePath(t *testing.T) {
 	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -357,7 +383,8 @@ func TestRealHandler_RunClaude_NonZeroExit_ReturnsError(t *testing.T) {
 		t.Skip("sh not on PATH")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	// claude's --output-format=stream-json puts the diagnostic on stdout,
 	// not stderr — assert both halves ride in the error string so the
@@ -372,6 +399,7 @@ func TestRealHandler_RunClaude_NonZeroExit_ReturnsError(t *testing.T) {
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err == nil {
 		t.Fatal("want error on non-zero exit")
@@ -388,7 +416,8 @@ func TestRealHandler_RunClaude_NonZeroExit_StdoutTailTruncated(t *testing.T) {
 		t.Skip("sh not on PATH")
 	}
 	h := realHandlerWithNoopClone(t)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	// Produce >8 KiB of stdout ending in a known sentinel so we can assert
 	// the tail (with truncation marker) survives while the head is cut.
@@ -405,6 +434,7 @@ func TestRealHandler_RunClaude_NonZeroExit_StdoutTailTruncated(t *testing.T) {
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-trunc", WorkspaceID: "ws-1"},
 		Invocation:    rawInv,
+		SkillPath:     testSkillPath,
 	})
 	if err == nil {
 		t.Fatal("want error on non-zero exit")
@@ -715,7 +745,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		},
 	})
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
-	_ = cr
+	writeTestSkill(t, cr.Path)
 
 	emitter := &recordingEmitter{}
 	ctx := ContextWithEmitter(context.Background(), emitter)
@@ -727,6 +757,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 			"prompt text",
 			map[string]string{}, // intentionally empty — BYOK comes from the getter
 		),
+		SkillPath: testSkillPath,
 	})
 	if err != nil {
 		t.Fatalf("RunClaude: %v", err)
@@ -781,11 +812,13 @@ func TestRealHandler_RunClaude_FakeRunFunc_NonZeroExit_ReturnsError(t *testing.T
 		nil,
 	)
 	h := realHandlerWithFakeRun(t, fake)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if err == nil {
 		t.Fatal("want error on non-zero exit")
@@ -803,11 +836,13 @@ func TestRealHandler_RunClaude_FakeRunFunc_RunFuncReturnsError_PropagatesAsComma
 	// propagate it wrapped as a command error — no panic, no lost error.
 	fake := fakeRunFunc(nil, errors.New("subprocess startup failed"), nil)
 	h := realHandlerWithFakeRun(t, fake)
-	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if err == nil {
 		t.Fatal("want error when RunFunc returns error")
@@ -830,10 +865,12 @@ func TestRealHandler_RunClaude_FakeRunFunc_CwdIsWorkspacePath(t *testing.T) {
 	)
 	h := realHandlerWithFakeRun(t, fake)
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
 
 	h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{ //nolint:errcheck
 		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
 		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
 	})
 	if capturedDir != cr.Path {
 		t.Errorf("RunFunc Dir: want %q got %q", cr.Path, capturedDir)
@@ -962,4 +999,585 @@ func TestRealHandler_ProvisionWorkspace_RealGitClone_FetchesBaseSHA(t *testing.T
 	if !strings.Contains(string(out), "feature.txt") {
 		t.Errorf("diff did not include feature.txt; got: %q", out)
 	}
+}
+
+// ── checkout-mode matrix ─────────────────────────────────────────────────
+
+func TestRealHandler_ProvisionWorkspace_RealGitClone_HeadSHAOnly_StaysDetached(t *testing.T) {
+	// No branch_name hint at all — the plainest form of today's behaviour.
+	cloneURL, headSHA := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-detached-only")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = headSHA
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	symref := exec.Command("git", "symbolic-ref", "-q", "--short", "HEAD")
+	symref.Dir = res.Path
+	if err := symref.Run(); err == nil {
+		t.Error("want detached HEAD (symbolic-ref should fail), got a named branch")
+	}
+	gotSHA := runGitForTest(t, res.Path, "rev-parse", "HEAD")
+	if gotSHA != headSHA {
+		t.Errorf("HEAD: want %s got %s", headSHA, gotSHA)
+	}
+}
+
+func TestRealHandler_ProvisionWorkspace_RealGitClone_BranchName_TracksExistingRemoteBranch(t *testing.T) {
+	cloneURL, _ := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-branch-track")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = ""
+	cmd.Repo.BranchName = "main"
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	branch := runGitForTest(t, res.Path, "symbolic-ref", "--short", "HEAD")
+	if branch != "main" {
+		t.Errorf("branch: want main got %q", branch)
+	}
+	upstream := runGitForTest(t, res.Path, "rev-parse", "--abbrev-ref", "main@{upstream}")
+	if upstream != "origin/main" {
+		t.Errorf("upstream: want origin/main got %q", upstream)
+	}
+}
+
+func TestRealHandler_ProvisionWorkspace_RealGitClone_BranchName_FreshWhenRemoteMissing(t *testing.T) {
+	cloneURL, _ := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-branch-fresh")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = ""
+	cmd.Repo.BranchName = "yaaos/work-1"
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	branch := runGitForTest(t, res.Path, "symbolic-ref", "--short", "HEAD")
+	if branch != "yaaos/work-1" {
+		t.Errorf("branch: want yaaos/work-1 got %q", branch)
+	}
+	upstreamCheck := exec.Command("git", "rev-parse", "--abbrev-ref", "yaaos/work-1@{upstream}")
+	upstreamCheck.Dir = res.Path
+	if err := upstreamCheck.Run(); err == nil {
+		t.Error("want no upstream for a freshly created branch (remote doesn't have it yet)")
+	}
+	if _, err := os.Stat(filepath.Join(res.Path, "README.md")); err != nil {
+		t.Errorf("checkout missing README.md: %v", err)
+	}
+}
+
+func TestRealHandler_ProvisionWorkspace_MissingCheckoutInstruction_Errors(t *testing.T) {
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-missing")
+	cmd.Repo.HeadSHA = ""
+	cmd.Repo.BranchName = ""
+
+	_, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err == nil {
+		t.Fatal("want error when neither head_sha nor branch_name is set")
+	}
+	if !strings.Contains(err.Error(), "missing head_sha or branch_name") {
+		t.Errorf("err: want 'missing head_sha or branch_name' substring, got %q", err.Error())
+	}
+}
+
+// ── git identity ──────────────────────────────────────────────────────────
+
+func TestRealHandler_ProvisionWorkspace_RealGitClone_SetsGitIdentityFromPayload(t *testing.T) {
+	cloneURL, headSHA := localBareRepo(t)
+
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-identity")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = headSHA
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+	cmd.GitUserName = "yaaos"
+	cmd.GitUserEmail = "yaaos[bot]@users.noreply.github.com"
+
+	res, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	if got := runGitForTest(t, res.Path, "config", "user.name"); got != "yaaos" {
+		t.Errorf("user.name: want yaaos got %q", got)
+	}
+	if got := runGitForTest(t, res.Path, "config", "user.email"); got != "yaaos[bot]@users.noreply.github.com" {
+		t.Errorf("user.email: want yaaos[bot]@users.noreply.github.com got %q", got)
+	}
+}
+
+func TestRealHandler_ProvisionWorkspace_NoGitIdentityInPayload_IsNoop(t *testing.T) {
+	// Older wire payloads / fixtures that don't set GitUserName/GitUserEmail
+	// (both zero-value) must not fail provisioning.
+	h := realHandlerWithNoopClone(t)
+	if _, err := h.ProvisionWorkspace(context.Background(), newProvision("ws-1")); err != nil {
+		t.Fatalf("provision without git identity should succeed, got %v", err)
+	}
+}
+
+// ── PushBranchCommand ─────────────────────────────────────────────────────
+
+func TestRealHandler_PushBranch_ExecutesBarePushAndReportsSuccess(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not on PATH; install with `apk add git` to exercise real-clone push tests")
+	}
+	cloneURL, _ := localBareRepo(t)
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-push")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = ""
+	cmd.Repo.BranchName = "main"
+	cmd.History = 1
+	cmd.Auth = protocol.AuthBlock{}
+	cr, err := h.ProvisionWorkspace(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	// Simulate a skill commit on the work branch.
+	if err := os.WriteFile(filepath.Join(cr.Path, "new-file.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runGitForTest(t, cr.Path, "add", ".")
+	runGitForTest(t, cr.Path, "commit", "-m", "work")
+	wantSHA := runGitForTest(t, cr.Path, "rev-parse", "HEAD")
+
+	res, err := h.PushBranch(context.Background(), &protocol.PushBranchCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-push", WorkspaceID: "ws-push"},
+	})
+	if err != nil {
+		t.Fatalf("PushBranch: %v", err)
+	}
+	if !res.Pushed {
+		t.Error("want Pushed=true")
+	}
+
+	out := runGitForTest(t, "", "ls-remote", cloneURL, "refs/heads/main")
+	if !strings.Contains(out, wantSHA) {
+		t.Errorf("remote main not updated to %s: ls-remote output=%q", wantSHA, out)
+	}
+}
+
+func TestRealHandler_PushBranch_UnknownWorkspace_Errors(t *testing.T) {
+	h := realHandlerWithNoopClone(t)
+	_, err := h.PushBranch(context.Background(), &protocol.PushBranchCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "missing"},
+	})
+	if !errors.Is(err, ErrUnknownWorkspace) {
+		t.Errorf("want ErrUnknownWorkspace, got %v", err)
+	}
+}
+
+func TestRealHandler_PushBranch_DetachedHead_Errors(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not on PATH")
+	}
+	cloneURL, headSHA := localBareRepo(t)
+	h := NewRealHandler(RealHandlerConfig{Root: t.TempDir()})
+	cmd := newProvision("ws-detached-push")
+	cmd.Repo.CloneURL = cloneURL
+	cmd.Repo.HeadSHA = headSHA
+	cmd.Auth = protocol.AuthBlock{}
+	if _, err := h.ProvisionWorkspace(context.Background(), cmd); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	_, err := h.PushBranch(context.Background(), &protocol.PushBranchCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c", WorkspaceID: "ws-detached-push"},
+	})
+	if err == nil {
+		t.Fatal("want error when HEAD is detached")
+	}
+	if !strings.Contains(err.Error(), "not a named branch") {
+		t.Errorf("err: want 'not a named branch' substring, got %q", err.Error())
+	}
+}
+
+func TestPushURLWithCurrentToken_UsesRefreshedTokenNotStaleOne(t *testing.T) {
+	// PushBranch must rebuild the push URL from the *current* in-memory
+	// token — RefreshWorkspaceAuth only updates realSlot.authTok, never a
+	// stored origin-remote URL, so this is the seam that guarantees a push
+	// run right after a credential rotation can't silently fall back to a
+	// stale clone-time token.
+	slot := &realSlot{
+		path:     "/unused",
+		repo:     protocol.RepoRef{CloneURL: "https://github.com/acme/web.git"},
+		authKind: "github_installation",
+		authTok:  secret.New("stale-token"),
+	}
+	slot.authTok = secret.New("fresh-token") // simulates RefreshAuth having run
+
+	got, err := pushURLWithCurrentToken(slot)
+	if err != nil {
+		t.Fatalf("pushURLWithCurrentToken: %v", err)
+	}
+	if !strings.Contains(got, "fresh-token") {
+		t.Errorf("want fresh-token in push URL, got %q", got)
+	}
+	if strings.Contains(got, "stale-token") {
+		t.Errorf("stale token leaked into push URL: %q", got)
+	}
+}
+
+// ── skill_path pre-spawn check ───────────────────────────────────────────
+
+func TestRealHandler_RunClaude_SkillNotFound_ReturnsDeterministicFailure(t *testing.T) {
+	h := realHandlerWithNoopClone(t)
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+
+	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     ".claude/skills/pr_review/SKILL.md",
+	})
+	if err == nil {
+		t.Fatal("want error when skill_path is absent from the checkout")
+	}
+	want := "skill not found: .claude/skills/pr_review/SKILL.md"
+	if err.Error() != want {
+		t.Errorf("err: want %q got %q", want, err.Error())
+	}
+}
+
+func TestRealHandler_RunClaude_EmptySkillPath_ReturnsDeterministicFailure(t *testing.T) {
+	// An empty SkillPath must not silently pass the pre-spawn check: prior
+	// to this guard, filepath.Join(slot.path, "") == slot.path, which
+	// always exists, so the check became a no-op instead of catching a
+	// caller that forgot to set skill_path.
+	h := realHandlerWithNoopClone(t)
+	h.ProvisionWorkspace(context.Background(), newProvision("ws-1")) //nolint:errcheck
+
+	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     "",
+	})
+	if err == nil {
+		t.Fatal("want error when skill_path is empty")
+	}
+	want := "skill not found: (empty skill_path)"
+	if err.Error() != want {
+		t.Errorf("err: want %q got %q", want, err.Error())
+	}
+}
+
+func TestRealHandler_RunClaude_SkillFound_Proceeds(t *testing.T) {
+	fake := fakeRunFunc(&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond}, nil, nil)
+	h := realHandlerWithFakeRun(t, fake)
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+
+	skillRel := ".claude/skills/pr_review/SKILL.md"
+	full := filepath.Join(cr.Path, skillRel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte("# skill"), 0o644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+
+	_, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     skillRel,
+	})
+	if err != nil {
+		t.Fatalf("RunClaude: %v (skill file present — should proceed)", err)
+	}
+}
+
+// ── artifact collection matrix ───────────────────────────────────────────
+
+// tmpDirFromEnv extracts the TMPDIR value RunClaude set on the fake
+// RunFunc's env — the same directory the real subprocess would write
+// $TMPDIR/<command_id>.md into.
+func tmpDirFromEnv(env []string) string {
+	for _, kv := range env {
+		if rest, ok := strings.CutPrefix(kv, "TMPDIR="); ok {
+			return rest
+		}
+	}
+	return ""
+}
+
+func TestRealHandler_RunClaude_Artifact_PresentUnderCap(t *testing.T) {
+	const cmdID = "c-inv"
+	const body = "# Requirements\ndone"
+	fake := fakeRunFunc(
+		&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond},
+		nil,
+		func(opts RunStreamingOptions) {
+			// Simulate the skill writing $TMPDIR/<command_id>.md before
+			// claude exits.
+			tmpDir := tmpDirFromEnv(opts.Env)
+			if err := os.WriteFile(filepath.Join(tmpDir, cmdID+".md"), []byte(body), 0o644); err != nil {
+				t.Fatalf("write artifact: %v", err)
+			}
+		},
+	)
+	h := realHandlerWithFakeRun(t, fake)
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
+
+	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: cmdID, WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
+	})
+	if err != nil {
+		t.Fatalf("RunClaude: %v", err)
+	}
+	if res.Artifact == nil {
+		t.Fatal("want Artifact set, got nil")
+	}
+	if *res.Artifact != body {
+		t.Errorf("Artifact: want %q got %q", body, *res.Artifact)
+	}
+	if res.ArtifactError != "" {
+		t.Errorf("ArtifactError: want empty, got %q", res.ArtifactError)
+	}
+}
+
+func TestRealHandler_RunClaude_Artifact_MissingFile_NilBodyNoError(t *testing.T) {
+	fake := fakeRunFunc(&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond}, nil, nil)
+	h := realHandlerWithFakeRun(t, fake)
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
+
+	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
+	})
+	if err != nil {
+		t.Fatalf("RunClaude: %v", err)
+	}
+	if res.Artifact != nil {
+		t.Errorf("Artifact: want nil (skill wrote none), got %q", *res.Artifact)
+	}
+	if res.ArtifactError != "" {
+		t.Errorf("ArtifactError: want empty — a missing file is not an error, got %q", res.ArtifactError)
+	}
+}
+
+func TestRealHandler_RunClaude_Artifact_OverCap_NilBodyWithError(t *testing.T) {
+	const cmdID = "c-inv"
+	fake := fakeRunFunc(
+		&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond},
+		nil,
+		func(opts RunStreamingOptions) {
+			tmpDir := tmpDirFromEnv(opts.Env)
+			oversized := make([]byte, artifactMaxBytes+1)
+			if err := os.WriteFile(filepath.Join(tmpDir, cmdID+".md"), oversized, 0o644); err != nil {
+				t.Fatalf("write artifact: %v", err)
+			}
+		},
+	)
+	h := realHandlerWithFakeRun(t, fake)
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
+
+	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: cmdID, WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
+	})
+	if err != nil {
+		t.Fatalf("RunClaude: %v", err)
+	}
+	if res.Artifact != nil {
+		t.Error("Artifact: want nil for an over-cap file, got non-nil")
+	}
+	if res.ArtifactError == "" {
+		t.Error("ArtifactError: want set to distinguish over-cap from wrote-none, got empty")
+	}
+}
+
+func TestRealHandler_RunClaude_Artifact_ExactlyAtCap_Succeeds(t *testing.T) {
+	// Boundary case for the cap comparison: a file exactly `artifactMaxBytes`
+	// long must be accepted, not rejected — the over-cap test above only
+	// covers `+1`. Locks the off-by-one contract across the readArtifact
+	// implementation (Stat+ReadFile today; io.LimitReader after the TOCTOU
+	// fix) so a refactor can't silently shift the boundary.
+	const cmdID = "c-inv"
+	fake := fakeRunFunc(
+		&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond},
+		nil,
+		func(opts RunStreamingOptions) {
+			tmpDir := tmpDirFromEnv(opts.Env)
+			exact := make([]byte, artifactMaxBytes)
+			if err := os.WriteFile(filepath.Join(tmpDir, cmdID+".md"), exact, 0o644); err != nil {
+				t.Fatalf("write artifact: %v", err)
+			}
+		},
+	)
+	h := realHandlerWithFakeRun(t, fake)
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
+	writeTestSkill(t, cr.Path)
+
+	res, err := h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: cmdID, WorkspaceID: "ws-1"},
+		Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+		SkillPath:     testSkillPath,
+	})
+	if err != nil {
+		t.Fatalf("RunClaude: %v", err)
+	}
+	if res.Artifact == nil {
+		t.Fatal("want Artifact set for a file exactly at the cap, got nil")
+	}
+	if len(*res.Artifact) != artifactMaxBytes {
+		t.Errorf("Artifact length: want %d got %d", artifactMaxBytes, len(*res.Artifact))
+	}
+	if res.ArtifactError != "" {
+		t.Errorf("ArtifactError: want empty for exactly-at-cap, got %q", res.ArtifactError)
+	}
+}
+
+// ── push-conditionality ───────────────────────────────────────────────────
+
+// runGitForTest runs `git <args...>` in `dir` and fails the test on error.
+// Returns trimmed combined output for callers that need it (e.g. ls-remote).
+func runGitForTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	c := exec.Command("git", args...)
+	if dir != "" {
+		c.Dir = dir
+	}
+	c.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=yaaos", "GIT_AUTHOR_EMAIL=yaaos@test",
+		"GIT_COMMITTER_NAME=yaaos", "GIT_COMMITTER_EMAIL=yaaos@test",
+	)
+	out, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %q: %v\n%s", args, dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestRealHandler_RunClaude_PushConditionality(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not on PATH; install with `apk add git` to exercise real-clone push tests")
+	}
+	successRun := fakeRunFunc(&RunStreamingResult{ExitCode: 0, Duration: time.Millisecond}, nil, nil)
+
+	t.Run("detached_head_skips_push", func(t *testing.T) {
+		// Real ProvisionWorkspace always lands detached today (see
+		// gitClone) — review-flow workspaces never commit, so RunClaude
+		// must not fail trying to push one.
+		cloneURL, headSHA := localBareRepo(t)
+		h := NewRealHandler(RealHandlerConfig{Root: t.TempDir(), RunFunc: successRun})
+		cmd := newProvision("ws-detached")
+		cmd.Repo.CloneURL = cloneURL
+		cmd.Repo.HeadSHA = headSHA
+		cmd.Repo.BranchName = "main"
+		cmd.History = 1
+		cmd.Auth = protocol.AuthBlock{}
+		cr, err := h.ProvisionWorkspace(context.Background(), cmd)
+		if err != nil {
+			t.Fatalf("provision: %v", err)
+		}
+		writeTestSkill(t, cr.Path)
+
+		_, err = h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+			CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-detached"},
+			Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+			SkillPath:     testSkillPath,
+		})
+		if err != nil {
+			t.Fatalf("RunClaude: %v (detached HEAD should skip push, not fail)", err)
+		}
+	})
+
+	t.Run("named_branch_with_new_commit_pushes", func(t *testing.T) {
+		cloneURL, headSHA := localBareRepo(t)
+		h := NewRealHandler(RealHandlerConfig{Root: t.TempDir(), RunFunc: successRun})
+		cmd := newProvision("ws-named")
+		cmd.Repo.CloneURL = cloneURL
+		cmd.Repo.HeadSHA = headSHA
+		cmd.Repo.BranchName = "main"
+		cmd.History = 1
+		cmd.Auth = protocol.AuthBlock{}
+		cr, err := h.ProvisionWorkspace(context.Background(), cmd)
+		if err != nil {
+			t.Fatalf("provision: %v", err)
+		}
+		writeTestSkill(t, cr.Path)
+
+		// Simulate a checkout onto a named work branch + a skill commit —
+		// the durable-before-boundary invariant this push rule serves.
+		runGitForTest(t, cr.Path, "checkout", "-b", "work-branch")
+		if err := os.WriteFile(filepath.Join(cr.Path, "new-file.txt"), []byte("new"), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		runGitForTest(t, cr.Path, "add", ".")
+		runGitForTest(t, cr.Path, "commit", "-m", "work")
+
+		_, err = h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+			CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-named"},
+			Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+			SkillPath:     testSkillPath,
+		})
+		if err != nil {
+			t.Fatalf("RunClaude: %v", err)
+		}
+
+		out := runGitForTest(t, "", "ls-remote", cloneURL, "refs/heads/work-branch")
+		if out == "" {
+			t.Error("expected work-branch to have been pushed to origin; ls-remote returned nothing")
+		}
+	})
+
+	t.Run("named_branch_no_new_commits_is_noop", func(t *testing.T) {
+		cloneURL, headSHA := localBareRepo(t)
+		h := NewRealHandler(RealHandlerConfig{Root: t.TempDir(), RunFunc: successRun})
+		cmd := newProvision("ws-noop")
+		cmd.Repo.CloneURL = cloneURL
+		cmd.Repo.HeadSHA = headSHA
+		cmd.Repo.BranchName = "main"
+		cmd.History = 1
+		cmd.Auth = protocol.AuthBlock{}
+		cr, err := h.ProvisionWorkspace(context.Background(), cmd)
+		if err != nil {
+			t.Fatalf("provision: %v", err)
+		}
+		writeTestSkill(t, cr.Path)
+
+		// Local branch shares the remote's name + SHA — no new commits, so
+		// the push is "Everything up-to-date", not a failure. `--branch
+		// main` on the initial clone already left a local `main` branch
+		// (gitClone only detaches HEAD afterward), so switch to it rather
+		// than re-creating it.
+		runGitForTest(t, cr.Path, "checkout", "main")
+
+		_, err = h.RunClaude(context.Background(), &protocol.InvokeClaudeCodeCommand{
+			CommandHeader: protocol.CommandHeader{CommandID: "c-inv", WorkspaceID: "ws-noop"},
+			Invocation:    rawInvocation(t, []string{"claude"}, "", map[string]string{}),
+			SkillPath:     testSkillPath,
+		})
+		if err != nil {
+			t.Fatalf("RunClaude: %v (no-op push should not fail)", err)
+		}
+	})
 }

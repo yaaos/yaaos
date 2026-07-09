@@ -1,8 +1,9 @@
 """GitHub intake type — status-change producer contract.
 
 The HTTP boundary, signature verification, and install-binding lookups are
-covered by sibling test files. Here we drive `_prepare_pr_review` directly
-so the assertion stays focused on the status-change side effects.
+covered by sibling test files. Here we drive `_prepare_review_or_run`
+directly against a bound repo so the assertion stays focused on the
+status-change side effects.
 
 The durable outbox + Redis-based SSE path is covered by
 `test_intake_producer_service.py` (requires Redis). This file asserts on the
@@ -14,59 +15,21 @@ so no `notifications.fanout` row is expected for PR-opened.
 
 from __future__ import annotations
 
-from typing import Literal
 from uuid import uuid4
 
 import pytest
 
+from app.core.audit_log import Actor
 from app.core.tasks import get_pending_outbox_payloads
-from app.core.workflow import (
-    CommandContext,
-    Empty,
-    Outcome,
-    TerminalAction,
-    Workflow,
-    step,
-)
+from app.domain.orgs import create_org
+from app.domain.pipelines import ActionStage, PipelineDefinition, create_pipeline
+from app.domain.repos import TriggerBindingSpec, add_binding
 from app.plugins.github.intake_type import GithubIntakeType
-from app.testing.workflow_harness import set_engine_for_tests
-
-
-class _NoopLocal:
-    kind: Literal["Noop"] = "Noop"
-    Inputs = Empty
-    Outputs = Empty
-    restart_safe = True
-
-    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
-        del inputs, ctx, session
-        return Outcome.success()
-
-
-_noop_step = step(_NoopLocal)
-
-
-@pytest.fixture
-def _stub_pr_review_engine():  # type: ignore[no-untyped-def]
-    """Register a one-step `pr_review_v1` workflow so `_prepare_pr_review`'s
-    `engine.start(workflow_name="pr_review_v1", ...)` resolves without
-    pulling in the full reviewer command set."""
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(
-            Workflow(
-                name="pr_review_v1",
-                version=1,
-                steps=(_noop_step,),
-                entry=_noop_step,
-                transitions={_noop_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
-            )
-        )
-        yield eng
 
 
 def _pr_opened_payload() -> dict:
     """Minimal `pull_request.opened` body — enough for `_parse_pr` plus the
-    fork / bot filters that `_prepare_pr_review` runs before insert."""
+    fork / bot filters that `_prepare_pipeline_runs` runs before insert."""
     pr = {
         "number": 7,
         "title": "T",
@@ -93,14 +56,37 @@ def _pr_opened_payload() -> dict:
     return {"action": "opened", "pull_request": pr, "repository": {"full_name": "acme/web"}}
 
 
+async def _seed_bound_org(db_session):  # type: ignore[no-untyped-def]
+    org = await create_org(db_session, slug=f"intake-type-org-{uuid4().hex[:8]}", display_name="Intake Org")
+    await db_session.flush()
+    pipeline_id = await create_pipeline(
+        org_id=org.id,
+        definition=PipelineDefinition(
+            name=f"pipeline-{uuid4().hex[:6]}", stages=(ActionStage(action_id="github:create_pr"),)
+        ),
+        actor=Actor.system(),
+        session=db_session,
+    )
+    await add_binding(
+        org.id,
+        "acme/web",
+        spec=TriggerBindingSpec(intake_point_id="github:pr_opened", pipeline_id=pipeline_id),
+        actor=Actor.system(),
+        session=db_session,
+    )
+    await db_session.commit()
+    return org.id
+
+
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_prepare_pr_review_enqueues_ticket_status_change(db_session, _stub_pr_review_engine) -> None:
-    """A GitHub PR-opened webhook must publish a SSE ticket_status_changed event;
-    no fanout notification row is expected because 'running' does not warrant
-    user notifications per tickets.build_status_change_specs."""
-    org_id = uuid4()
-    outcome = await GithubIntakeType()._prepare_pr_review(
+async def test_prepare_pipeline_runs_enqueues_ticket_status_change(db_session) -> None:
+    """A GitHub PR-opened webhook on a bound repo must publish a SSE
+    ticket_status_changed event; no fanout notification row is expected
+    because 'pending' does not warrant user notifications per
+    tickets.build_status_change_specs."""
+    org_id = await _seed_bound_org(db_session)
+    outcome = await GithubIntakeType()._prepare_review_or_run(
         payload=_pr_opened_payload(),
         delivery="evt-test-1",
         org_id=org_id,
@@ -108,9 +94,9 @@ async def test_prepare_pr_review_enqueues_ticket_status_change(db_session, _stub
     )
     await db_session.commit()
 
-    assert outcome.detail == "pr_review_started"
+    assert outcome.detail == "pipeline_run_started"
 
-    # `running` is not in the notification-worthy set; no fanout row expected.
+    # `pending` is not in the notification-worthy set; no fanout row expected.
     payloads = await get_pending_outbox_payloads(db_session)
     fanout_rows = [p for p in payloads if p.get("task_name") == "notifications.fanout"]
-    assert len(fanout_rows) == 0, f"'running' status should not enqueue a fanout row, got {len(fanout_rows)}"
+    assert len(fanout_rows) == 0, f"'pending' status should not enqueue a fanout row, got {len(fanout_rows)}"

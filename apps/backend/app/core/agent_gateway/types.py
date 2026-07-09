@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer, model_validator
 
 # ── Discriminator + shared base ─────────────────────────────────────────
 
@@ -26,6 +26,7 @@ class AgentCommandKind(StrEnum):
     REFRESH_WORKSPACE_AUTH = "RefreshWorkspaceAuth"
     INVOKE_CLAUDE_CODE = "InvokeClaudeCode"
     CLEANUP_WORKSPACE = "CleanupWorkspace"
+    PUSH_BRANCH = "PushBranch"
     CONFIG_UPDATE = "ConfigUpdate"
     SHUTDOWN = "Shutdown"
     CANCEL_SHUTDOWN = "CancelShutdown"
@@ -41,13 +42,21 @@ class _CommandBase(BaseModel):
     # serialize its real value to the agent over the wire — same rationale as
     # `AuthBlock.token`. NEVER log this field.
     completion_token: str | None = None
-    # Workflow execution that dispatched this command. Stamped at enqueue time so
-    # agent-side spans can carry workflow_id without a separate lookup. NULL for
-    # agent-scoped commands (ConfigUpdate) that do not correlate to a workflow.
-    workflow_execution_id: UUID | None = None
+    # Pipeline run that dispatched this command. Stamped at enqueue time so
+    # agent-side spans can carry run_id without a separate lookup. NULL for
+    # agent-scoped commands (ConfigUpdate) that do not correlate to a run.
+    run_id: UUID | None = None
 
 
 # ── The five concrete AgentCommand kinds ────────────────────────────────
+
+
+# Backend-supplied commit identity applied via `git config user.name`/
+# `user.email` in every provisioned checkout. Not user-configurable — the
+# first skill commit fails without an identity, and there is no per-org or
+# per-repo override today.
+DEFAULT_GIT_USER_NAME = "yaaos"
+DEFAULT_GIT_USER_EMAIL = "yaaos[bot]@users.noreply.github.com"
 
 
 class RepoRef(BaseModel):
@@ -55,9 +64,19 @@ class RepoRef(BaseModel):
     plugin_id: str
     external_id: str
     clone_url: str
-    head_sha: str
+    # Checkout instruction: exactly one of head_sha (detached pin — the
+    # fork-safe fetch-by-SHA path review flows use) or branch_name (named
+    # work branch; the agent checks it out with `git checkout -B`, tracking
+    # the remote when it already exists) must be set.
+    head_sha: str | None = None
     base_sha: str | None = None
     branch_name: str | None = None
+
+    @model_validator(mode="after")
+    def _check_checkout_mode(self) -> RepoRef:
+        if bool(self.head_sha) == bool(self.branch_name):
+            raise ValueError("RepoRef requires exactly one of head_sha or branch_name (checkout instruction)")
+        return self
 
 
 class AuthBlock(BaseModel):
@@ -73,6 +92,11 @@ class ProvisionWorkspaceCommand(_CommandBase):
     auth: AuthBlock
     ttl_seconds: int = Field(ge=60)
     max_idle_seconds: int = Field(ge=60)
+    # Commit identity the agent applies via `git config user.name`/
+    # `user.email` after clone. Backend-supplied constants — see
+    # DEFAULT_GIT_USER_NAME / DEFAULT_GIT_USER_EMAIL above.
+    git_user_name: str = DEFAULT_GIT_USER_NAME
+    git_user_email: str = DEFAULT_GIT_USER_EMAIL
 
 
 class WriteFilesEntry(BaseModel):
@@ -105,10 +129,27 @@ class InvokeClaudeCodeCommand(_CommandBase):
     mcp_servers: tuple[dict[str, Any], ...] = ()
     limits: InvokeClaudeCodeLimits
     result_spec: dict[str, Any] = Field(default_factory=dict)
+    # Conventional path of the named skill inside the checkout
+    # (`.claude/skills/<skill_name>/SKILL.md`), computed by
+    # `core/coding_agent.dispatch_invocation`. The agent stats this path
+    # before spawning claude and fails deterministically when it's absent —
+    # zero agent policy, the convention lives here.
+    skill_path: str
 
 
 class CleanupWorkspaceCommand(_CommandBase):
     kind: Literal[AgentCommandKind.CLEANUP_WORKSPACE] = AgentCommandKind.CLEANUP_WORKSPACE
+
+
+class PushBranchCommand(_CommandBase):
+    """Push-failure recovery only: a bare re-push of the workspace's current
+    HEAD after a `refresh-auth` credential rotation, so claude is never
+    re-run just to retry a push. `workspace_id` (on `_CommandBase`) is
+    required — the workspace is expected to already be on its named work
+    branch by provision's checkout invariant.
+    """
+
+    kind: Literal[AgentCommandKind.PUSH_BRANCH] = AgentCommandKind.PUSH_BRANCH
 
 
 class InvokeClaudeCodeFields(BaseModel):
@@ -116,7 +157,7 @@ class InvokeClaudeCodeFields(BaseModel):
 
     Carries only the command-kind-specific fields — no envelope keys
     (`kind`, `command_id`, `workspace_id`, `traceparent`, `completion_token`,
-    `workflow_execution_id`). Those are owned and injected by
+    `run_id`). Those are owned and injected by
     `enqueue_command_payload` after this model is serialised, ensuring
     they cannot be overwritten by the caller.
 
@@ -131,6 +172,8 @@ class InvokeClaudeCodeFields(BaseModel):
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
     limits: dict[str, Any]
     result_spec: dict[str, Any] = Field(default_factory=dict)
+    # See InvokeClaudeCodeCommand.skill_path.
+    skill_path: str
 
 
 class AgentConfig(BaseModel):
@@ -216,7 +259,7 @@ class ShutdownCommand(BaseModel):
     traceparent: str
     kind: Literal[AgentCommandKind.SHUTDOWN] = AgentCommandKind.SHUTDOWN
     completion_token: str | None = None
-    workflow_execution_id: UUID | None = None
+    run_id: UUID | None = None
 
 
 class CancelShutdownCommand(BaseModel):
@@ -231,7 +274,7 @@ class CancelShutdownCommand(BaseModel):
     traceparent: str
     kind: Literal[AgentCommandKind.CANCEL_SHUTDOWN] = AgentCommandKind.CANCEL_SHUTDOWN
     completion_token: str | None = None
-    workflow_execution_id: UUID | None = None
+    run_id: UUID | None = None
 
 
 AgentCommand = Annotated[
@@ -240,6 +283,7 @@ AgentCommand = Annotated[
     | RefreshWorkspaceAuthCommand
     | InvokeClaudeCodeCommand
     | CleanupWorkspaceCommand
+    | PushBranchCommand
     | ConfigUpdateCommand
     | ShutdownCommand
     | CancelShutdownCommand,
@@ -267,6 +311,19 @@ TERMINAL_EVENT_KINDS: frozenset[AgentEventKind] = frozenset(
 )
 
 
+class Artifact(BaseModel):
+    """Agent-collected artifact body for an InvokeClaudeCode terminal event.
+
+    Populated when the skill wrote `$TMPDIR/<command_id>.md` and the file fit
+    under the agent's size cap. `AgentEvent.artifact_error` explains why this
+    is null despite a completed invocation (over-cap or read failure);
+    both fields null means the skill legitimately wrote no artifact.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    body: str
+
+
 class AgentEvent(BaseModel):
     model_config = ConfigDict(frozen=True)
     command_id: UUID
@@ -281,6 +338,12 @@ class AgentEvent(BaseModel):
     # against `agent_commands.completion_token_hash` before any side effect.
     # NEVER log this field.
     completion_token: str | None = None
+    # Agent-collected artifact content (see Artifact) — set on InvokeClaudeCode
+    # terminal events when the skill wrote `$TMPDIR/<command_id>.md`.
+    artifact: Artifact | None = None
+    # Set when the artifact file exceeded the agent's size cap or otherwise
+    # couldn't be read — distinguishes "wrote none" from "wrote too much".
+    artifact_error: str | None = None
 
     def is_terminal(self) -> bool:
         return self.kind in TERMINAL_EVENT_KINDS
@@ -386,6 +449,29 @@ class AgentRef(BaseModel):
     instance_id: str
 
 
+# ── Dispatch context ─────────────────────────────────────────────────────
+
+
+class DispatchContext(BaseModel):
+    """Correlation context passed to every dispatch helper in
+    `core/coding_agent` and `core/workspace` (`dispatch_invocation`,
+    `dispatch_provision`, `dispatch_cleanup`, `dispatch_auth_refresh`,
+    `dispatch_push`, `dispatch_via_workspace`).
+
+    Lives here (not in `domain/pipelines`) so the two `core` modules that
+    consume it never import a `domain` module — `core/coding_agent` and
+    `core/workspace` sit below `domain/pipelines` in the layer graph.
+    `domain/pipelines`' run engine is the sole production constructor.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    run_id: UUID
+    ticket_id: UUID
+    stage_execution_id: UUID
+    attempt: int
+    traceparent: str | None = None
+
+
 # ── Errors ─────────────────────────────────────────────────────────────
 
 
@@ -403,7 +489,7 @@ class CommandEventAck(BaseModel):
     """Response body for a successful `POST /api/v1/commands/{id}/events`.
 
     `command_event_outcome` is `event_recorded` — the event was persisted and any
-    workflow side-effects fired. The stale-claim case does not return this body;
+    run side-effects fired. The stale-claim case does not return this body;
     it returns `410 Gone` with `{"error": "stale_claim"}`.
     """
 

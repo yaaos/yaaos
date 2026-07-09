@@ -5,7 +5,7 @@
 ## Scope
 
 **Owns:**
-- All concrete command wire structs: `ProvisionWorkspaceCommand`, `WriteFilesCommand`, `RefreshWorkspaceAuthCommand`, `InvokeClaudeCodeCommand`, `CleanupWorkspaceCommand`, `ConfigUpdateCommand`, `ShutdownCommand`, `CancelShutdownCommand`.
+- All concrete command wire structs: `ProvisionWorkspaceCommand`, `WriteFilesCommand`, `RefreshWorkspaceAuthCommand`, `InvokeClaudeCodeCommand`, `CleanupWorkspaceCommand`, `PushBranchCommand`, `ConfigUpdateCommand`, `ShutdownCommand`, `CancelShutdownCommand`.
 - `CommandHeader` — embedded in every concrete command; carries `command_id`, `workspace_id`, `traceparent`, `kind`, `completion_token`.
 - `CommandKind` constants.
 - Event types: `AgentEvent`, `EventKind` constants.
@@ -26,7 +26,7 @@
 - **Leaf package.** `protocol` imports no other internal packages. All consumers import it; it imports nothing from them. `depguard` enforces this — see `apps/agent/.golangci.yml`.
 - **`ClaimCommand` returns raw bytes.** Decoding the union into a typed `Command` requires `command.Decode`, which lives above `protocol`. Returning `[]byte` keeps the dependency arrow pointing down.
 - **Field tags are load-bearing.** `json:` tags on every field must match the keys the backend emits and the openapi spec declares. `openapi_drift_test.go` enforces this mechanically.
-- **Flat wire shape (workspace commands).** The backend sends each workspace command's fields as a flat JSON object with `kind` embedded. Each concrete struct embeds `CommandHeader` so `kind`, `command_id`, `workspace_id`, and `traceparent` are always present. `ConfigUpdateCommand` is the one exception: it embeds `CommandHeader` but nests its payload under a `config` object (`AgentConfigWire`). `ShutdownCommand` and `CancelShutdownCommand` embed `CommandHeader` with no additional fields — they carry only routing metadata. `command.Decode` unmarshals into the relevant protocol struct directly, so the decoded shape, the OpenAPI spec, and the drift test cannot diverge.
+- **Flat wire shape (workspace commands).** The backend sends each workspace command's fields as a flat JSON object with `kind` embedded. Each concrete struct embeds `CommandHeader` so `kind`, `command_id`, `workspace_id`, and `traceparent` are always present. `ConfigUpdateCommand` is the one exception: it embeds `CommandHeader` but nests its payload under a `config` object (`AgentConfigWire`). `ShutdownCommand`, `CancelShutdownCommand`, and `PushBranchCommand` embed `CommandHeader` with no additional fields — they carry only routing metadata. `command.Decode` unmarshals into the relevant protocol struct directly, so the decoded shape, the OpenAPI spec, and the drift test cannot diverge.
 - **No agent ID in URLs for operational channels.** `Heartbeat` and `ClaimCommand` use bearer-derived identity; no `agentID` parameter is passed to these methods. The caller no longer needs to thread `agentID` into every protocol call after the initial identity exchange.
 - **`ErrStaleClaim` is the typed sentinel for HTTP 410.** `doJSON` returns `fmt.Errorf("%w", ErrStaleClaim)` on a 410 Gone response. `PostCommandEvent` inherits it automatically; callers use `errors.Is(err, protocol.ErrStaleClaim)` to detect a retired command row without string-matching. Other `doJSON` callers (Heartbeat, Deregister, ExchangeIdentity) never receive 410 in practice — the mapping is safe package-wide.
 
@@ -34,12 +34,16 @@
 
 - Do not add union-dispatch or `UnmarshalJSON` override here. Union dispatch was removed; the sole decode path is `command.Decode`.
 - `InvokeClaudeCodeCommand.Invocation` is `json.RawMessage` — the agent passes it through without parsing; the backend owns the invocation schema.
+- `InvokeClaudeCodeCommand.SkillPath` is a backend-computed convention path (`.claude/skills/<skill_name>/SKILL.md`); `RealHandler.RunClaude` rejects an empty value and stats a non-empty one, nothing more — no agent-side path construction.
+- `AgentEvent.Artifact`/`ArtifactError` are top-level fields alongside `Outputs`, not inside it — the agent-collected artifact from `$TMPDIR/<command_id>.md` rides separately from the command's typed `ToWire()` output map. See [workspace.md](workspace.md).
 - `ClaimCommand` returns `[]byte`, not a typed struct. The caller (`supervisor.claimLoop`) passes the bytes to `command.Decode`. Do not change the return type to a concrete struct — doing so would require `protocol` to import `command`, breaking the layer graph.
+- `ProvisionWorkspaceCommand.Repo.HeadSHA`/`.BranchName` is a checkout instruction — a well-formed backend command sets exactly one (`HeadSHA` → detached pin; `BranchName` → named work branch). A legacy shape with both set (`BranchName` as a `--branch` clone-speed hint alongside a required `HeadSHA`) still decodes fine — `HeadSHA` wins the checkout. See `gitClone` in [workspace.md](workspace.md).
+- `ProvisionWorkspaceCommand.GitUserName`/`.GitUserEmail` carry the commit identity the agent applies via `git config user.name`/`user.email` after clone — backend-supplied constants, not agent policy.
 
 ## Vocabulary
 
 - **Wire struct** — a Go struct whose JSON tags exactly match the backend OpenAPI spec fields for one command kind or event.
-- **CommandHeader** — the routing fields every command carries: `command_id`, `workspace_id`, `traceparent`, `kind`, plus the `completion_token` capability the agent echoes on its events, and `workflow_execution_id` (the workflow execution that dispatched the command; empty for agent-scoped commands like ConfigUpdate).
+- **CommandHeader** — the routing fields every command carries: `command_id`, `workspace_id`, `traceparent`, `kind`, plus the `completion_token` capability the agent echoes on its events, and `run_id` (the pipeline run that dispatched the command; empty for agent-scoped commands like ConfigUpdate).
 - **Leaf** — a package with no internal imports; safe for any layer to import without cycles.
 
 ## Endpoint URLs

@@ -1,5 +1,5 @@
+import { OrgSettingsLayout } from "@shared/components/public/layout/org-settings-layout";
 import { MembersPage } from "../MembersPage";
-import { OrgSettingsLayout } from "../OrgSettingsLayout";
 
 export function MembersSettingsPage() {
   return (

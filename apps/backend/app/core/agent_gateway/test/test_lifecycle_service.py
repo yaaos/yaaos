@@ -229,7 +229,7 @@ async def test_record_agent_event_configupdate_marks_configured(db_session) -> N
         id=cmd_id,
         org_id=org_id,
         workspace_id=None,
-        workflow_execution_id=None,
+        run_id=None,
         command_kind=AgentCommandKind.CONFIG_UPDATE,
         payload={},
         status="delivered",

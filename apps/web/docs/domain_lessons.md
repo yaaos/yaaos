@@ -1,6 +1,6 @@
 # domain/lessons
 
-> Per-repo lessons management — institutional memory fed into reviewer prompt assembly.
+> Per-repo lessons management — institutional memory recorded for a repo.
 
 ## Scope
 

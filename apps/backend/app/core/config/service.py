@@ -124,8 +124,15 @@ class Settings(BaseSettings):
     yaaos_session_lifetime_seconds: int = 60 * 60 * 24 * 14  # 14 days
 
     # Orphan-ticket sweep grace window. A `running` ticket older than this
-    # threshold with no active workflow execution is flipped to `failed`.
+    # threshold with no active pipeline run is flipped to `failed`.
     yaaos_ticket_orphan_grace_seconds: int = 300  # 5 min
+
+    # Pipeline-run stall sweep grace window. A `running` pipeline_runs row
+    # with no pending agent command and an `updated_at` older than this
+    # threshold is treated as stalled (its next dispatch message was lost)
+    # and re-routed. Also gates the lost-resume reconciliation so a
+    # synthetic resume never races the real terminal-event resume.
+    yaaos_run_stall_threshold_seconds: int = 300  # 5 min
 
     # The platform yaaos GitHub App — used for per-org installs only
     # (app_id/private_key/webhook_secret drive installation-token minting + the
@@ -201,7 +208,7 @@ class Settings(BaseSettings):
     # production by the model validator below — a prod deployment that stubbed
     # either would silently fake reviews. Safe default is False.
     yaaos_coding_agent_stub: bool = False  # stubs the coding-agent + workspace providers
-    yaaos_reviewer_classifier_stub: bool = False  # stubs the reviewer reply classifier
+    yaaos_pr_comment_classifier_stub: bool = False  # stubs domain/pr_review's comment classifier
 
     # Service version string exposed in /api/health and OTel resource attrs.
     # Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a
@@ -233,8 +240,8 @@ class Settings(BaseSettings):
             forbidden.append("YAAOS_STS_HOST_OVERRIDE")
         if self.yaaos_coding_agent_stub:
             forbidden.append("YAAOS_CODING_AGENT_STUB")
-        if self.yaaos_reviewer_classifier_stub:
-            forbidden.append("YAAOS_REVIEWER_CLASSIFIER_STUB")
+        if self.yaaos_pr_comment_classifier_stub:
+            forbidden.append("YAAOS_PR_COMMENT_CLASSIFIER_STUB")
         if forbidden:
             raise ValueError(
                 f"{', '.join(forbidden)} set but APP_MODE=production. These enable "

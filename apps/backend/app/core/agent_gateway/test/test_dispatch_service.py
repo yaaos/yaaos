@@ -3,7 +3,7 @@
 Two scenarios:
 - `test_enqueue_command_span_attributes` — happy path: the span is emitted with
   the expected name and attributes (`kind`, `command_id`, `workspace_id`,
-  `workflow_id`).
+  `run_id`).
 - `test_enqueue_command_span_records_error` — error path: a duplicate-PK
   constraint violation causes the span to record the exception and carry
   `StatusCode.ERROR`.
@@ -55,9 +55,9 @@ def _make_provision_cmd(workspace_id: UUID | None = None) -> ProvisionWorkspaceC
 @pytest.mark.asyncio
 async def test_enqueue_command_span_attributes(db_session) -> None:
     """`enqueue_command` emits exactly one `agent_command.dispatch.ProvisionWorkspace`
-    span with `kind`, `command_id`, `workspace_id`, and `workflow_id` attributes."""
+    span with `kind`, `command_id`, `workspace_id`, and `run_id` attributes."""
     org_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     cmd = _make_provision_cmd()
 
     with span_capture() as exporter:
@@ -65,7 +65,7 @@ async def test_enqueue_command_span_attributes(db_session) -> None:
             org_id,
             cmd,
             session=db_session,
-            workflow_execution_id=workflow_id,
+            run_id=run_id,
         )
 
     spans = exporter.get_finished_spans()
@@ -81,12 +81,12 @@ async def test_enqueue_command_span_attributes(db_session) -> None:
     assert attrs.get("kind") == "ProvisionWorkspace", f"unexpected kind attr: {attrs}"
     assert attrs.get("command_id") == str(cmd.command_id), f"unexpected command_id attr: {attrs}"
     assert attrs.get("workspace_id") == str(cmd.workspace_id), f"unexpected workspace_id attr: {attrs}"
-    assert attrs.get("workflow_id") == str(workflow_id), f"unexpected workflow_id attr: {attrs}"
+    assert attrs.get("run_id") == str(run_id), f"unexpected run_id attr: {attrs}"
 
 
 @pytest.mark.asyncio
-async def test_enqueue_command_span_no_workflow_id(db_session) -> None:
-    """`enqueue_command` with no `workflow_execution_id` sets `workflow_id` to empty string."""
+async def test_enqueue_command_span_no_run_id(db_session) -> None:
+    """`enqueue_command` with no `run_id` sets `run_id` to empty string."""
     org_id = uuid4()
     cmd = _make_provision_cmd()
 
@@ -100,7 +100,7 @@ async def test_enqueue_command_span_no_workflow_id(db_session) -> None:
     )
     assert target is not None
     attrs = dict(target.attributes or {})
-    assert attrs.get("workflow_id") == "", f"expected empty workflow_id; got: {attrs}"
+    assert attrs.get("run_id") == "", f"expected empty run_id; got: {attrs}"
 
 
 @pytest.mark.asyncio

@@ -1,12 +1,12 @@
 import { useGithubInstallation, useGithubRepositories } from "@core/api/public/queries";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
+import { OrgSettingsLayout } from "@shared/components/public/layout/org-settings-layout";
 import { PageHeader } from "@shared/components/public/layout/page-header";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import { Skeleton } from "@shared/components/ui/skeleton";
 import { Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import { OrgSettingsLayout } from "../../OrgSettingsLayout";
 import { useClearVcs, useStartGithubInstall, useVcsState } from "../../vcs/queries";
 
 /**

@@ -8,15 +8,19 @@ Non-prod HTTP surface so each Playwright spec composes its own preconditions in 
 
 ## Public interface
 
-`service.py` exposes pure-data helpers for use without HTTP: `DEFAULT_ORG_ID`, `is_dev_env`, `reset`, `seed_bootstrap_owner`, `seed_github_install`, `seed_lesson`, `seed_user_with_session`, `stage_oauth_test_profile`, `read_and_clear_email_inbox`.
+`service.py` exposes pure-data helpers for use without HTTP: `DEFAULT_ORG_ID`, `is_dev_env`, `reset`, `seed_bootstrap_owner`, `seed_github_install`, `seed_lesson`, `seed_pipeline`, `seed_trigger_binding`, `seed_user_with_session`, `stage_oauth_test_profile`, `read_and_clear_email_inbox`.
 
 HTTP routes (prefix `/api/testing`):
 - `POST /reset` — `DELETE FROM` every table in `Base.metadata` (FK-safe, `RESTART IDENTITY CASCADE`).
 - `POST /seed/github_install` — seeds `github_app_installations` + Claude Code settings + `OrgCodingAgentRow`.
 - `POST /seed/lesson` — `{repo_external_id, title, body}`. Returns `{status, lesson_id}`.
+- `POST /seed/pipeline` — `{org_id, name, action_id?}`. Inserts a minimal one-stage (`action`) pipeline via `domain.pipelines.create_pipeline`. Returns `{id}`.
+- `POST /seed/trigger_binding` — `{org_id, repo_external_id, intake_point_id, pipeline_id}`. Inserts a repo trigger binding via `domain.repos.add_binding`. Returns `{id}`.
 - `POST /seed/bootstrap_owner` — mint user + org + Owner membership.
 - `POST /seed/user_with_session` — bind a raw session cookie to an existing or new user.
 - `POST /seed/broken_integration` — `{org_slug, provider}`. Seeds a broken `mcp_credentials` row.
+- `POST /seed/running_run` — `{org_slug, ticket_title, stage_name}`. Seeds a pipeline run in `running` state with one `stage_executions` row in `running` status. Returns `{ticket_id, run_id, stage_execution_id, org_id}`.
+- `POST /publish/workspace_activity` — `{org_id, run_id, payload: {kind, ts, message, detail}}`. Publishes a synthetic normalized activity frame on `{org_id}:workspace_activity:{run_id}` so e2e specs can drive the live-tail SSE stream without a real agent.
 
 ## Module architecture
 
@@ -29,6 +33,8 @@ HTTP routes (prefix `/api/testing`):
 | `seed_bootstrap_owner` | `identity_svc.create_user`, `create_email`, `create_oauth_identity`, `orgs.create_org`, `orgs.create_membership` |
 | `seed_github_install` | `github.record_app_install`, `byok.set`, `orgs.install_coding_agent` |
 | `seed_lesson` | `lessons.create` |
+| `seed_pipeline` | `pipelines.create_pipeline` |
+| `seed_trigger_binding` | `repos.add_binding` |
 
 ### `Base.metadata` completeness
 
@@ -44,7 +50,7 @@ Always inserts; does not check for existing rows. Pair with a fresh `reset()` in
 
 ### Consumed by e2e specs
 
-`apps/e2e/tests/_helpers.ts` wraps routes via `resetStack`, `seedGithubInstall`, `seedLesson`. `resetStack` also calls `apps/fake-github/__test/reset` in parallel.
+`apps/e2e/tests/_helpers.ts` wraps routes via `resetStack`, `seedGithubInstall`, `seedLesson`, `seedRunningRun`, `publishWorkspaceActivity`. `resetStack` also calls `apps/fake-github/__test/reset` in parallel.
 
 ## Data owned
 

@@ -230,11 +230,11 @@ def test_coding_agent_stub_in_production_refuses_to_boot(monkeypatch: pytest.Mon
         get_settings()
 
 
-def test_reviewer_classifier_stub_in_production_refuses_to_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pr_comment_classifier_stub_in_production_refuses_to_boot(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_MODE", "production")
-    monkeypatch.setenv("YAAOS_REVIEWER_CLASSIFIER_STUB", "1")
+    monkeypatch.setenv("YAAOS_PR_COMMENT_CLASSIFIER_STUB", "1")
     get_settings.cache_clear()
-    with pytest.raises(ValidationError, match="YAAOS_REVIEWER_CLASSIFIER_STUB"):
+    with pytest.raises(ValidationError, match="YAAOS_PR_COMMENT_CLASSIFIER_STUB"):
         get_settings()
 
 
@@ -243,21 +243,21 @@ def test_multiple_non_prod_only_settings_all_reported(monkeypatch: pytest.Monkey
     monkeypatch.setenv("APP_MODE", "production")
     monkeypatch.setenv("YAAOS_STS_HOST_OVERRIDE", "mock-aws:4566")
     monkeypatch.setenv("YAAOS_CODING_AGENT_STUB", "1")
-    monkeypatch.setenv("YAAOS_REVIEWER_CLASSIFIER_STUB", "1")
+    monkeypatch.setenv("YAAOS_PR_COMMENT_CLASSIFIER_STUB", "1")
     get_settings.cache_clear()
     with pytest.raises(ValidationError) as exc:
         get_settings()
     msg = str(exc.value)
     assert "YAAOS_STS_HOST_OVERRIDE" in msg
     assert "YAAOS_CODING_AGENT_STUB" in msg
-    assert "YAAOS_REVIEWER_CLASSIFIER_STUB" in msg
+    assert "YAAOS_PR_COMMENT_CLASSIFIER_STUB" in msg
 
 
 def test_stub_switches_allowed_in_non_prod(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_MODE", "test")
     monkeypatch.setenv("YAAOS_CODING_AGENT_STUB", "1")
-    monkeypatch.setenv("YAAOS_REVIEWER_CLASSIFIER_STUB", "1")
+    monkeypatch.setenv("YAAOS_PR_COMMENT_CLASSIFIER_STUB", "1")
     get_settings.cache_clear()
     s = get_settings()
     assert s.yaaos_coding_agent_stub is True
-    assert s.yaaos_reviewer_classifier_stub is True
+    assert s.yaaos_pr_comment_classifier_stub is True

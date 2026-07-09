@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Modularity workflow runner.
+"""Modularity check runner.
 
 Discovers backend modules under `apps/backend/app/core/`, `…/domain/`, `…/plugins/`;
 generates `apps/backend/tach.toml`; checks layering rules; runs `tach check`.
@@ -811,7 +811,7 @@ def _owning_module_for_file(path: Path) -> tuple[str, str] | None:
 
     A file ``app/<layer>/<name>/...`` belongs to ``app.<layer>.<name>`` iff that
     directory has an ``__init__.py``. Loose files (``app/web.py``,
-    ``app/worker.py``, ``app/testing/workflow_harness.py``) return ``None``.
+    ``app/worker.py``) return ``None``.
     """
     try:
         rel = path.resolve().relative_to(APP.resolve())
@@ -907,7 +907,7 @@ _BINDING_UNBOUND = "unbound"
 # these are NOT cardinal-rule violations (they're vocabulary, not state).
 _DATA_TYPE_BASE_HINTS: frozenset[str] = frozenset({
     "BaseModel", "Enum", "IntEnum", "StrEnum", "TypedDict", "NamedTuple",
-    "Workflow", "WorkflowInputRef", "StepRef", "TerminalAction",
+    "Workflow",
 })
 
 
@@ -1181,7 +1181,7 @@ class _PrivateReachVisitor(ast.NodeVisitor):
 
     def _is_tainted_expr(self, node: ast.expr) -> bool:
         if isinstance(node, ast.NamedExpr):
-            # (eng := get_engine())._workflows.clear() — walk the assigned value.
+            # (eng := get_registry())._entries.clear() — walk the assigned value.
             return self._is_tainted_expr(node.value)
         if isinstance(node, ast.Subscript):
             # registry["X"]._internal — walk the indexed receiver.
@@ -1261,7 +1261,7 @@ def check_private_reach(modules: list[tuple[str, str]]) -> list[str]:
     must not have its ``_private`` attributes read or written. Catches both
     shapes:
       - ``_wf_svc._engine = fresh``           (direct alias write)
-      - ``engine._workflows.pop(...)``         (taint via ``engine = get_engine()``)
+      - ``engine._entries.pop(...)``           (taint via ``engine = get_registry()``)
 
     Dunders (``__init__`` etc.) are exempt — they're Python protocol, not
     private state.
@@ -1357,7 +1357,7 @@ def check_contextvar_in_all(modules: list[tuple[str, str]]) -> list[str]:
 def check_instance_literal_in_all(modules: list[tuple[str, str]]) -> list[str]:
     """Rule-12: forbid module-level instance-literal bindings in ``__all__``.
 
-    Catches ``engine = WorkflowEngine()`` exported. Data type literals
+    Catches ``engine = _Registry()`` exported. Data type literals
     (Pydantic ``BaseModel``, ``Enum``, ``Workflow``, etc.) are exempt — they
     are vocabulary, not state.
     """

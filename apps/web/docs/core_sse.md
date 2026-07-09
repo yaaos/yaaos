@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Owns the single browser-wide `EventSource` connecting to `/api/sse/general` and maps event kinds to query cache invalidations. Domain modules consume queries; `core/sse` makes those queries refresh. The workspace-activity stream is a separate hook (`useWorkflowActivityStream`) that connects to `/api/sse/workspace_activity/{id}`.
+Owns the single browser-wide `EventSource` connecting to `/api/sse/general` and maps event kinds to query cache invalidations. Domain modules consume queries; `core/sse` makes those queries refresh.
 
 `/api/sse` is org-scoped, but the browser `EventSource` API cannot set the `X-Yaaos-Org-Slug` header. The org slug therefore rides in the `?org=<slug>` query param; the backend accepts it for `/api/sse` routes and runs it through the same membership check.
 
@@ -13,8 +13,8 @@ Owns the single browser-wide `EventSource` connecting to `/api/sse/general` and 
 Files under `core/sse/public/`, imported directly via `@core/sse/public/<file>`:
 
 - `public/subscriber.tsx` — `useServerEvents()`, `subscribe`, `getSnapshot`, `attachQueryClient`, `setOrgSlug`, `ConnectionStatus`, `SSESnapshot`, `_resetSSESubscriberForTests`.
-- `public/workflow_activity.ts` — `useWorkflowActivityStream(workflowExecutionId)` — opens per-workflow `EventSource`, yields `WorkflowActivityEvent` objects.
 - `public/types.ts` — `ServerEvent` — envelope type: `{ kind, source_module, ts, ticket_id, [extra]: unknown }`.
+- `public/run_activity.ts` — `useRunActivityTail(runId: string | null)`: hook that opens a `/api/sse/workspace_activity/{runId}?org=<slug>` `EventSource` while `runId` is non-null, appends server-normalized `ActivityEvent` frames (`{kind, ts, message, detail}`) to a capped ring buffer (500 events), and returns `{ events, lastEvent, connected }`. `connected` is `false` initially and becomes `true` once `onopen` fires (i.e. once the backend's Redis subscription is confirmed). Unmount and `runId` change both close the old stream and reset the buffer (including `connected` back to `false`). Used by `InFlightCard` (overview ticker) and `LiveStageActivity` (Runs tab activity pane).
 
 Types also exported from `public/subscriber.tsx`: `ConnectionStatus` (`"idle" | "connecting" | "connected" | "disconnected"`), `SSESnapshot` (`{ status, lastEvent: ServerEvent | null }`).
 
@@ -45,7 +45,9 @@ Status transitions:
 | Event `kind` | Invalidates |
 |---|---|
 | `ticket_status_changed` | `["tickets"]`, `["tickets", id]`, `["tickets", id, "audit"]`, `["reviewer", "metrics"]` |
-| `workflow_state_changed` | `["workflow", "runs", id]`, `["tickets", id]`, `["reviewer", "findings", id]` |
+| `run_state_changed` | `["runs", id]`, `["runs", "overview", id]`, `["tickets", id]` |
+| `stage_state_changed` | `["runs", id]`, `["runs", "stage-activity"]` (prefix — invalidates all persisted activity blobs) |
+| `artifact_stored` | `["artifacts", id]` |
 | `review_requested` / `review_started` / `review_completed` / `review_failed` / `review_superseded` | `["tickets"]`, `["tickets", "dashboard"]` |
 | `finding_raised` / `finding_re_observed` / `finding_anchor_updated` / `finding_state_changed` / `finding_acknowledged` / `finding_resolution_detected` / `finding_stale_detected` | `["tickets"]`, `["tickets", "dashboard"]` |
 | `agent_changed` | `["agents"]` |
@@ -72,5 +74,6 @@ None. The `EventSource` is per-mount.
 ## How it's tested
 
 End-to-end via `apps/e2e/tests/pr-review-end-to-end.spec.ts` ("review card state transitions live via SSE without reload") — lands on the tickets list first, then dispatches a webhook, and asserts the new ticket appears and the review posts via SSE-driven invalidations alone, no reload. Vitest coverage in `core/sse/test/`:
-- `subscriber.test.tsx` — connection lifecycle: no connection without org, StrictMode safety, org retarget, org clear, burst coalescing, `onopen` reconcile, unparseable JSON.
+- `subscriber.test.tsx` — connection lifecycle: no connection without org, StrictMode safety, org retarget, org clear, burst coalescing, `onopen` reconcile, unparseable JSON; `stage_state_changed` invalidates both `["runs", id]` and `["runs", "stage-activity"]` prefix.
 - `store.test.ts` — store contract: `getSnapshot` referential stability, status transitions (`idle`/`connecting`/`connected`/`disconnected`), `subscribe` listener fire + unsubscribe, debounce coalescing, slug-change reconnect.
+- `run-activity.test.ts` — `useRunActivityTail`: null run id skips connection; URL construction with org slug; frame appending; `lastEvent`; 500-event cap; default normalization for missing fields; unmount cleanup; run-id change resets state; malformed JSON ignored; `connected` is `false` before `onopen` and `true` after.

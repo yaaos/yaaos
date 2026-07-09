@@ -135,7 +135,7 @@ def _reset_report_sink():
 async def _seed_command(
     org_id: UUID,
     *,
-    workflow_execution_id: UUID,
+    run_id: UUID,
     session: object,
 ) -> UUID:
     """Enqueue a ProvisionWorkspaceCommand and return its command_id."""
@@ -162,7 +162,7 @@ async def _seed_command(
         org_id=org_id,
         command=command,
         session=session,
-        workflow_execution_id=workflow_execution_id,
+        run_id=run_id,
     )
     return cmd_id
 
@@ -176,12 +176,12 @@ async def test_sink_return_dict_merged_into_task_args(db_session) -> None:
     """A sink returning {"foo": "bar"} causes HANDLE_AGENT_EVENT outputs to
     carry foo="bar" alongside the native event outputs."""
     org_id = uuid4()
-    wfx_id = uuid4()
+    run_id = uuid4()
 
     run_sink = _StubRunSink(extras={"foo": "bar"})
     register_run_sink(run_sink)
 
-    cmd_id = await _seed_command(org_id, workflow_execution_id=wfx_id, session=db_session)
+    cmd_id = await _seed_command(org_id, run_id=run_id, session=db_session)
     await db_session.commit()
 
     event = AgentEvent(
@@ -202,9 +202,11 @@ async def test_sink_return_dict_merged_into_task_args(db_session) -> None:
 
     payloads = await get_pending_outbox_payloads(db_session)
     # The HANDLE_AGENT_EVENT enqueue and the seeding enqueue are both in
-    # outbox — filter to HANDLE_AGENT_EVENT by task_name.
-    handle_payloads = [p for p in payloads if p.get("task_name", "").endswith("handle_agent_event")]
-    assert len(handle_payloads) == 1, f"expected exactly one handle_agent_event; got {handle_payloads}"
+    # outbox — filter to the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
+    assert len(handle_payloads) == 1, (
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
+    )
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
     assert task_outputs["foo"] == "bar"
@@ -217,12 +219,12 @@ async def test_sink_return_overrides_same_key_in_event_outputs(db_session) -> No
     """When the sink returns a key already present in event.outputs, the sink's
     value wins (sink keys override native values)."""
     org_id = uuid4()
-    wfx_id = uuid4()
+    run_id = uuid4()
 
     run_sink = _StubRunSink(extras={"exit_code": 99})
     register_run_sink(run_sink)
 
-    cmd_id = await _seed_command(org_id, workflow_execution_id=wfx_id, session=db_session)
+    cmd_id = await _seed_command(org_id, run_id=run_id, session=db_session)
     await db_session.commit()
 
     event = AgentEvent(
@@ -240,7 +242,7 @@ async def test_sink_return_overrides_same_key_in_event_outputs(db_session) -> No
         await record_agent_event(event, session=db_session)
 
     payloads = await get_pending_outbox_payloads(db_session)
-    handle_payloads = [p for p in payloads if p.get("task_name", "").endswith("handle_agent_event")]
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
     assert len(handle_payloads) == 1
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
@@ -253,12 +255,12 @@ async def test_sink_returning_none_leaves_outputs_unchanged(db_session) -> None:
     """A sink returning None leaves the HANDLE_AGENT_EVENT outputs equal to
     event.outputs — no merge, no extra keys."""
     org_id = uuid4()
-    wfx_id = uuid4()
+    run_id = uuid4()
 
     run_sink = _StubRunSink(extras=None)
     register_run_sink(run_sink)
 
-    cmd_id = await _seed_command(org_id, workflow_execution_id=wfx_id, session=db_session)
+    cmd_id = await _seed_command(org_id, run_id=run_id, session=db_session)
     await db_session.commit()
 
     event = AgentEvent(
@@ -276,10 +278,10 @@ async def test_sink_returning_none_leaves_outputs_unchanged(db_session) -> None:
         await record_agent_event(event, session=db_session)
 
     payloads = await get_pending_outbox_payloads(db_session)
-    handle_payloads = [p for p in payloads if p.get("task_name", "").endswith("handle_agent_event")]
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
     assert len(handle_payloads) == 1
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
     # `stdout` is stripped from forwarded outputs after sink processing so
-    # downstream workflow steps cannot accidentally read the stale raw key.
+    # downstream run steps cannot accidentally read the stale raw key.
     assert task_outputs == {"exit_code": 0}

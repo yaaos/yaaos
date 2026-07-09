@@ -6,9 +6,6 @@
 payload into a `RunResult`; `validate_settings` validates and normalizes a raw
 settings dict. Plugins own skill resolution, model mapping, stdout parsing, and
 settings validation; `core/coding_agent` owns dispatch and the run lifecycle.
-
-`ReviewContext`, `ReportedFindingShape`, and `CodeReviewResponse` live in
-`domain/reviewer` — they are reviewer-domain types, not generic coding-agent types.
 """
 
 from __future__ import annotations
@@ -211,6 +208,18 @@ class CodingAgentPlugin(Protocol):
         `exit_code` populated. Does NOT determine status — the sink sets
         `RunStatus` from the wire `event_kind`. Raises `CodingAgentError`
         on irrecoverable parse failure.
+        """
+        ...
+
+    def parse_activity_line(self, line: str) -> ActivityEvent | None:
+        """Map ONE stream line from a `progress` AgentEvent into a renderable
+        `ActivityEvent`, or `None` when the line has no useful render.
+
+        Pure function — no IO, no session. Never raises: an unparseable or
+        unrenderable line returns `None` rather than an error, since a single
+        bad line must not interrupt the live tail. `seq` on the returned
+        event is not meaningful (a single line carries no run-wide ordering
+        context) and callers must not rely on it.
         """
         ...
 

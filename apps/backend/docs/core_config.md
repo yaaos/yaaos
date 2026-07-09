@@ -38,8 +38,8 @@
 
 **Non-prod-only knobs forbidden in production** — one `model_validator(mode="after")` (`_forbid_non_prod_only_settings_in_prod`) **refuses to construct `Settings`** (crashes boot with a `ValidationError`, listing every offender) when `app_mode == "production"` and any mock/stub knob is set. Each is safe-by-default (unset / `False`); dev/test compose + `conftest` set them. The guarded knobs:
 - `YAAOS_STS_HOST_OVERRIDE` (`yaaos_sts_host_override: str | None`) — allowlists an extra STS host (e.g. `mock-aws:4566`) for the agent identity-exchange replay path; `core/agent_gateway/sts_verifier` compiles it into a secondary host regex. A prod deployment must never replay against a mock STS.
-- `YAAOS_CODING_AGENT_STUB` (`yaaos_coding_agent_stub: bool`) — swaps the coding-agent + workspace providers for no-op stubs (read at the `web.py`/`worker.py` composition roots and by `plugins/claude_code` health). Stubbing in prod would silently fake all reviews.
-- `YAAOS_REVIEWER_CLASSIFIER_STUB` (`yaaos_reviewer_classifier_stub: bool`) — swaps the reviewer reply classifier for a heuristic stub (read in `domain/reviewer/llm/classifier`).
+- `YAAOS_CODING_AGENT_STUB` (`yaaos_coding_agent_stub: bool`) — swaps the coding-agent + workspace providers for no-op stubs (read at the `web.py`/`worker.py` composition roots and by `plugins/claude_code` health). Stubbing in prod would silently fake all pipeline runs.
+- `YAAOS_PR_COMMENT_CLASSIFIER_STUB` (`yaaos_pr_comment_classifier_stub: bool`) — swaps `domain/pr_review`'s comment classifier for a heuristic stub (read in `domain/pr_review/llm/classifier`).
 
 **`SERVICE_VERSION`** — `service_version: str = "0.0.0-dev"`. Version string embedded in the OTel resource (`service.version`) and served at `/api/health`. Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a safe sentinel for local/dev boots.
 

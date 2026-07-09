@@ -1485,6 +1485,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pathspec"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/82/42f767fc1c1143d6fd36efb827202a2d997a375e160a71eb2888a925aac1/pathspec-1.1.1.tar.gz", hash = "sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a", size = 135180, upload-time = "2026-04-27T01:46:08.907Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/d9/7fb5aa316bc299258e68c73ba3bddbc499654a07f151cba08f6153988714/pathspec-1.1.1-py3-none-any.whl", hash = "sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189", size = 57328, upload-time = "2026-04-27T01:46:07.06Z" },
+]
+
+[[package]]
 name = "peewee"
 version = "3.19.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2635,6 +2644,7 @@ dependencies = [
     { name = "opentelemetry-instrumentation-sqlalchemy" },
     { name = "opentelemetry-instrumentation-system-metrics" },
     { name = "opentelemetry-sdk" },
+    { name = "pathspec" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
@@ -2685,6 +2695,7 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.48b0" },
     { name = "opentelemetry-instrumentation-system-metrics", specifier = ">=0.58b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27" },
+    { name = "pathspec", specifier = ">=0.12" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pyjwt", specifier = ">=2.9" },

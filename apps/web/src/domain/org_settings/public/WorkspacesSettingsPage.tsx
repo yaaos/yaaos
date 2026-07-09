@@ -19,6 +19,7 @@ import { useAgents } from "@core/api/public/queries";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ConfirmModal } from "@shared/components/public/layout/confirm-modal";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
+import { OrgSettingsLayout } from "@shared/components/public/layout/org-settings-layout";
 import { Button } from "@shared/components/ui/button";
 import {
   Form,
@@ -35,7 +36,6 @@ import { Suspense } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { OrgSettingsLayout } from "../OrgSettingsLayout";
 import { useOrgSettings, useUpdateOrgSettings } from "../queries";
 
 const BACKEND_URL = "https://app.yaaos.dev";

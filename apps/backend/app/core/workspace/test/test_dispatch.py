@@ -40,8 +40,8 @@ async def _seed_active_workspace(db_session) -> WorkspaceRow:
 async def test_try_claim_succeeds_on_unclaimed_active_workspace(db_session) -> None:
     ws = await _seed_active_workspace(db_session)
     cmd_id = uuid7()
-    wfx_id = uuid4()
-    ok = await try_claim(ws.id, command_id=cmd_id, workflow_execution_id=wfx_id, session=db_session)
+    run_id = uuid4()
+    ok = await try_claim(ws.id, command_id=cmd_id, run_id=run_id, session=db_session)
     assert ok is True
 
     await db_session.refresh(ws)
@@ -58,11 +58,11 @@ async def test_try_claim_persists_owning_agent_id(db_session) -> None:
 
     ws = await _seed_active_workspace(db_session)
     cmd_id = uuid7()
-    wfx_id = uuid4()
+    run_id = uuid4()
     ok = await try_claim(
         ws.id,
         command_id=cmd_id,
-        workflow_execution_id=wfx_id,
+        run_id=run_id,
         agent_id=seeded["id"],
         session=db_session,
     )
@@ -78,7 +78,7 @@ async def test_try_claim_without_agent_id_preserves_existing_owner(db_session) -
     ws = await _seed_active_workspace(db_session)
     existing_owner = ws.owning_agent_id
     assert existing_owner is not None  # enforced by NOT NULL FK
-    ok = await try_claim(ws.id, command_id=uuid4(), workflow_execution_id=uuid4(), session=db_session)
+    ok = await try_claim(ws.id, command_id=uuid4(), run_id=uuid4(), session=db_session)
     assert ok is True
     await db_session.refresh(ws)
     assert ws.owning_agent_id == existing_owner
@@ -88,13 +88,11 @@ async def test_try_claim_without_agent_id_preserves_existing_owner(db_session) -
 async def test_second_claim_loses_to_first(db_session) -> None:
     ws = await _seed_active_workspace(db_session)
     first_cmd, second_cmd = uuid4(), uuid4()
-    first_wfx, second_wfx = uuid4(), uuid4()
+    first_run, second_run = uuid4(), uuid4()
 
-    assert await try_claim(ws.id, command_id=first_cmd, workflow_execution_id=first_wfx, session=db_session)
+    assert await try_claim(ws.id, command_id=first_cmd, run_id=first_run, session=db_session)
     # Second claim attempt with a different command id while the first holds.
-    assert not await try_claim(
-        ws.id, command_id=second_cmd, workflow_execution_id=second_wfx, session=db_session
-    )
+    assert not await try_claim(ws.id, command_id=second_cmd, run_id=second_run, session=db_session)
 
     await db_session.refresh(ws)
     assert ws.current_command_id == first_cmd
@@ -106,7 +104,7 @@ async def test_try_claim_refuses_non_active_workspace(db_session) -> None:
     ws.status = "expired"
     await db_session.flush()
 
-    ok = await try_claim(ws.id, command_id=uuid4(), workflow_execution_id=uuid4(), session=db_session)
+    ok = await try_claim(ws.id, command_id=uuid4(), run_id=uuid4(), session=db_session)
     assert ok is False
     await db_session.refresh(ws)
     assert ws.current_command_id is None
@@ -116,7 +114,7 @@ async def test_try_claim_refuses_non_active_workspace(db_session) -> None:
 async def test_release_claim_clears_then_next_succeeds(db_session) -> None:
     ws = await _seed_active_workspace(db_session)
     cmd_id = uuid7()
-    assert await try_claim(ws.id, command_id=cmd_id, workflow_execution_id=uuid4(), session=db_session)
+    assert await try_claim(ws.id, command_id=cmd_id, run_id=uuid4(), session=db_session)
 
     # Release returns True and clears current_command_id.
     released = await release_claim(ws.id, command_id=cmd_id, session=db_session)
@@ -128,14 +126,14 @@ async def test_release_claim_clears_then_next_succeeds(db_session) -> None:
     assert (await release_claim(ws.id, command_id=cmd_id, session=db_session)) is False
 
     # Next try_claim succeeds.
-    assert await try_claim(ws.id, command_id=uuid4(), workflow_execution_id=uuid4(), session=db_session)
+    assert await try_claim(ws.id, command_id=uuid4(), run_id=uuid4(), session=db_session)
 
 
 @pytest.mark.asyncio
 async def test_release_claim_with_wrong_command_id_is_noop(db_session) -> None:
     ws = await _seed_active_workspace(db_session)
     owner_cmd = uuid7()
-    assert await try_claim(ws.id, command_id=owner_cmd, workflow_execution_id=uuid4(), session=db_session)
+    assert await try_claim(ws.id, command_id=owner_cmd, run_id=uuid4(), session=db_session)
 
     # Release with a different command id leaves the claim intact.
     bogus = await release_claim(ws.id, command_id=uuid4(), session=db_session)

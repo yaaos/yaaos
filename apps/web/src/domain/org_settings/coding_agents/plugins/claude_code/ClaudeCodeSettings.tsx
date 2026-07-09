@@ -15,10 +15,8 @@ import { z } from "zod";
 import { type CodingAgentInstall, useCodingAgents, useUninstallCodingAgent } from "../../queries";
 import {
   useByokAnthropicStatus,
-  useClaudeCodeRepos,
   useClearByokAnthropic,
   useSetByokAnthropic,
-  useSetRepoSkill,
   useValidateByokAnthropic,
 } from "./queries";
 
@@ -71,15 +69,6 @@ function Editor({ install }: { install: CodingAgentInstall }) {
       <BrokenIntegrationsNotice />
       <BuilderReadOnlyBanner />
       <AnthropicKeyCard />
-      <ErrorBoundary
-        fallbackRender={({ resetErrorBoundary }) => (
-          <ErrorBanner message="Couldn't load repo skill names." onRetry={resetErrorBoundary} />
-        )}
-      >
-        <Suspense fallback={<p className="text-muted-foreground p-4 text-sm">Loading repos…</p>}>
-          <RepoSkillsCard />
-        </Suspense>
-      </ErrorBoundary>
       <DangerZone pluginId={install.plugin_id} />
     </div>
   );
@@ -211,103 +200,6 @@ function AnthropicKeyCard() {
           >
             {validate.data.valid ? "Key looks good." : "Key rejected."}
           </p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-// ── Repo skill names card ─────────────────────────────────────────────────────
-
-const repoSkillSchema = z.object({
-  skill_name: z.string(),
-});
-type RepoSkillValues = z.infer<typeof repoSkillSchema>;
-
-function RepoSkillRow({ repo, defaultValue }: { repo: string; defaultValue: string }) {
-  const setSkill = useSetRepoSkill();
-  const [saved, setSaved] = useState(false);
-  const form = useForm<RepoSkillValues>({
-    resolver: zodResolver(repoSkillSchema),
-    defaultValues: { skill_name: defaultValue },
-  });
-
-  const onSubmit = (values: RepoSkillValues) => {
-    setSkill.mutate(
-      { repoExternalId: repo, skillName: values.skill_name || null },
-      {
-        onSuccess: () => {
-          setSaved(true);
-          setTimeout(() => setSaved(false), 2000);
-        },
-      },
-    );
-  };
-
-  return (
-    <div
-      className="flex items-center gap-3 border-b border-border py-2 last:border-b-0"
-      data-testid={`repo-skill-row-${repo}`}
-    >
-      <span className="min-w-0 flex-1 truncate text-sm font-mono text-foreground">{repo}</span>
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="flex items-center gap-2">
-          <FormField
-            control={form.control}
-            name="skill_name"
-            render={({ field }) => (
-              <FormItem>
-                <FormControl>
-                  <Input
-                    {...field}
-                    placeholder="e.g. code-review"
-                    className="w-40 text-sm"
-                    data-testid={`repo-skill-input-${repo}`}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <Button
-            type="submit"
-            size="sm"
-            disabled={setSkill.isPending}
-            data-testid={`repo-skill-save-${repo}`}
-          >
-            {setSkill.isPending ? "Saving…" : saved ? "Saved." : "Save"}
-          </Button>
-        </form>
-      </Form>
-    </div>
-  );
-}
-
-function RepoSkillsCard() {
-  const { data: repos } = useClaudeCodeRepos();
-  return (
-    <section className="rounded-lg border border-border bg-card">
-      <header className="border-b border-border px-4 py-3">
-        <h3 className="text-[13.5px] font-semibold">Repo skill names</h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          The skill name (from the repo&apos;s{" "}
-          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">SKILL.md</code> file)
-          yaaos uses when reviewing PRs in each repo. Leave blank to disable reviews for that repo.
-        </p>
-      </header>
-      <div className="px-4 py-2">
-        {repos.length === 0 ? (
-          <p className="py-2 text-sm text-muted-foreground" data-testid="repo-skills-empty">
-            No repositories connected. Connect repos in the VCS settings page first.
-          </p>
-        ) : (
-          repos.map((r) => (
-            <RepoSkillRow
-              key={r.repo_external_id}
-              repo={r.repo_external_id}
-              defaultValue={r.skill_name ?? ""}
-            />
-          ))
         )}
       </div>
     </section>

@@ -46,16 +46,17 @@ Private (non-`public/`): `generated/` (only `core/api` may import it).
 
 `client.ts` owns the type surface. Types sourced from the generated schema:
 - `Lesson` — alias of `components["schemas"]["Lesson"]`.
-- `WorkflowRunView` — alias of `components["schemas"]["WorkflowRunView"]`; the `workflow-runs` endpoint carries a `response_model`.
-- `StepActivityResponse` — alias of `components["schemas"]["StepActivityResponse"]` (`{activity: ActivityLog | null}`); the step-`activity` endpoint carries a `response_model`.
+- `StageActivityResponse` — alias of `components["schemas"]["StepActivityResponse"]` (`{activity: ActivityLog | null}`). Backs the Runs tab's per-stage activity accordion.
+- `PipelineRunView`, `StageExecutionView`, `RunOverviewView`, `PauseDetailView`, `RunOutcomeView` (in `queries.ts`) — aliases of `components["schemas"]["PipelineRun" | "StageExecution" | "RunOverview" | "PauseDetail" | "RunOutcome"]`. Back the ticket page's Overview/Runs tabs.
+- `ArtifactGroupView`, `ArtifactDetailView` (in `queries.ts`) — aliases of `components["schemas"]["ArtifactGroup" | "ArtifactDetailResponse"]`. Back the Artifacts tab.
 
 Hand-typed (no generated equivalent — backend endpoints return `unknown`):
 - `Ticket` — `pr_number`, `author_login`, `is_draft` enriched from the linked PR at read-time. Needs `response_model` on the tickets endpoints.
-- `ReviewJobActivityEvent` — `{ts, kind, message, detail?}`; used by `ActivityEventRow` for the live activity stream (SSE — no OpenAPI). The persisted step-activity blob is now generated-typed via `StepActivityResponse`; `ActivityEventRow` maps onto this hand type at the call site.
+- `ReviewJobActivityEvent` — `{ts, kind, message, detail?}`; used by `ActivityEventRow` for both the live activity stream shape and the persisted stage-activity blob's events (mapped at the call site).
 - `Notification` / `NotificationsPopover` — hand-typed in `queries.ts`; backend spec returns `unknown` for these endpoints.
 ### Query hooks
 
-`queries.ts` — one hook per endpoint. All data-display hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. This covers every hook that powers a page or section: `useCurrentUser`, `useTickets`, `useTicket`, `useWorkflowRuns`, `useStepActivity`, `useLessons`, `useNotifications`, `useAgents`, `useFindingsForTicket`, `useHitlHistory`, `useMyOrgs`, `useGithubInstallation`, `useGithubRepositories`. `useLessons` accepts a `LessonsFilter` object only (no string shorthand). The polling-based utility hook `useConfigStatus` stays a regular `useQuery` — it powers ambient chrome (the onboarding gate), not data pages. See [core_sse.md](core_sse.md) for the full invalidation map.
+`queries.ts` — one hook per endpoint. All data-display hooks use `useSuspenseQuery`; callers never see `isLoading` — loading is handled by `<Suspense>` fallbacks. This covers every hook that powers a page or section: `useCurrentUser`, `useTickets`, `useTicket`, `useRuns`, `useRunOverview` (plain `useQuery` — a 404 is a legitimate "no run yet" empty state, not an error), `useStageActivity`, `useCancelRun`, `useRespondPause`, `useRerunFromStage`, `useArtifacts`, `useArtifactVersion`, `useLessons`, `useNotifications`, `useAgents`, `useMyOrgs`, `useGithubInstallation`, `useGithubRepositories`. `useLessons` accepts a `LessonsFilter` object only (no string shorthand). The polling-based utility hook `useConfigStatus` stays a regular `useQuery` — it powers ambient chrome (the onboarding gate), not data pages. See [core_sse.md](core_sse.md) for the full invalidation map.
 
 Auth hooks live in `queries.ts` so all layers can call them without importing from `domain/auth`:
 - `currentUserQueryOptions` — exported `queryOptions` object for `["auth","me"]`; use this to subscribe to or seed the cache without triggering a fetch (e.g. `useQuery({ ...currentUserQueryOptions, enabled: false })` in `useOtelIdentitySync`).

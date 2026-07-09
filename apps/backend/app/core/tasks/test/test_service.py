@@ -40,7 +40,7 @@ async def test_enqueue_writes_outbox_row(db_session) -> None:  # type: ignore[no
     async def _beta(*, hint: str) -> None:
         del hint
 
-    ref = task("beta", queue="workflow", max_retries=3)(_beta)
+    ref = task("beta", queue="beta-queue", max_retries=3)(_beta)
     with scoped_task_registration(ref):
         await enqueue(ref, args={"hint": "ok"}, session=db_session)
         await db_session.commit()
@@ -49,5 +49,5 @@ async def test_enqueue_writes_outbox_row(db_session) -> None:  # type: ignore[no
             await db_session.execute(select(OutboxEntryRow).where(OutboxEntryRow.kind == "taskiq_enqueue"))
         ).scalar_one()
         assert row.payload["task_name"] == "beta"
-        assert row.payload["queue"] == "workflow"
+        assert row.payload["queue"] == "beta-queue"
         assert row.payload["args"] == {"hint": "ok"}

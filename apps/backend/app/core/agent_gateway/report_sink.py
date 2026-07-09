@@ -45,12 +45,12 @@ class WorkspaceAgentReportSink(Protocol):
     Operations cover all workspace-state access agent_gateway needs:
     - `reconcile_heartbeat` — pure read; returns ids the agent should forget.
     - `apply_workspace_event` — applies kind→status map; returns outcome VO.
-    - `resolve_claim` — pure read; returns the workflow_execution_id for a command.
+    - `resolve_claim` — pure read; returns the run_id for a command.
     - `owning_agent_for_workspace` / `owning_agent_for_command` — pure reads;
       return the workspace's owning `agent_id` for the per-agent authz check.
     - `release_command_claim` — clears `current_command_id` on the workspace
       row that currently holds `command_id`. Called on every terminal agent
-      event before the workflow engine is resumed so the next `try_claim`
+      event before the run engine is resumed so the next `try_claim`
       sees `current_command_id IS NULL` (failure-report-precedes-disposal).
     """
 
@@ -103,10 +103,10 @@ class WorkspaceAgentReportSink(Protocol):
         command_id: UUID,
         session: object,
     ) -> UUID | None:
-        """Return the `workflow_execution_id` for `command_id`, or None if the
-        command row is not found or has no workflow correlation.
+        """Return the `run_id` for `command_id`, or None if the
+        command row is not found or has no run correlation.
 
-        Correlation comes from `agent_commands.workflow_execution_id`.
+        Correlation comes from `agent_commands.run_id`.
         """
         ...
 
@@ -154,7 +154,7 @@ class WorkspaceAgentReportSink(Protocol):
     ) -> None:
         """Release the single-flight claim on whichever workspace holds
         `command_id`. Must be called on every terminal agent event (success
-        or failure) BEFORE the workflow engine is resumed so the next
+        or failure) BEFORE the run engine is resumed so the next
         `try_claim` sees `current_command_id IS NULL`.
 
         No-op when no workspace holds the command (e.g. `ProvisionWorkspace`

@@ -56,7 +56,7 @@ so the resource carries `service.instance.id` when providers install.
 
 ## Per-command dimensions
 
-The supervisor adds `workspace_id`, `command_id`, `kind`, and (when present) `workflow_id` as span attributes on the `supervisor.dispatch.<kind>` span for each command. The workspace child adds the same attributes to the `workspace.handle.<kind>` span. These are span-scoped, not process-wide. `org_id` and `agent_id` are no longer set explicitly on these spans — `DimProcessor` handles them automatically.
+The supervisor adds `workspace_id`, `command_id`, `kind`, and (when present) `run_id` as span attributes on the `supervisor.dispatch.<kind>` span for each command. The workspace child adds the same attributes to the `workspace.handle.<kind>` span. These are span-scoped, not process-wide. `org_id` and `agent_id` are no longer set explicitly on these spans — `DimProcessor` handles them automatically.
 
 ## Instruments summary
 

@@ -7,15 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { components } from "../generated/schema";
-import {
-  type Lesson,
-  type StepActivityResponse,
-  type Ticket,
-  type WorkflowRunView,
-  apiFetch,
-} from "./client";
-
-export type { WorkflowRunView } from "./client";
+import { type Lesson, type StageActivityResponse, type Ticket, apiFetch } from "./client";
 
 // ── Auth / session ────────────────────────────────────────────────────────────
 
@@ -374,121 +366,239 @@ export function useTicket(ticket_id: string) {
   });
 }
 
-// ── Workflow runs (step tree for the Activity tab) ───────────────────────────
+// ── Pipeline runs (Overview / Runs tabs) ─────────────────────────────────────
 
-/**
- * All workflow runs for the ticket, oldest-first, with their step lists.
- * `staleTime` is explicit because freshness is driven by `workflow_state_changed`
- * SSE events, not focus-driven refetches.
- */
-export function useWorkflowRuns(ticket_id: string) {
-  return useSuspenseQuery<WorkflowRunView[]>({
-    queryKey: ["workflow", "runs", ticket_id],
-    queryFn: () => apiFetch<WorkflowRunView[]>(`/api/tickets/${ticket_id}/workflow-runs`),
-    staleTime: 60_000,
-  });
+export type PipelineRunView = components["schemas"]["PipelineRun"];
+export type StageExecutionView = components["schemas"]["StageExecution"];
+export type RunOverviewView = components["schemas"]["RunOverview"];
+export type PauseDetailView = components["schemas"]["PauseDetail"];
+export type RunOutcomeView = components["schemas"]["RunOutcome"];
+
+export interface PauseResolutionBody {
+  action: "approve" | "instruct" | "send_back" | "kill";
+  instruction?: string | null;
+  send_back_to_stage?: string | null;
 }
 
-/**
- * Fetches the persisted activity blob for one workflow step. Only called
- * for a terminal `InvokeClaudeCode` step where both ids are available.
- */
-export function useStepActivity(ticket_id: string, execution_id: string, step_id: string) {
-  return useSuspenseQuery<StepActivityResponse>({
-    queryKey: ["workflow", "activity", execution_id, step_id],
-    queryFn: () =>
-      apiFetch<StepActivityResponse>(
-        `/api/tickets/${ticket_id}/activity/${execution_id}/${step_id}`,
-      ),
-  });
-}
-
-/**
- * Canonical finding in the new schema.
- * No `state` field — findings are non-interactive (ack/push-back removed).
- */
-export interface FindingRow {
-  id: string;
-  finding_display_id: number;
-  category: string;
-  severity: "blocker" | "should_fix" | "nit";
-  confidence: "verified" | "plausible" | "speculative";
-  rationale: string;
-  rule_violated: string;
-  rule_source: string;
-  suggested_fix: string;
-  file: string | null;
-  line: number | null;
-  review_id: string;
-}
-
-/**
- * @param ticket_id must be non-empty; enforced by the required route URL param.
- */
-export function useFindingsForTicket(ticket_id: string, includeTerminal = false) {
-  return useSuspenseQuery<FindingRow[]>({
-    queryKey: ["reviewer", "findings", ticket_id, includeTerminal],
-    queryFn: () =>
-      apiFetch<FindingRow[]>(
-        `/api/reviewer/findings/by-ticket/${ticket_id}${
-          includeTerminal ? "?include_terminal=true" : ""
-        }`,
-      ),
-    // SSE `workflow_state_changed` is the primary freshness driver; this slow
-    // poll is a fallback for flaky SSE connections.
-    refetchInterval: 30_000,
-  });
-}
-
-/** : past HITL exchanges on a ticket — prompt + resolution + timestamps. */
-export interface HitlHistoryEntry {
-  id: string;
-  workflow_execution_id: string;
-  question_payload: Record<string, unknown>;
-  resolution_payload: Record<string, unknown> | null;
-  resolved_at: string | null;
-  created_at: string;
-}
-
-/**
- * @param ticket_id must be non-empty; enforced by the required route URL param.
- */
-export function useHitlHistory(ticket_id: string) {
-  return useSuspenseQuery<HitlHistoryEntry[]>({
-    queryKey: ["tickets", ticket_id, "hitl-history"],
-    queryFn: () => apiFetch<HitlHistoryEntry[]>(`/api/tickets/${ticket_id}/hitl/history`),
-  });
-}
-
-/** : submit a HITL response. The body shape is prompt-discriminated;
- *  callers pass the dict the HITL renderer produced. */
-export function useHitlRespond(ticket_id: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (response: Record<string, unknown>) =>
-      apiFetch<{ stage: string; next_state: string }>(`/api/tickets/${ticket_id}/hitl/respond`, {
-        method: "POST",
-        body: JSON.stringify(response),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id] });
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id, "hitl-history"] });
+/** All runs for the ticket, newest-first, with their stage-execution lists. */
+export function useRuns(ticket_id: string) {
+  return useSuspenseQuery<PipelineRunView[]>({
+    queryKey: ["runs", ticket_id],
+    queryFn: async () => {
+      const resp = await apiFetch<{ runs: PipelineRunView[] }>(
+        `/api/pipelines/runs?ticket_id=${ticket_id}`,
+      );
+      return resp.runs;
     },
   });
 }
 
-export function useCancelReviewerJobs() {
+/**
+ * Server-computed Overview-tab payload for the ticket's current run.
+ * `null` on 404 — the ticket has no run yet, a legitimate empty state (not
+ * an error to throw across a Suspense boundary).
+ */
+export function useRunOverview(ticket_id: string) {
+  return useQuery<RunOverviewView | null>({
+    queryKey: ["runs", "overview", ticket_id],
+    queryFn: async () => {
+      try {
+        return await apiFetch<RunOverviewView>(
+          `/api/pipelines/runs/overview?ticket_id=${ticket_id}`,
+        );
+      } catch (err) {
+        if ((err as Error)?.message?.startsWith("404")) return null;
+        throw err;
+      }
+    },
+  });
+}
+
+/** Fetches the persisted coding-agent activity blob for one stage execution. */
+export function useStageActivity(run_id: string, stage_execution_id: string) {
+  return useSuspenseQuery<StageActivityResponse>({
+    queryKey: ["runs", "stage-activity", run_id, stage_execution_id],
+    queryFn: () =>
+      apiFetch<StageActivityResponse>(
+        `/api/pipelines/runs/${run_id}/stages/${stage_execution_id}/activity`,
+      ),
+  });
+}
+
+function _invalidateRun(qc: ReturnType<typeof useQueryClient>, ticket_id: string): void {
+  qc.invalidateQueries({ queryKey: ["runs", ticket_id] });
+  qc.invalidateQueries({ queryKey: ["runs", "overview", ticket_id] });
+  qc.invalidateQueries({ queryKey: ["tickets", ticket_id] });
+}
+
+/** Cancel an in-flight (`running`) run — deferred to the next safe checkpoint. */
+export function useCancelRun(ticket_id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (ticket_id: string) =>
-      apiFetch<{ cancelled_count: number }>(
-        `/api/reviewer/cancel?ticket_id=${encodeURIComponent(ticket_id)}`,
-        { method: "POST" },
-      ),
-    onSuccess: (_, ticket_id) => {
-      qc.invalidateQueries({ queryKey: ["workflow", "runs", ticket_id] });
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id] });
-      qc.invalidateQueries({ queryKey: ["tickets", ticket_id, "audit"] });
+    mutationFn: (run_id: string) =>
+      apiFetch(`/api/pipelines/runs/${run_id}/cancel`, { method: "POST" }),
+    onSuccess: () => _invalidateRun(qc, ticket_id),
+  });
+}
+
+/** Resolve a HITL pause: approve / instruct / send back / kill. */
+export function useRespondPause(ticket_id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { pauseId: string; resolution: PauseResolutionBody }) =>
+      apiFetch<{ run_state: string }>(`/api/pipelines/runs/pauses/${vars.pauseId}/respond`, {
+        method: "POST",
+        body: JSON.stringify(vars.resolution),
+      }),
+    onSuccess: () => _invalidateRun(qc, ticket_id),
+  });
+}
+
+/** Instruct & re-run from an earlier stage on a fresh run. */
+export function useRerunFromStage(ticket_id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { fromStage: string; instruction: string }) =>
+      apiFetch<{ run_id: string }>("/api/pipelines/runs/rerun", {
+        method: "POST",
+        body: JSON.stringify({
+          ticket_id,
+          from_stage: vars.fromStage,
+          instruction: vars.instruction,
+        }),
+      }),
+    onSuccess: () => _invalidateRun(qc, ticket_id),
+  });
+}
+
+// ── Artifacts (Artifacts tab) ────────────────────────────────────────────────
+
+export type ArtifactGroupView = components["schemas"]["ArtifactGroup"];
+export type ArtifactDetailView = components["schemas"]["ArtifactDetailResponse"];
+
+/** Every artifact lineage for the ticket, grouped by stage name. */
+export function useArtifacts(ticket_id: string) {
+  return useSuspenseQuery<ArtifactGroupView[]>({
+    queryKey: ["artifacts", ticket_id],
+    queryFn: async () => {
+      const resp = await apiFetch<{ artifacts: ArtifactGroupView[] }>(
+        `/api/artifacts?ticket_id=${ticket_id}`,
+      );
+      return resp.artifacts;
+    },
+  });
+}
+
+/** One artifact version, body included. `null` while no version is selected. */
+export function useArtifactVersion(artifact_id: string | null) {
+  return useQuery<ArtifactDetailView | null>({
+    queryKey: ["artifacts", "version", artifact_id],
+    queryFn: () => apiFetch<ArtifactDetailView>(`/api/artifacts/${artifact_id}`),
+    enabled: artifact_id !== null,
+  });
+}
+
+// ── Pipeline definitions (Org Settings > Pipelines page) ────────────────────
+
+export type PipelineSummaryView = components["schemas"]["PipelineSummary"];
+export type PipelineDetailView = components["schemas"]["PipelineDetailResponse"];
+export type PipelineDefinitionBody = components["schemas"]["PipelineDefinition"];
+export type StageView = PipelineDetailView["stages"][number];
+export type PipelineTemplateView = components["schemas"]["TemplateResponse"];
+export type ActionInfoView = components["schemas"]["ActionInfo"];
+
+/** Org's pipeline definitions, unflattened (a `call` stage counts as one). */
+export function usePipelines() {
+  return useSuspenseQuery<PipelineSummaryView[]>({
+    queryKey: ["pipelines"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ pipelines: PipelineSummaryView[] }>("/api/pipelines");
+      return resp.pipelines;
+    },
+  });
+}
+
+/** One pipeline's full definition. `enabled` gates the fetch — callers
+ *  fetch lazily, e.g. only once the pipeline's Accordion row is expanded. */
+export function usePipelineDetail(pipelineId: string, opts: { enabled: boolean }) {
+  return useQuery<PipelineDetailView>({
+    queryKey: ["pipelines", pipelineId],
+    queryFn: () => apiFetch<PipelineDetailView>(`/api/pipelines/${pipelineId}`),
+    enabled: opts.enabled,
+  });
+}
+
+/** The shipped, code-defined pipeline templates ("New from template" picker). */
+export function usePipelineTemplates() {
+  return useSuspenseQuery<PipelineTemplateView[]>({
+    queryKey: ["pipeline-templates"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ templates: PipelineTemplateView[] }>(
+        "/api/pipelines/templates",
+      );
+      return resp.templates;
+    },
+  });
+}
+
+function _invalidatePipelines(qc: ReturnType<typeof useQueryClient>): void {
+  qc.invalidateQueries({ queryKey: ["pipelines"] });
+}
+
+export function useCreatePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (definition: PipelineDefinitionBody) =>
+      apiFetch<{ id: string }>("/api/pipelines", {
+        method: "POST",
+        body: JSON.stringify(definition),
+      }),
+    onSuccess: () => _invalidatePipelines(qc),
+  });
+}
+
+export function useCreatePipelineFromTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) =>
+      apiFetch<{ id: string }>("/api/pipelines/from-template", {
+        method: "POST",
+        body: JSON.stringify({ template_id: templateId }),
+      }),
+    onSuccess: () => _invalidatePipelines(qc),
+  });
+}
+
+export function useUpdatePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; definition: PipelineDefinitionBody }) =>
+      apiFetch<PipelineDetailView>(`/api/pipelines/${vars.id}`, {
+        method: "PUT",
+        body: JSON.stringify(vars.definition),
+      }),
+    onSuccess: (_data, vars) => {
+      _invalidatePipelines(qc);
+      qc.invalidateQueries({ queryKey: ["pipelines", vars.id] });
+    },
+  });
+}
+
+export function useDeletePipeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/pipelines/${id}`, { method: "DELETE" }),
+    onSuccess: () => _invalidatePipelines(qc),
+  });
+}
+
+/** `GET /api/actions` — the Pipelines page's "Add an action" stage picker. */
+export function useActions() {
+  return useSuspenseQuery<ActionInfoView[]>({
+    queryKey: ["actions"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ actions: ActionInfoView[] }>("/api/actions");
+      return resp.actions;
     },
   });
 }
@@ -586,5 +696,91 @@ export function useGithubInstallation() {
     queryKey: ["github", "installation"],
     queryFn: () => apiFetch<GithubInstallation>("/api/github/installation"),
     refetchInterval: 10_000,
+  });
+}
+
+// ── Intake points + repo config (Org Settings > Repos page) ────────────────
+
+export type IntakePointView = components["schemas"]["IntakePoint"];
+
+/** Every registered intake point (webhook + schedule kinds) — the Repos
+ *  page's trigger-binding intake picker. */
+export function useIntakePoints() {
+  return useSuspenseQuery<IntakePointView[]>({
+    queryKey: ["intake-points"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ points: IntakePointView[] }>("/api/intake/points");
+      return resp.points;
+    },
+  });
+}
+
+export type RepoAccordionView = components["schemas"]["RepoAccordionEntry"];
+export type RepoConfigView = components["schemas"]["RepoConfigResponse"];
+export type ProtectedPathSetView = components["schemas"]["ProtectedPathSet"];
+export type TriggerBindingView = components["schemas"]["TriggerBinding"];
+export type RepoSettingsSpecBody = components["schemas"]["RepoSettingsSpec"];
+export type TriggerBindingSpecBody = components["schemas"]["TriggerBindingSpec"];
+
+/** Installed repos joined against `domain/repos` config — the accordion list. */
+export function useRepos() {
+  return useSuspenseQuery<RepoAccordionView[]>({
+    queryKey: ["repos"],
+    queryFn: async () => {
+      const resp = await apiFetch<{ repos: RepoAccordionView[] }>("/api/repos");
+      return resp.repos;
+    },
+  });
+}
+
+/** One repo's full config (bindings + protected-code + auto-approve).
+ *  Always 200 — an absent settings row is the model's defaults, so
+ *  `enabled` gates the fetch to when the Accordion row is open, not
+ *  whether the repo is "configured". */
+export function useRepoConfig(repoExternalId: string, opts: { enabled: boolean }) {
+  return useQuery<RepoConfigView>({
+    queryKey: ["repos", repoExternalId],
+    queryFn: () =>
+      apiFetch<RepoConfigView>(`/api/repos/config?repo=${encodeURIComponent(repoExternalId)}`),
+    enabled: opts.enabled,
+  });
+}
+
+function _invalidateRepo(qc: ReturnType<typeof useQueryClient>, repoExternalId: string): void {
+  qc.invalidateQueries({ queryKey: ["repos"] });
+  qc.invalidateQueries({ queryKey: ["repos", repoExternalId] });
+}
+
+/** `PUT /api/repos/settings?repo=` — whole-section replace (last-write-wins). */
+export function useSaveRepoSettings(repoExternalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (spec: RepoSettingsSpecBody) =>
+      apiFetch(`/api/repos/settings?repo=${encodeURIComponent(repoExternalId)}`, {
+        method: "PUT",
+        body: JSON.stringify(spec),
+      }),
+    onSuccess: () => _invalidateRepo(qc, repoExternalId),
+  });
+}
+
+export function useAddTrigger(repoExternalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (spec: TriggerBindingSpecBody) =>
+      apiFetch<{ id: string }>(`/api/repos/triggers?repo=${encodeURIComponent(repoExternalId)}`, {
+        method: "POST",
+        body: JSON.stringify(spec),
+      }),
+    onSuccess: () => _invalidateRepo(qc, repoExternalId),
+  });
+}
+
+export function useRemoveTrigger(repoExternalId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (bindingId: string) =>
+      apiFetch(`/api/repos/triggers/${bindingId}`, { method: "DELETE" }),
+    onSuccess: () => _invalidateRepo(qc, repoExternalId),
   });
 }

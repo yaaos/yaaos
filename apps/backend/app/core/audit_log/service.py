@@ -191,6 +191,32 @@ async def audit_for_workspace(
     return await audit("workspace", workspace_id, kind, payload, actor, org_id=org_id, session=session)
 
 
+async def audit_for_pipeline(
+    pipeline_id: UUID,
+    kind: str,
+    payload: BaseModel,
+    *,
+    actor: Actor,
+    org_id: UUID,
+    session: AsyncSession,
+) -> AuditEntry:
+    return await audit("pipeline", pipeline_id, kind, payload, actor, org_id=org_id, session=session)
+
+
+async def audit_for_repo_settings(
+    org_id: UUID,
+    kind: str,
+    payload: BaseModel,
+    *,
+    actor: Actor,
+    session: AsyncSession,
+) -> AuditEntry:
+    """`repo_settings`' identity is `(org_id, repo_external_id)`, not a
+    single UUID — `org_id` doubles as the audit `entity_id` (the payload
+    carries `repo_external_id`)."""
+    return await audit("repo_settings", org_id, kind, payload, actor, org_id=org_id, session=session)
+
+
 # Read API
 
 

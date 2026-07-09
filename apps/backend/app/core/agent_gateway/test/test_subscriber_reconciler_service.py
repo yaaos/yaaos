@@ -32,19 +32,19 @@ async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) 
     """If ZSET has ≥1 member and the agent is not streaming, reconciler
     publishes a subscribe control message and the local sender receives it."""
     agent_id = uuid4()
-    wfx_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid7()
 
     # Pre-populate Redis as if `track` ran on another pod.
-    wfx_key = f"workflow_subscribers:{wfx_id}"
-    route_key = f"workflow_route:{wfx_id}"
+    run_key = f"run_subscribers:{run_id}"
+    route_key = f"run_route:{run_id}"
     routes_key = f"agent_routes:{agent_id}"
     member = f"other-pod:{uuid4()}"
     score = time.time()
 
-    await zset_add_member(wfx_key, member, score)
+    await zset_add_member(run_key, member, score)
     await hash_set(route_key, {"workspace_id": str(workspace_id), "agent_id": str(agent_id)})
-    await zset_add_member(routes_key, str(wfx_id), time.time())
+    await zset_add_member(routes_key, str(run_id), time.time())
 
     sent: list[dict] = []
     received = asyncio.Event()
@@ -67,13 +67,13 @@ async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) 
 
     assert any(m.get("type") == "subscribe" for m in sent), f"expected subscribe message; got {sent}"
     sub = next(m for m in sent if m.get("type") == "subscribe")
-    assert sub["workflow_execution_id"] == str(wfx_id)
+    assert sub["run_id"] == str(run_id)
     assert sub["workspace_id"] == str(workspace_id)
 
     # Cleanup Redis state.
-    await zset_remove_member(wfx_key, member)
+    await zset_remove_member(run_key, member)
     await hash_delete(route_key)
-    await zset_remove_member(routes_key, str(wfx_id))
+    await zset_remove_member(routes_key, str(run_id))
 
 
 @pytest.mark.asyncio
@@ -82,13 +82,13 @@ async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -
     """If ZSET is empty and the agent IS streaming, reconciler publishes
     unsubscribe and the local sender receives it."""
     agent_id = uuid4()
-    wfx_id = uuid4()
+    run_id = uuid4()
     workspace_id = uuid7()
 
-    # Pre-populate agent_routes ZSET only — no workflow_subscribers ZSET members (ZCARD=0).
+    # Pre-populate agent_routes ZSET only — no run_subscribers ZSET members (ZCARD=0).
     routes_key = f"agent_routes:{agent_id}"
-    route_key = f"workflow_route:{wfx_id}"
-    await zset_add_member(routes_key, str(wfx_id), time.time())
+    route_key = f"run_route:{run_id}"
+    await zset_add_member(routes_key, str(run_id), time.time())
     # Route HASH must be present for reconciler to resolve workspace_id.
     await hash_set(route_key, {"workspace_id": str(workspace_id), "agent_id": str(agent_id)})
 
@@ -104,10 +104,10 @@ async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -
         await reg.register_sender(agent_id, _sender)
 
         # Manually inject streaming state so the reconciler believes the agent
-        # is streaming this wfx_id (simulates the case where the agent was told
+        # is streaming this run_id (simulates the case where the agent was told
         # to subscribe but the last SSE consumer has since disconnected).
         async with reg._lock:
-            reg._streaming.setdefault(agent_id, set()).add(wfx_id)
+            reg._streaming.setdefault(agent_id, set()).add(run_id)
 
         # Reconciler reads from _get() — must be the same instance as reg.
         reconciler = SubscriberReconciler()
@@ -118,8 +118,8 @@ async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -
 
     unsubs = [m for m in sent if m.get("type") == "unsubscribe"]
     assert len(unsubs) >= 1
-    assert unsubs[-1]["workflow_execution_id"] == str(wfx_id)
+    assert unsubs[-1]["run_id"] == str(run_id)
 
     # Cleanup.
-    await zset_remove_member(routes_key, str(wfx_id))
+    await zset_remove_member(routes_key, str(run_id))
     await hash_delete(route_key)

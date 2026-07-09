@@ -16,13 +16,13 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from app.core.agent_gateway import DispatchContext, get_command_org_and_payload
 from app.core.coding_agent import (
     Invocation,
     dispatch_invocation,
 )
 from app.core.coding_agent.models import CodingAgentRunRow
 from app.core.coding_agent.run_service import get_run_id_for_command
-from app.core.workflow import CommandContext
 from app.core.workspace import WorkspaceClaimFailed, WorkspaceNotFoundError
 from app.testing.e2e_setup import seed_agent, seed_workspace
 from app.testing.fake_coding_agent import FakeCodingAgentPlugin
@@ -31,11 +31,11 @@ from app.web import app as _web_app  # noqa: F401 — registers all models so FK
 pytestmark = pytest.mark.service
 
 
-def _ctx(wfe_id: uuid.UUID, step_id: str = "review") -> CommandContext:
-    return CommandContext(
-        workflow_execution_id=str(wfe_id),
-        ticket_id=str(uuid.uuid4()),
-        step_id=step_id,
+def _ctx(run_id: uuid.UUID, stage_execution_id: uuid.UUID | None = None) -> DispatchContext:
+    return DispatchContext(
+        run_id=run_id,
+        ticket_id=uuid.uuid4(),
+        stage_execution_id=stage_execution_id or uuid.uuid4(),
         attempt=1,
         traceparent=None,
     )
@@ -44,7 +44,7 @@ def _ctx(wfe_id: uuid.UUID, step_id: str = "review") -> CommandContext:
 def _invocation(workspace_id: UUID) -> Invocation:
     return Invocation(
         workspace_id=workspace_id,
-        skill="pr_review",
+        skill="code-review",
         model="opus",
         effort="medium",
         context={"repo": "test-repo"},
@@ -66,15 +66,16 @@ async def _seed_active_workspace(org_id: UUID) -> UUID:
 
 @pytest.mark.asyncio
 async def test_dispatch_invocation_returns_uuid(db_session) -> None:
-    """dispatch_invocation returns a UUID (the minted command_id)."""
+    """dispatch_invocation returns the caller-supplied command_id."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    run_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
-        ctx=_ctx(wfe_id),
+        ctx=_ctx(run_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -85,13 +86,14 @@ async def test_dispatch_invocation_returns_uuid(db_session) -> None:
 async def test_dispatch_invocation_inserts_run_row(db_session) -> None:
     """A `coding_agent_runs` row with status=running lands in the DB."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    run_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
-        ctx=_ctx(wfe_id),
+        ctx=_ctx(run_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -102,7 +104,7 @@ async def test_dispatch_invocation_inserts_run_row(db_session) -> None:
     ).scalar_one_or_none()
     assert row is not None
     assert row.status == "running"
-    assert row.workflow_execution_id == wfe_id
+    assert row.run_id == run_id
     assert row.plugin_id == "claude_code"
 
 
@@ -110,13 +112,14 @@ async def test_dispatch_invocation_inserts_run_row(db_session) -> None:
 async def test_dispatch_invocation_run_row_correlates_via_get_run_id_for_command(db_session) -> None:
     """get_run_id_for_command resolves the run by the returned command_id."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    run_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
-        ctx=_ctx(wfe_id),
+        ctx=_ctx(run_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -125,22 +128,19 @@ async def test_dispatch_invocation_run_row_correlates_via_get_run_id_for_command
 
 
 @pytest.mark.asyncio
-async def test_dispatch_invocation_run_row_step_id(db_session) -> None:
-    """`step_id` on the run row matches the CommandContext's step_id."""
+async def test_dispatch_invocation_run_row_stage_execution_id(db_session) -> None:
+    """`stage_execution_id` on the run row matches the DispatchContext's stage_execution_id."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    stage_execution_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
-    ctx = CommandContext(
-        workflow_execution_id=str(wfe_id),
-        ticket_id=str(uuid.uuid4()),
-        step_id="code_review",
-        attempt=1,
-    )
+    ctx = _ctx(run_id, stage_execution_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
         ctx=ctx,
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -150,20 +150,23 @@ async def test_dispatch_invocation_run_row_step_id(db_session) -> None:
         )
     ).scalar_one_or_none()
     assert row is not None
-    assert row.step_id == "code_review"
+    assert row.stage_execution_id == stage_execution_id
 
 
 @pytest.mark.asyncio
 async def test_dispatch_invocation_idempotent_command_id_is_uuidv7(db_session) -> None:
-    """The returned command_id is a UUIDv7 (required by the FK check constraint on agent_commands)."""
+    """`dispatch_invocation` returns exactly the caller-supplied `command_id`
+    (required by the FK check constraint on `agent_commands` — callers must
+    mint a UUIDv7, never a plain uuid4)."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    run_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
 
     command_id = await dispatch_invocation(
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
-        ctx=_ctx(wfe_id),
+        ctx=_ctx(run_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -174,15 +177,16 @@ async def test_dispatch_invocation_idempotent_command_id_is_uuidv7(db_session) -
 
 @pytest.mark.asyncio
 async def test_dispatch_invocation_different_calls_return_distinct_ids(db_session) -> None:
-    """Each dispatch mints a fresh command_id."""
+    """Each dispatch returns exactly the distinct `command_id` its caller supplied."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    run_id = uuid.uuid4()
     ws_id = await _seed_active_workspace(org_id)
 
     id1 = await dispatch_invocation(
         invocation=_invocation(ws_id),
         plugin=FakeCodingAgentPlugin(),
-        ctx=_ctx(wfe_id),
+        ctx=_ctx(run_id),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
@@ -197,15 +201,77 @@ async def test_dispatch_invocation_different_calls_return_distinct_ids(db_sessio
             agent_id=agent2["id"],
         )
     )
-    wfe_id2 = uuid.uuid4()
+    run_id2 = uuid.uuid4()
     id2 = await dispatch_invocation(
         invocation=_invocation(ws_id2),
         plugin=FakeCodingAgentPlugin(),
-        ctx=_ctx(wfe_id2),
+        ctx=_ctx(run_id2),
+        command_id=uuid.uuid7(),
         session=db_session,
     )
 
     assert id1 != id2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_invocation_sets_skill_path_from_convention(db_session) -> None:
+    """The enqueued command's `skill_path` follows the
+    `.claude/skills/<skill_name>/SKILL.md` convention, keyed off `invocation.skill`."""
+    org_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    ws_id = await _seed_active_workspace(org_id)
+    invocation = Invocation(
+        workspace_id=ws_id,
+        skill="pipeline-requirements",
+        model="opus",
+        effort="medium",
+        context={"repo": "test-repo"},
+        wallclock_seconds=300,
+    )
+
+    command_id = await dispatch_invocation(
+        invocation=invocation,
+        plugin=FakeCodingAgentPlugin(),
+        ctx=_ctx(run_id),
+        command_id=uuid.uuid7(),
+        session=db_session,
+    )
+
+    result = await get_command_org_and_payload(command_id, session=db_session)
+    assert result is not None
+    _, payload = result
+    assert payload["skill_path"] == ".claude/skills/pipeline-requirements/SKILL.md"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_invocation_skill_path_follows_convention_for_any_skill(db_session) -> None:
+    """No hardcoded skill exemption — every skill name (including a name that
+    happens to be `pr_review`) gets the same `.claude/skills/<skill>/SKILL.md`
+    convention; the agent's pre-spawn skill-stat check is the only gate."""
+    org_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    ws_id = await _seed_active_workspace(org_id)
+    invocation = Invocation(
+        workspace_id=ws_id,
+        skill="pr_review",
+        model="opus",
+        effort="medium",
+        context={"repo": "test-repo"},
+        wallclock_seconds=300,
+    )
+
+    command_id = await dispatch_invocation(
+        invocation=invocation,
+        plugin=FakeCodingAgentPlugin(),
+        ctx=_ctx(run_id),
+        command_id=uuid.uuid7(),
+        session=db_session,
+    )
+
+    result = await get_command_org_and_payload(command_id, session=db_session)
+    assert result is not None
+    _, payload = result
+    assert payload["skill_path"] == ".claude/skills/pr_review/SKILL.md"
 
 
 @pytest.mark.asyncio
@@ -217,6 +283,7 @@ async def test_dispatch_invocation_workspace_not_found_raises(db_session) -> Non
             invocation=_invocation(nonexistent_ws_id),
             plugin=FakeCodingAgentPlugin(),
             ctx=_ctx(uuid.uuid4()),
+            command_id=uuid.uuid7(),
             session=db_session,
         )
 
@@ -225,7 +292,7 @@ async def test_dispatch_invocation_workspace_not_found_raises(db_session) -> Non
 async def test_dispatch_invocation_busy_workspace_raises_claim_failed(db_session) -> None:
     """WorkspaceClaimFailed raised when the workspace already has a current_command_id."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    run_id = uuid.uuid4()
     # Seed a workspace that's already claimed (current_command_id pre-set).
     agent = await seed_agent(org_id=org_id)
     ws_id = UUID(
@@ -242,6 +309,7 @@ async def test_dispatch_invocation_busy_workspace_raises_claim_failed(db_session
         await dispatch_invocation(
             invocation=_invocation(ws_id),
             plugin=FakeCodingAgentPlugin(),
-            ctx=_ctx(wfe_id),
+            ctx=_ctx(run_id),
+            command_id=uuid.uuid7(),
             session=db_session,
         )

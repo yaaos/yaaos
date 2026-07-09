@@ -15,6 +15,7 @@ from fastapi import Depends as _Depends
 from pydantic import BaseModel, Field
 
 from app.core.auth import public_route as _public_route
+from app.core.sse import publish_workspace_activity as _publish_workspace_activity
 from app.testing.e2e_setup import service
 
 router = APIRouter(dependencies=[_Depends(_public_route)])
@@ -55,22 +56,55 @@ async def seed_github_install(
     return {"status": "seeded"}
 
 
-class _RepoSkillRequest(BaseModel):
-    org_slug: str = Field(..., min_length=1)
-    repo_external_id: str = Field(..., min_length=1)
-    skill_name: str = Field(..., min_length=1)
+class _SeedPipelineRequest(BaseModel):
+    org_id: UUID
+    name: str = Field(..., min_length=1)
+    action_id: str = Field(default="github:create_pr", min_length=1)
 
 
-@router.post("/seed/repo_skill")
-async def seed_repo_skill(req: _RepoSkillRequest) -> dict[str, str]:
-    """Seed a ``skill_name`` for a connected repo so reviews can build an invocation."""
+@router.post("/seed/pipeline")
+async def seed_pipeline_endpoint(req: _SeedPipelineRequest) -> dict[str, str]:
+    """Seed a minimal one-stage pipeline definition. Returns ``{"id": "<uuid>"}``."""
     _guard_dev()
-    await service.seed_repo_skill(
-        org_slug=req.org_slug,
+    pipeline_id = await service.seed_pipeline(org_id=req.org_id, name=req.name, action_id=req.action_id)
+    return {"id": str(pipeline_id)}
+
+
+class _SeedTriggerBindingRequest(BaseModel):
+    org_id: UUID
+    repo_external_id: str = Field(..., min_length=1)
+    intake_point_id: str = Field(..., min_length=1)
+    pipeline_id: UUID
+
+
+@router.post("/seed/trigger_binding")
+async def seed_trigger_binding_endpoint(req: _SeedTriggerBindingRequest) -> dict[str, str]:
+    """Seed a repo trigger binding. Returns ``{"id": "<uuid>"}``."""
+    _guard_dev()
+    binding_id = await service.seed_trigger_binding(
+        org_id=req.org_id,
         repo_external_id=req.repo_external_id,
-        skill_name=req.skill_name,
+        intake_point_id=req.intake_point_id,
+        pipeline_id=req.pipeline_id,
     )
-    return {"status": "seeded"}
+    return {"id": str(binding_id)}
+
+
+class _SeedPausedRunRequest(BaseModel):
+    org_slug: str = Field(..., min_length=1)
+    ticket_title: str = Field(..., min_length=1)
+    stage_name: str = Field(default="write-spec", min_length=1)
+
+
+@router.post("/seed/paused_run")
+async def seed_paused_run_endpoint(req: _SeedPausedRunRequest) -> dict[str, str]:
+    """Seed a `paused` pipeline run + open `run_pauses` row for e2e specs
+    exercising the ticket page's Overview attention block. See
+    `service.seed_paused_run` for what's constructed and why."""
+    _guard_dev()
+    return await service.seed_paused_run(
+        org_slug=req.org_slug, ticket_title=req.ticket_title, stage_name=req.stage_name
+    )
 
 
 class _LessonRequest(BaseModel):
@@ -307,3 +341,42 @@ async def delete_user_artifacts(user_id: UUID) -> dict[str, bool]:
     _guard_dev()
     await service.delete_user(user_id)
     return {"deleted": True}
+
+
+class _SeedRunningRunRequest(BaseModel):
+    org_slug: str = Field(..., min_length=1)
+    ticket_title: str = Field(..., min_length=1)
+    stage_name: str = Field(default="write-code", min_length=1)
+
+
+@router.post("/seed/running_run")
+async def seed_running_run_endpoint(req: _SeedRunningRunRequest) -> dict[str, str]:
+    """Seed a `running` pipeline run + `running` skill stage_execution for e2e specs
+    exercising the ticket page's live activity pane. See `service.seed_running_run`
+    for what's constructed and why."""
+    _guard_dev()
+    return await service.seed_running_run(
+        org_slug=req.org_slug, ticket_title=req.ticket_title, stage_name=req.stage_name
+    )
+
+
+class _PublishWorkspaceActivityRequest(BaseModel):
+    org_id: UUID
+    run_id: UUID
+    payload: dict
+
+
+@router.post("/publish/workspace_activity")
+async def publish_workspace_activity_endpoint(req: _PublishWorkspaceActivityRequest) -> dict[str, str]:
+    """Publish a pre-normalized `{kind,ts,message,detail}` frame directly to the
+    workspace-activity Redis channel for `(org_id, run_id)`. Used by e2e specs to
+    inject synthetic activity frames without a live coding-agent. The payload is
+    published verbatim — normalization (D2) is a separate concern with its own
+    service-test coverage."""
+    _guard_dev()
+    await _publish_workspace_activity(
+        org_id=req.org_id,
+        run_id=req.run_id,
+        payload=req.payload,
+    )
+    return {"status": "published"}

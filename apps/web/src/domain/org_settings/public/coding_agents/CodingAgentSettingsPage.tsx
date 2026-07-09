@@ -1,7 +1,7 @@
 // Side-effect import: registers the claude_code plugin component in the registry
 // before the first getPluginSettingsComponent call.
 import "../../coding_agents/plugins/claude_code";
-import { OrgSettingsLayout } from "../../OrgSettingsLayout";
+import { OrgSettingsLayout } from "@shared/components/public/layout/org-settings-layout";
 import { getPluginSettingsComponent } from "../../coding_agents/plugin_registry";
 
 /**

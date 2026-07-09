@@ -119,7 +119,7 @@ def _rename_catchall_span(request: Request, full_path: str) -> None:
 def _install_spa_serving(app: FastAPI, *, dist_path: Path | None = None) -> None:
     """Mount /assets/* + a catch-all that returns index.html for client-side routes.
 
-    If `apps/web/dist` doesn't exist (dev workflow), this is a no-op.
+    If `apps/web/dist` doesn't exist (local dev without a built SPA), this is a no-op.
 
     `dist_path` overrides the default location (`apps/web/dist`) — used in
     tests that pass a stub dist tree via `tmp_path`.

@@ -68,7 +68,7 @@ async def test_agent_command_dispatch_traceparent(db_session) -> None:
     outer span's.
     """
     org_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     cmd = _make_provision_cmd()
 
     tracer = trace.get_tracer("test.agent_gateway")
@@ -79,7 +79,7 @@ async def test_agent_command_dispatch_traceparent(db_session) -> None:
                 org_id,
                 cmd,
                 session=db_session,
-                workflow_execution_id=workflow_id,
+                run_id=run_id,
             )
 
     spans = exporter.get_finished_spans()

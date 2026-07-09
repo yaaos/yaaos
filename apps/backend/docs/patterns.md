@@ -76,7 +76,7 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
   - **Rule-7** — private-attribute reach on cross-module receivers is rejected. Taint-based AST visitor covers four receiver shapes: bare alias (`alias._private`), call return (`cross_mod_call()._private`), walrus (`(eng := cross_mod_call())._private`), and subscript (`cross_mod_call()["x"]._private`). Dunders are exempt (Python protocol, not module-private state). Canary: `test_injected_private_attr_via_alias_is_rejected` + `test_injected_private_attr_via_return_taint_is_rejected` + `test_injected_walrus_private_reach_is_rejected` + `test_injected_subscript_private_reach_is_rejected`.
   - **Rule-9** — submodule namespace handles in `__all__` are rejected. The AST classifier reads `__init__.py` and tags each entry as `symbol_reexport` (OK — `from app.X.sub import name`), `inline_def` (OK — `def`/`class`/value in the file), or `namespace_handle` (REJECT — `from app.X import sub` where `sub` is a sibling submodule). Re-exported functions/classes whose name matches a sibling file (`Actor`, `spawn`, `set_if_absent`) are correctly classified as `symbol_reexport` and pass. Canary: `test_injected_namespace_handle_in_all_is_rejected`.
   - **Rule-10** — `ContextVar(...)` bindings in `__all__` are rejected. A ContextVar IS the storage of the owned singleton — exporting it defeats the Cardinal rule (§ Module structure). Canary: `test_injected_contextvar_in_all_is_rejected` + `test_clean_tree_has_no_contextvar_in_all`.
-  - **Rule-12** — module-level instance-literal bindings in `__all__` are rejected (`engine = WorkflowEngine()` exported). Data-type instance literals (Pydantic `BaseModel`, `Enum`, `Workflow`, `dataclass`, `TypedDict`) are exempt — they are vocabulary, not state. Canary: `test_injected_instance_literal_in_all_is_rejected` + `test_data_type_literal_in_all_is_allowed` + `test_clean_tree_has_no_instance_literal_in_all`.
+  - **Rule-12** — module-level instance-literal bindings in `__all__` are rejected (`engine = _Registry()` exported). Data-type instance literals (Pydantic `BaseModel`, `Enum`, `Workflow`, `dataclass`, `TypedDict`) are exempt — they are vocabulary, not state. Canary: `test_injected_instance_literal_in_all_is_rejected` + `test_data_type_literal_in_all_is_allowed` + `test_clean_tree_has_no_instance_literal_in_all`.
   - **Rule-15** — factory functions in `__all__` whose body is just `return <module-singleton>` or `return <ContextVar>.get()` are rejected. Catches `def get_pubsub(): return _pubsub_var.get()` — the "export the live singleton" Cardinal-rule violation. Canary: `test_injected_factory_returns_singleton_is_rejected` + `test_clean_tree_has_no_factory_returns_singleton`.
   - **Rule-16** — mutable container literals in `__all__` are rejected (`REGISTRY: dict = {}`, `CACHE = []`, `KEYS = set()`). Shared mutable state across module boundaries is the same Cardinal-rule violation as an instance export. Tuples, frozensets, `Final[<frozen>]` exempt. Canary: `test_injected_mutable_container_in_all_is_rejected` + `test_clean_tree_has_no_mutable_container_in_all`.
   - **Rule-17** — `bind_*` entries in `__all__` are rejected. Production composition roots use the eager-default ContextVar pattern (or lazy `_get()` for settings-dependent singletons); the only legitimate binding swap is the test-only `set_*_for_tests` context manager. `register_*` is NOT covered — it's the plugin Protocol entry-point pattern. Canary: `test_injected_bind_in_all_is_rejected`.
@@ -92,7 +92,7 @@ Exceptions: `core/database` (Postgres connections), `core/observability` (log fi
   - **`no_bind_call_outside_composition_root` semgrep rule** — `bind_*($INSTANCE)` calls may appear only in `web.py` and `worker.py` (path-excluded). Calling a registry binder outside the composition roots re-binds a singleton in a non-startup context — a Cardinal-rule violation. `app/testing/` is excluded via the `--exclude` CLI flag in `bin/ci`.
   - **`no_test_only_imports_outside_tests` semgrep rule** — importing a test-seam symbol (`set_*_for_tests`, `_reset_*`, `_*_for_tests`) in production code is rejected. Test scaffolding must not appear in the production or worker modules. `app/testing/` and `test_*.py` are exempt via the `--exclude` CLI flag in `bin/ci`; `**/__init__.py` (re-export barrels — separately gated by `bin/sync_modules` Rule-17) is exempt via the rule's own `paths.exclude`.
   - **Semgrep invocation split** — `bin/ci` runs the third-party rule packs (`p/python`, `p/owasp-top-ten`) and the project's own `.semgrep/` rules in two separate invocations. Both invocations pass the same `--exclude app/testing --exclude test_*.py` CLI flags. The split exists so a future project rule can opt in to scanning `app/testing/` independently of the third-party packs (which always false-positive on test fixtures); today no project rule needs that, so both invocations carry identical excludes. Per-rule `paths.exclude` for the same paths is unreliable — semgrep strips the target arg (`app`) from the path it matches against, so a glob like `**/app/testing/**` never fires.
-  - **Runtime layer** — the static checks above cover what source code says. `apps/backend/bin/import_audit.py` is a meta-path finder installed by `apps/backend/conftest.py` that catches dynamic-Python bypasses at runtime: `importlib.import_module(constructed_string)`, `getattr`-triggered lazy submodule loads, plugin registries built from strings. Recorded violations are dumped to `tmp/import_audit_violations.json` and fail `bin/ci` via the sentinel. Two carve-ins: composition roots (D1) and targets whose dotted path contains the segment `"test"` (D2 — pytest discovery + fixture lookup of test files are structurally within-module).
+  - **Runtime layer** — the static checks above cover what source code says. `apps/backend/bin/import_audit.py` is a meta-path finder installed by `apps/backend/conftest.py` that catches dynamic-Python bypasses at runtime: `importlib.import_module(constructed_string)`, `getattr`-triggered lazy submodule loads, plugin registries built from strings. Recorded violations are dumped to `tmp/import_audit_violations.json` and fail `bin/ci` via the sentinel. Two carve-ins: composition roots (D1 — `app/web.py`, `app/worker.py`, and `alembic/env.py`, whose model sweep imports every `models.py` by design) and targets whose dotted path contains the segment `"test"` (D2 — pytest discovery + fixture lookup of test files are structurally within-module).
 - **`bin/check_table_access` enforces two additional rules that tach cannot see:**
   - **Raw-SQL ownership** — AST-parses every `app/**/models.py` to build `table_name → owning_module`, then scans every production `.py` under `app/` (excluding `test/` dirs and `app/testing/`) for `text(...)` / `sa_text(...)` calls. Any call that references a table owned by a different module fails. Non-literal args (f-strings, variables) also fail — all auditable raw SQL must be a string literal.
   - **Suppression guard** — fails on any `# tach-ignore` directive in any `.py` under `app/` (prod + tests). One suppression reopens the import hole the tach interface check depends on.
@@ -184,7 +184,7 @@ Every fire-and-forget background coroutine goes through this single helper. Beha
 - On exception: calls `span.record_exception(exc)` + `span.set_status(ERROR)`, then logs `spawn.crashed` at ERROR with traceback. Does NOT re-raise. The coro is responsible for marking its domain-row state to `failed` BEFORE raising — once `spawn()` catches, the domain row is the durable record.
 - Holds the `asyncio.Task` in a module-level set until completion so GC doesn't collect it mid-flight.
 
-Used by: reviewer, github plugin catch-up, workspace reaper.
+Used by: `core/sse`'s after-commit general-event publish.
 
 Not used for anything a caller will `await` — that's a normal async call.
 
@@ -224,7 +224,7 @@ Rules:
 
 - Service modules never write `session: AsyncSession | None`, never check `if session is None`, never call `db_session()` themselves. Semgrep rule `apps/backend/.semgrep/no_optional_session.yaml` enforces this.
 - Read-only services follow the same rule — required session, no commits — so callers can compose snapshot-consistent read-then-write.
-- Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints, and the workflow engine's `_start_step_impl` for LocalCommands) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract. The workflow engine is a unique orchestrator: it opens one session, wraps the LocalCommand inside a SAVEPOINT, and passes the outer session so command writes + step state + outbox enqueue commit atomically.
+- Orchestrators (endpoint handlers, `spawn()` task bodies, periodic-task entrypoints, and the run engine's per-stage dispatch taskiq bodies) are the only places that open `db_session()`. No `_owns_session` naming suffix needed — the type signature is the contract. The run engine is a unique orchestrator: e.g. `domain/pipelines.engine._run_action_stage` opens one session, wraps the `Action.execute` call inside a SAVEPOINT, and passes the outer session so the action's writes + stage-execution state + outbox enqueue commit atomically.
 - `core/audit_log.audit()` and every `audit_for_*` helper require `session=`. The audit row flushes inside the caller's transaction so it can never diverge from the state change it describes.
 
 ### Service-fn session-handling convention
@@ -269,13 +269,13 @@ Alembic CLI (`alembic revision --autogenerate -m "..."`) is the only supported w
 - Services and repositories never pass `id=` to a Row constructor. Drop it; the DB mints a v7 UUID on INSERT.
 - Call `await session.flush()` before reading `row.id` if the PK is needed before commit (audit-log FK, child-row FK, return value). Where the row is added and never read before commit, no flush is needed beyond what the transaction already provides.
 - **Exception — app-side identity ownership:** When a component owns an aggregate's identity in-memory before persistence, it mints the PK via `uuid.uuid7()` — never `uuid.uuid4()` — and passes it explicitly to the Row constructor. Two cases in the tree:
-  - The reviewer aggregate minting `Review`, `Finding`, `FindingObservation`, `CommentThread`, `CommentMessage`, and `AcknowledgmentDecision` IDs. The repository's `Row(id=domain_obj.id)` insert is the counterpart to this pattern.
   - Agent-command producers (`core/agent_gateway._build_config_update_dto`, `core/workspace/commands.py`, `core/workspace/remote_provider.py`) minting `command_id`, and `core/workspace/commands.py` minting `workspace_id`. These IDs must exist app-side before the row is inserted — the `command_id` rides the wire to the agent and gates the atomic single-flight `current_command_id` claim, and the `workspace_id` is the agent's lifecycle handle. `command_id` becomes the `agent_commands` PK, which is the FIFO claim sort key (`claim_next` orders by `id`), so a random `uuid4` would scramble delivery order; `workspace_id` becomes the `workspaces` PK. Both inherit the column's `server_default=text("uuidv7()")` only on the rare insert that omits `id`.
-- Enforced by `apps/backend/.semgrep/uuid_pk_discipline.yaml` (two rules: `uuid-pk-no-python-default`, `uuid-pk-no-explicit-id-in-row-constructor`). Both red-fail CI. The taint rule treats both `uuid4(...)` and `uuid7(...)` as sources; `apps/backend/app/domain/reviewer/aggregate.py` and `publish.py` are excluded from that rule as the documented carve-outs (both own aggregate identity app-side). The agent-command producers need no exclusion: the mint and the `Row(id=...)` sink sit in different functions (producer DTO → `enqueue_command` / `agent_report`), and the taint rule does not follow that interprocedural DTO-field hop — so the discipline there is convention-enforced, not linter-enforced.
+  - `domain/pipelines.create_pipeline` minting `PipelineRow.id`. The `pipelines` table's `id` column carries no `server_default` (unlike its sibling tables `pipeline_runs`/`stage_executions`/`run_pauses` in the same migration) — a pipeline's id is part of its `PipelineDefinition` (referenced by other pipelines' `PipelineCallStage.pipeline_id`, and shipped templates carry pinned ids), so it must exist before the row is ever inserted. In practice the mint happens one level removed: `PipelineDefinition.id` defaults to a fresh `uuid7()` via Pydantic `Field(default_factory=...)` at request-parse time, and `create_pipeline` passes that already-minted `definition.id` straight through to `PipelineRow(id=definition.id, ...)`.
+- Enforced by `apps/backend/.semgrep/uuid_pk_discipline.yaml` (two rules: `uuid-pk-no-python-default`, `uuid-pk-no-explicit-id-in-row-constructor`). Both red-fail CI. The taint rule treats both `uuid4(...)` and `uuid7(...)` as sources; no path exclusions are needed today — the mint and the `Row(id=...)` sink sit in different functions for every app-side-identity case in the tree, and the taint rule does not follow that interprocedural DTO-field hop, so the discipline there is convention-enforced, not linter-enforced.
 
 ## Durable tasks via `core/tasks`
 
-Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has retry policy, or participates in a workflow. Use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work without durability needs.
+Use [`core/tasks`](core_tasks.md) when work must survive backend restarts, has retry policy, or participates in a run. Use [`core/observability.spawn()`](core_observability.md) for fire-and-forget request-scoped background work without durability needs.
 
 `@task` registers a body; `enqueue(task_ref, args, *, session)` writes a `taskiq_enqueue` row to `outbox_entries` in the caller's session. The drain (in `apps/backend/app/worker.py`) pushes outbox rows to Redis after commit. The atomic-in-session contract: task is durable iff the caller's transaction commits. The outbox table is private to `core/tasks` — domain modules never import it directly.
 
@@ -327,25 +327,15 @@ Call `.get_secret_value()` only at the byte boundary — Fernet construction, JW
 
 When decrypting a ciphertext column for use, wrap the plaintext in `SecretStr(...)` immediately on emergence so the rest of the call chain stays uniform.
 
-## WorkflowCommand discipline
+## Dispatch helper discipline
 
-Engine in [`core/workflow`](core_workflow.md). Workflows are typed Pydantic data structures registered at startup; commands fall into three families:
+Three layers gate every AgentCommand enqueue in the dispatch path:
 
-- **AgentDispatch** — subclasses of `AgentDispatchCommand` (ABC). `@final dispatch(inputs, ctx, *, session) -> UUID` is inherited; subclasses implement `build_command` (for `WorkspaceOpCommand`) or `build_invocation` (for `CodingAgentCommand`; the `@final dispatch` on `CodingAgentCommand` also auto-injects `ExpectedResponse.model_json_schema()` into the invocation context and on `completed_success` the engine duck-type calls `cmd.handle_response(output, ctx)` to validate the agent JSON output — schema violations produce `retryable=False`). `start_step` identifies them via `isinstance(cmd, AgentDispatchCommand)`, calls `dispatch`, parks in `awaiting_agent`, and stores the returned `command_id` as `pending_agent_command_id`. Worker never blocks on the agent.
-- **Local** — plain structural `LocalCommand` Protocol; `execute(inputs, ctx, *, session: AsyncSession) -> Outcome`. Runs in the worker process inside a SAVEPOINT; command DB writes + `step_attempts` stamp + `route_workflow` outbox enqueue commit atomically. **Session contract exception** — the engine (orchestrator) opens `db_session()` and passes the outer session to the command (service). The command must never call `session.commit()`. A `ValueError` from `execute` is the graceful validation path and returns `Outcome.failure`; other exceptions propagate, trigger SAVEPOINT rollback, and enter the workflow into `FAILED` without a route_workflow enqueue.
-- **HITL** — subclasses of `HITLCommand` (ABC); `execute(inputs, ctx) -> Outcome` (no session). Must return `Outcome.hitl_pending(question=…)`; the engine writes a `pending_human_decisions` row and parks in `awaiting_human`. `resume_hitl()` is the resume API.
+- **Layer 1 (`enqueue_command`)** — raw primitive in `core/agent_gateway`. Only `core/workspace.dispatch_provision` (which has no workspace row yet) and `dispatch_via_workspace` call it directly.
+- **Layer 2 (`dispatch_via_workspace`)** — `core/workspace/dispatch.py`. Loads the workspace row, calls `enqueue_command`, pins to the owning agent, optionally claims. `dispatch_cleanup` and `dispatch_auth_refresh` route here with `claim_workspace=False`.
+- **Layer 3 (`coding_agent.dispatch_invocation`)** — `core/coding_agent/service.py`. Builds the `InvokeClaudeCodeCommand` from a high-level `Invocation`, calls Layer 2 with `claim_workspace=True`, inserts a `coding_agent_runs` row. `domain/pipelines`' skill-stage dispatch routes here.
 
-Commands take a typed `inputs` Pydantic model + a `CommandContext`. They never read `workflow_executions.step_state` directly — input resolution is the router's job. Outputs go on the Outcome.
-
-### Dispatch helper discipline
-
-Three layers gate every AgentCommand enqueue in the reviewer/workspace path:
-
-- **Layer 1 (`enqueue_command`)** — raw primitive in `core/agent_gateway`. Only `ProvisionWorkspace.dispatch` (which has no workspace row yet) and `dispatch_via_workspace` call it directly.
-- **Layer 2 (`dispatch_via_workspace`)** — `core/workspace/dispatch.py`. Loads the workspace row, calls `enqueue_command`, pins to the owning agent, optionally claims. `CleanupWorkspace.dispatch` and `RefreshWorkspaceAuth.dispatch` route here with `claim_workspace=False`.
-- **Layer 3 (`coding_agent.dispatch_invocation`)** — `core/coding_agent/service.py`. Builds the `InvokeClaudeCodeCommand` from a high-level `Invocation`, calls Layer 2 with `claim_workspace=True`, inserts a `coding_agent_runs` row. `CodeReview.dispatch` routes here.
-
-`apps/backend/.semgrep/dispatch_helper_discipline.yaml` enforces this: direct calls to `enqueue_command`, `pin_command_to_agent`, `try_claim`, or `create_run` inside `app/domain/reviewer/commands/` or `app/core/workspace/commands.py` fail CI. Canary: `app/core/workspace/test/test_dispatch_discipline_semgrep_canary.py`.
+`apps/backend/.semgrep/dispatch_helper_discipline.yaml` enforces this: direct calls to `enqueue_command`, `pin_command_to_agent`, `try_claim`, or `create_run` inside any `app/domain/*/commands/*.py` file fail CI. Canary: `app/core/workspace/test/test_dispatch_discipline_semgrep_canary.py`.
 
 ### Single-flight per workspace
 
@@ -353,17 +343,17 @@ The workspace state machine accepts one in-flight AgentCommand at a time. [`core
 
 ### Failure-report-precedes-disposal invariant
 
-`release_claim` clears `current_command_id` but **preserves** `owning_agent_id` on the workspace row for observability. Command-to-workflow correlation lives on `agent_commands.workflow_execution_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their workflow after the workspace has been torn down.
+`release_claim` clears `current_command_id` but **preserves** `owning_agent_id` on the workspace row for observability. Command-to-run correlation lives on `agent_commands.run_id`, which is stamped by `dispatch` at enqueue time and read directly by `record_agent_event` and `failsafe_agent_loss`, so terminal events resolve their run after the workspace has been torn down.
 
-### Recovery commands — per-workflow declaration
+### Recovery — auth-expired retry
 
-Failure-label → recovery command mappings are declared directly on the `Workflow` dataclass via `recovery_commands: tuple[type, ...]`. Each class must declare `recovers_failure_label: ClassVar[str]`. `WorkflowEngine.register_workflow` builds the per-workflow map and auto-registers each class — no separate startup call needed. Duplicate labels within one workflow raise `WorkflowError` at registration time.
+`domain/pipelines`' run engine handles skill-stage `auth_expired` failures directly: it dispatches `core/workspace.dispatch_auth_refresh`, then retries the failing skill stage once (a one-retry cap tracked in `pipeline_runs.sendback_counts`). No standing recovery-policy registry — the engine owns the whole recovery flow inline.
 
 ## WorkspaceProvider contract
 
-[`core/workspace`](core_workspace.md) declares the `WorkspaceProvider` Protocol; the only shipped implementation is `RemoteAgentWorkspaceProvider` (`remote_agent`, in `core/workspace/remote_provider.py`), which dispatches via [`core/agent_gateway`](core_agent_gateway.md). The Protocol is the seam between the control plane and the remote agent — the single-flight, failure-report-precedes-disposal, and recovery invariants all enforce here.
+[`core/workspace`](core_workspace.md) declares the `WorkspaceProvider` Protocol; the only shipped implementation is `RemoteAgentWorkspaceProvider` (`remote_agent`, in `core/workspace/remote_provider.py`), which dispatches via [`core/agent_gateway`](core_agent_gateway.md). The Protocol is the seam between the control plane and the remote agent — the single-flight and failure-report-precedes-disposal invariants both enforce here.
 
-The Protocol's `run_coding_agent_cli` is synchronous-shaped, but for the remote provider the Workspace WorkflowCommands enqueue AgentCommands and the engine awaits terminal events through `handle_agent_event`. The Protocol shape is preserved so `app/testing/stub_workspace` can wrap the registered implementation without importing provider internals.
+The Protocol's `run_coding_agent_cli` is synchronous-shaped, but for the remote provider the workspace dispatch helpers enqueue AgentCommands and the run engine awaits terminal events through `handle_agent_event`. The Protocol shape is preserved so `app/testing/stub_workspace` can wrap the registered implementation without importing provider internals.
 
 ## Audit log discipline
 
@@ -397,7 +387,7 @@ Row shape:
 Every domain function takes `org_id` kwarg or reads it from the `org_id_var` contextvar; every query filters by it. Two-track rule:
 
 - **HTTP request handlers** — `Depends(require(Action.X))` resolves `X-Yaaos-Org-Slug` and sets the contextvar. Handlers can read it via `current_org_id()`.
-- **Background work** — every non-HTTP entry point opens `with org_context(org_id, actor_kind, actor_id=None)` from [`core/auth`](core_auth.md). This sets the same contextvars + OTel span attrs (`yaaos.org_id`, `yaaos.actor_kind`, `yaaos.actor_id`) + structlog bound vars so background log lines + audit rows attribute correctly. Wrapped today: GitHub catch-up poller, reviewer worker (`actor_kind=workspace`), taskiq task bodies (`actor_kind=SYSTEM` — via `OrgContextMiddleware` in `core/tasks`, not manual wrapping in each body). Scheduler cleanup jobs that don't emit audit rows + don't read from org-scoped tables (session/invitation/totp/audit purges) do NOT need a wrap — they're global by design.
+- **Background work** — every non-HTTP entry point opens `with org_context(org_id, actor_kind, actor_id=None)` from [`core/auth`](core_auth.md). This sets the same contextvars + OTel span attrs (`yaaos.org_id`, `yaaos.actor_kind`, `yaaos.actor_id`) + structlog bound vars so background log lines + audit rows attribute correctly. Wrapped today: GitHub catch-up poller, `core/agent_gateway`'s AgentEvent/heartbeat endpoint handlers (`actor_kind=workspace`), taskiq task bodies (`actor_kind=SYSTEM` — via `OrgContextMiddleware` in `core/tasks`, not manual wrapping in each body). Scheduler cleanup jobs that don't emit audit rows + don't read from org-scoped tables (session/invitation/totp/audit purges) do NOT need a wrap — they're global by design.
 - **Discipline rule** — any function reading from an org-scoped table must either (a) take `org_id` as an explicit kwarg, or (b) call `require_org_context()` to assert the contextvar is set. The assertion surfaces forgotten-wrap bugs loudly instead of silently leaking cross-org data.
 
 ## Idempotency at external boundaries
@@ -447,7 +437,7 @@ Every `/api/*` path classifies as one of three `RouteSecurity` categories: `PUBL
 
 ### Service tests
 
-When a backend flow crosses **3+ modules** (e.g. webhook → intake → reviewer → vcs.post_finding → audit), write ONE service test that drives the entry-point function or HTTP route end-to-end and asserts the durable state across every module it touches. Service tests are the **default** for backend-only flows; reach for Playwright only when the contract is browser-visible.
+When a backend flow crosses **3+ modules** (e.g. webhook → intake → pipelines → vcs.post_finding → audit), write ONE service test that drives the entry-point function or HTTP route end-to-end and asserts the durable state across every module it touches. Service tests are the **default** for backend-only flows; reach for Playwright only when the contract is browser-visible.
 
 Mechanics:
 
@@ -480,7 +470,7 @@ Tests obey the **same import rules as production code** — enforced by `tach ch
 - Service tests of multi-hop pipelines are sliced per-hop: each service test exercises one entry point end-to-end; chain tests by asserting on the durable state that the next hop reads, not by calling internal functions of the next module.
 - Singleton reset for test isolation: never poke private state via a submodule attribute (`mod._svc._singleton = None`). Use a named helper instead.
   - **Intra-module reach only** (module's own `test/` directory) → private `_*_for_tests` helper in the module's `service.py` (or sibling submodule), NOT in `__all__`, NOT in tach `expose`. Tests reach it via direct submodule import — intra-module, tach-permitted. Example: `redis._reset_clients_for_tests`, `orgs.onboarding._reset_contributors_for_tests`.
-  - **Cross-module test machinery** (isolation fixtures, seed/cleanup, workflow harness) → lives in `app/testing/`, which calls each module's *production* `bind_*`/`register_*` APIs only. A test helper must NEVER be reachable across modules — not in `__all__`, not imported from another module's tests.
+  - **Cross-module test machinery** (isolation fixtures, seed/cleanup, test harnesses) → lives in `app/testing/`, which calls each module's *production* `bind_*`/`register_*` APIs only. A test helper must NEVER be reachable across modules — not in `__all__`, not imported from another module's tests.
   - **ContextVar-bound holders** — for process-local in-memory singletons (Redis pubsub, agent dispatch queues, subscriber registry, email inbox) the preferred isolation pattern is ContextVar + `bind_*` production DI seam + autouse fixture in `app/testing/isolation`. No explicit reset is needed in individual tests — the autouse fixture binds a fresh instance per test. See `app/core/redis/pubsub.py` as the reference implementation.
 
 ### DI over `@patch`
@@ -497,10 +487,11 @@ Each wall-clock wait has an env var. Code reads from `core/config` — never har
 | `YAAOS_REAPER_INTERVAL_SECONDS` | 30 | Workspace reaper sweep interval. Tests: 1. |
 | `YAAOS_HEARTBEAT_INTERVAL_SECONDS` | 10 | Review-job heartbeat interval. |
 | `YAAOS_CATCHUP_DELAY_SECONDS` | 10 | Boot delay before the GitHub catch-up coro. |
+| `YAAOS_RUN_STALL_THRESHOLD_SECONDS` | 300 | `domain/pipelines.resume_stalled_runs` grace window before a `running` pipeline run with no pending agent command (or a pending command already `done`) is treated as stalled. |
 
 ### Pytest plugin entry-point
 
-Cross-cutting fixtures (transactional DB session, fake-github base URL) live in a small in-repo pytest plugin registered via `[project.entry-points."pytest11"]` so it auto-loads.
+Cross-cutting fixtures shared across every module's tests (transactional `db_session`, `fake_github_base_url`) live in the top-level `apps/backend/conftest.py` — pytest's own directory-hierarchy auto-discovery, not module-local. A genuine `[project.entry-points."pytest11"]`-registered plugin (`app.core.llm.pytest_plugin`, adding `--allow-llm-calls` + the LLM response cache) is the exception, used only where a CLI option is needed.
 
 ## Observability
 
@@ -510,7 +501,7 @@ Cross-cutting fixtures (transactional DB session, fake-github base URL) live in 
 
 ### Context-variable threading
 
-A single `request_meta_var: ContextVar` carries `{request_id, workflow, user, ...}` through async code. Web middleware sets it per request. `spawn()` propagates the parent's context into the spawned coroutine. Log filters and span attributes read from it.
+The identity contextvars (`org_id_var`, `user_id_var`, `actor_kind_var`, `actor_id_var`, `run_id_var`, `command_id_var`; see [core_auth.md](core_auth.md)) carry request/run context through async code. Web middleware sets them per request; `org_context(...)` sets the background-job equivalents. `spawn()` propagates the parent's context into the spawned coroutine. Log filters and span attributes read from them.
 
 ### When to add a manual span
 
@@ -528,15 +519,14 @@ Don't wrap every domain function — noise hurts more than detail helps.
 
 Canonical shape: `span.record_exception(exc)` → `span.set_status(StatusCode.ERROR, str(exc))` → `log.exception(...)`. Reference: `apps/backend/app/core/observability/spawn.py:56`.
 
-Two enforced sites:
+Enforced site:
 
-- **`workflow.command.{kind}` in `core/workflow/service.py`** — opened for every command category at the dispatch site. `_start_step_impl` wraps Workspace `dispatch()` calls; `_safe_execute` wraps Local/HITL `execute()` calls. Both follow the same contract: on exception `record_exception` + `set_status(ERROR)` on the child span and propagate ERROR to the outer taskiq task span; on `Outcome.failure(reason=...)` `set_status(ERROR, reason)` on both spans with no exception event; on success spans left at UNSET status.
 - **FastAPI catch-all in `core/webserver/app_factory.py`** — the `@app.exception_handler(Exception)` handler calls `trace.get_current_span().record_exception(exc)` + `set_status(ERROR, "internal_server_error")` before logging and returning the 500 JSON. This marks the HTTP request span red in Dash0 so unhandled server errors are visible in traces, not just logs.
 
 Signal-selection order when adding observability to a new catch site:
 
 1. **Attribute** — if the error is expected and queryable (e.g. auth failures with a typed exception), set a span attribute (`span.set_attribute("error.kind", "auth_failure")`).
-2. **Child span** — for a unit of work with its own identity (e.g. `WorkflowCommand.execute`), open a child span and record the error there; propagate status to the outer span.
+2. **Child span** — for a unit of work with its own identity (e.g. a per-stage dispatch call), open a child span and record the error there; propagate status to the outer span.
 3. **Log** — always emit at least a log line (exception log for unexpected errors; warn for expected but notable).
 
 **Grep recipe** to find non-re-raising catches that may be missing span recording: `rg "except Exception|except:" apps/backend/app/`. Review each hit — if it doesn't call `record_exception`, it should (or the exception should be re-raised).
@@ -559,13 +549,11 @@ Function-scoped autouse `sse_shutdown_event_isolation` fixture: calls `set_shutd
 
 `core.vcs.set_vcs_for_tests(plugin=X)` — context manager for ad-hoc per-test VCS swaps; binds a fresh copy of the current registry with the plugin replaced and restores the prior binding on exit. Import from `app.core.vcs`.
 
-`app.core.workflow.set_engine_for_tests(scenario=...)` is the standard test-isolation helper for tests that register workflows or commands. It swaps in a fresh engine (or the built-in `"recording"` scenario engine), restores the prior process-singleton on exit — even on exception. Import from `app.core.workflow` or `app.testing.workflow_harness`. Pass `scenario="recording"` to get a `_RecordingWorkflowEngine` that captures `start()` calls without DB access.
-
 `core.tasks.service.scoped_task_registration(task_ref)` — intra-module helper; lives in `service.py`, not re-exported from the package `__all__`. Tests inside `core/tasks/test/` import it via direct submodule import. Call `@task(name)(fn)` to get a `TaskRef`, then wrap the test body in `with scoped_task_registration(ref)`. On exit the name is popped from the broker registry so subsequent tests can reuse the same name.
 
 Rules:
 - No wholesale-wipe or `unregister_*` loop between tests. The autouse fixture handles isolation structurally.
-- `set_vcs_for_tests` / `set_engine_for_tests` bind on entry, restore prior singleton on exit. The yielded value is the bound instance.
+- `set_vcs_for_tests` binds on entry, restores prior singleton on exit. The yielded value is the bound instance.
 - Never alias the canonical registry dict in a helper — always `.copy()` to prevent leakage.
 
 ## Subscription self-cleanup (async generator pattern)
@@ -609,7 +597,7 @@ Both loops wrap each hook call in `try/except` (web) or `contextlib.suppress` (w
 Both composition roots live inside `app/` so they're importable as regular Python modules and testable without exec tricks.
 
 - `app/web.py` — web process entry. See § Bootstrap composition order. Ends with `app = webserver.create_app()`. When run directly (`python apps/backend/app/web.py`) the `if __name__ == "__main__"` block calls `uvicorn.run(app, ...)` with all server flags in Python — no flags scattered across Dockerfile CMDs. It passes the built `app` **object**, not the `"app.web:app"` import string: a string makes uvicorn re-import the module (distinct from the running `__main__`), executing the whole composition root — every module-level registration — a second time. Passing the object runs the bootstrap once. Cost: no uvicorn reload/multi-worker (both need an import string), unused since the backend runs single-process per container. Local dev that wants reload runs uvicorn directly (`uvicorn app.web:app --reload`), which imports the module once and never executes `__main__`.
-- `app/worker.py` — worker process entry. Side-effect imports (workflow commands, plugins, workspace providers) + `asyncio.run(core.tasks.runtime.run())`. When run directly the `if __name__ == "__main__"` block is the sole entry point.
+- `app/worker.py` — worker process entry. Side-effect imports (the run-engine modules, plugins, workspace providers) + `asyncio.run(core.tasks.runtime.run())`. When run directly the `if __name__ == "__main__"` block is the sole entry point.
 
 Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["python", "apps/backend/app/worker.py"]`. tini is PID 1 (image-level `ENTRYPOINT ["/usr/bin/tini", "--"]`) and forwards SIGTERM to the Python child, triggering graceful shutdown via the Phase-1 shutdown registries.
 

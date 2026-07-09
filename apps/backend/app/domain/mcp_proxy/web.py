@@ -1,6 +1,6 @@
 """HTTP wiring for `domain/mcp_proxy` — Streamable HTTP MCP proxy.
 
-The reviewer mints a per-review bearer via `mint_token(review_id, org_id=...)` and
+A caller mints a per-review bearer via `mint_token(review_id, org_id=...)` and
 writes it into the workspace's `.mcp.json`. The coding-agent CLI POSTs
 JSON-RPC envelopes to `POST /api/mcp/{review_id}/{server}`; the proxy:
 
@@ -123,7 +123,7 @@ async def dispatch(
                 status_code=401,
             )
 
-        # org_id is stored on the token row — no back-lookup into reviewer needed.
+        # org_id is stored on the token row — no back-lookup needed.
         org_id = token_row.org_id
 
         credential = await get(s, org_id, server)

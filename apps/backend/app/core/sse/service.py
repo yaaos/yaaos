@@ -9,8 +9,8 @@ silently discard stashed events so rolled-back transactions never emit
 SPA events.
 
 Workspace-activity pipeline: `publish_workspace_activity` /
-`subscribe_workspace_activity` use a per-org-per-workflow channel
-(`{org_id}:workspace_activity:{workflow_execution_id}`). Raw agent event
+`subscribe_workspace_activity` use a per-org-per-run channel
+(`{org_id}:workspace_activity:{run_id}`). Raw agent event
 dict passed through unchanged — no envelope, no `ts` stamping.
 
 `serialize_for_sse(payload)` formats any dict as an HTTP `text/event-stream`
@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -51,7 +51,9 @@ class GeneralEventKind(StrEnum):
     """Closed set of kinds carried on the general org-scoped SSE channel."""
 
     TICKET_STATUS_CHANGED = "ticket_status_changed"
-    WORKFLOW_STATE_CHANGED = "workflow_state_changed"
+    RUN_STATE_CHANGED = "run_state_changed"
+    STAGE_STATE_CHANGED = "stage_state_changed"
+    ARTIFACT_STORED = "artifact_stored"
     REVIEW_REQUESTED = "review_requested"
     REVIEW_STARTED = "review_started"
     REVIEW_COMPLETED = "review_completed"
@@ -152,32 +154,116 @@ def subscribe_general(org_id: UUID) -> AsyncIterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _channel_for_workspace_activity(org_id: UUID, workflow_execution_id: UUID) -> str:
-    """Internal: per-org per-workflow channel name for workspace-activity events. NOT in __all__."""
-    return f"{org_id}:workspace_activity:{workflow_execution_id}"
+def _channel_for_workspace_activity(org_id: UUID, run_id: UUID) -> str:
+    """Internal: per-org per-run channel name for workspace-activity events. NOT in __all__."""
+    return f"{org_id}:workspace_activity:{run_id}"
 
 
 async def publish_workspace_activity(
     *,
     org_id: UUID,
-    workflow_execution_id: UUID,
+    run_id: UUID,
     payload: dict[str, Any],
 ) -> None:
-    """Publish a workspace-activity event for a specific org + workflow execution.
+    """Publish a workspace-activity event for a specific org + pipeline run.
 
     Passes `payload` through unchanged — no envelope, no `ts` stamping.
     Redis fire-and-forget semantics apply.
     """
-    await redis_client.publish(_channel_for_workspace_activity(org_id, workflow_execution_id), payload)
+    await redis_client.publish(_channel_for_workspace_activity(org_id, run_id), payload)
 
 
-def subscribe_workspace_activity(org_id: UUID, workflow_execution_id: UUID) -> AsyncIterator[dict[str, Any]]:
-    """Async iterator over workspace-activity events for `org_id` + `workflow_execution_id`.
+def subscribe_workspace_activity(
+    org_id: UUID,
+    run_id: UUID,
+    on_subscribed: asyncio.Event | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Async iterator over workspace-activity events for `org_id` + `run_id`.
+
+    `on_subscribed`, when provided, is set after the Redis SUBSCRIBE handshake
+    completes — before the first message is delivered. Callers that need to
+    guarantee no messages are lost between subscription setup and a subsequent
+    publish should pass an event and await it before publishing.
 
     Returns an async iterator — consumers do
-    `async for event in subscribe_workspace_activity(org_id, wfx_id)`.
+    `async for event in subscribe_workspace_activity(org_id, run_id)`.
     """
-    return redis_client.subscribe(_channel_for_workspace_activity(org_id, workflow_execution_id))
+    return redis_client.subscribe(
+        _channel_for_workspace_activity(org_id, run_id),
+        on_subscribed=on_subscribed,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Activity-subscriber lifecycle hooks — demand-pull wiring without an
+# import cycle (`core/sse` cannot import `core/agent_gateway`; see
+# `register_pipeline_lookup` in `domain/repos` for the same pattern).
+# ---------------------------------------------------------------------------
+
+OnActivitySubscriberAttach = Callable[[UUID, UUID], Awaitable[str | None]]
+OnActivitySubscriberHeartbeat = Callable[[UUID, str], Awaitable[None]]
+OnActivitySubscriberDetach = Callable[[UUID, str], Awaitable[None]]
+
+# Registered once, at `core/agent_gateway` import time. Re-registering
+# overwrites (mirrors `core/byok.register_validator`'s reload tolerance).
+_on_activity_subscriber_attach: OnActivitySubscriberAttach | None = None
+_on_activity_subscriber_heartbeat: OnActivitySubscriberHeartbeat | None = None
+_on_activity_subscriber_detach: OnActivitySubscriberDetach | None = None
+
+
+def register_activity_subscriber_lifecycle(
+    *,
+    on_attach: OnActivitySubscriberAttach,
+    on_heartbeat: OnActivitySubscriberHeartbeat,
+    on_detach: OnActivitySubscriberDetach,
+) -> None:
+    """Register the workspace-activity SSE subscriber lifecycle hooks.
+
+    Called once, at `core/agent_gateway` import time, so the demand-pull
+    `SubscriberRegistry` (owned by `core/agent_gateway`) learns about every
+    SSE attach/heartbeat/detach without `core/sse` importing `agent_gateway`
+    (that edge would cycle — `agent_gateway` already imports `core/sse` to
+    publish activity frames).
+
+    `on_attach(org_id, run_id)` returns an opaque token (or `None` when the
+    run has no resolvable route) that `on_heartbeat`/`on_detach` echo back.
+    Before registration (or when `on_attach` returns `None`), the
+    workspace-activity stream serves frames exactly as it did before this
+    seam existed — no attach, no heartbeat, no detach.
+    """
+    global _on_activity_subscriber_attach, _on_activity_subscriber_heartbeat, _on_activity_subscriber_detach
+    _on_activity_subscriber_attach = on_attach
+    _on_activity_subscriber_heartbeat = on_heartbeat
+    _on_activity_subscriber_detach = on_detach
+
+
+async def _attach_activity_subscriber(org_id: UUID, run_id: UUID) -> str | None:
+    """Call the registered `on_attach` hook, or no-op (`None`) when unregistered.
+
+    Internal — NOT in `__all__`. Used by `web.py`'s `_workspace_activity_stream`
+    (intra-module submodule import).
+    """
+    if _on_activity_subscriber_attach is None:
+        return None
+    return await _on_activity_subscriber_attach(org_id, run_id)
+
+
+async def _heartbeat_activity_subscriber(run_id: UUID, token: str) -> None:
+    """Call the registered `on_heartbeat` hook, or no-op when unregistered.
+
+    Internal — NOT in `__all__`.
+    """
+    if _on_activity_subscriber_heartbeat is not None:
+        await _on_activity_subscriber_heartbeat(run_id, token)
+
+
+async def _detach_activity_subscriber(run_id: UUID, token: str) -> None:
+    """Call the registered `on_detach` hook, or no-op when unregistered.
+
+    Internal — NOT in `__all__`.
+    """
+    if _on_activity_subscriber_detach is not None:
+        await _on_activity_subscriber_detach(run_id, token)
 
 
 # ---------------------------------------------------------------------------

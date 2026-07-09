@@ -112,6 +112,12 @@ func Decode(raw []byte) (Command, error) {
 			return nil, fmt.Errorf("command: decode CleanupWorkspace: %w", err)
 		}
 		return &CleanupWorkspaceCommand{Proto: v}, nil
+	case protocol.KindPushBranch:
+		var v protocol.PushBranchCommand
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, fmt.Errorf("command: decode PushBranch: %w", err)
+		}
+		return &PushBranchCommand{Proto: v}, nil
 	case protocol.KindConfigUpdate:
 		var v protocol.ConfigUpdateCommand
 		if err := json.Unmarshal(raw, &v); err != nil {

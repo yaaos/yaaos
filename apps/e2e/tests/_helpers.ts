@@ -32,8 +32,8 @@ async function jsonPost(url: string, body: unknown): Promise<Response> {
 }
 
 /** Reset both yaaos's DB and fake-github's in-memory state to a known floor.
- *  After this call: yaaos DB is fully empty (reviewer specialists are shipped
- *  markdown files, not DB rows); fake-github has its default seeded PRs + repos.
+ *  After this call: yaaos DB is fully empty; fake-github has its default
+ *  seeded PRs + repos.
  */
 export async function resetStack(): Promise<void> {
   await Promise.all([
@@ -60,20 +60,88 @@ export async function seedGithubInstall(
   });
 }
 
-/** Seed the `skill_name` for a connected repo. Used by e2e specs that render
- *  the Code Connect settings page and expect a non-null skill_name. The seed
- *  exists for SPA read-back assertions — the reviewer dispatch flow hardcodes
- *  skill='pr_review' and does not read this value.
+/**
+ * Seed a `paused` pipeline run — a completed always-HITL skill stage with a
+ * stored final artifact and an open `run_pauses` row — bypassing the run
+ * engine's coding-agent dispatch entirely (no real agent invocation, no
+ * workspace). Lets specs exercise the ticket page's Overview attention
+ * block and pause-respond flow without depending on a live coding-agent
+ * completing a real skill invocation — faster and deterministic.
+ *
+ * Returns the seeded ticket/run/pause/stage-execution ids.
  */
-export async function seedRepoSkill(opts: {
+export async function seedPausedRun(opts: {
   orgSlug: string;
-  repoExternalId: string;
-  skillName: string;
+  ticketTitle: string;
+  stageName?: string;
+}): Promise<{ ticket_id: string; run_id: string; pause_id: string; stage_execution_id: string }> {
+  const r = await fetch(`${YAAOS_URL}/api/testing/seed/paused_run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      org_slug: opts.orgSlug,
+      ticket_title: opts.ticketTitle,
+      stage_name: opts.stageName ?? "write-spec",
+    }),
+  });
+  if (!r.ok) {
+    throw new Error(`seedPausedRun → ${r.status}: ${await r.text()}`);
+  }
+  return (await r.json()) as {
+    ticket_id: string;
+    run_id: string;
+    pause_id: string;
+    stage_execution_id: string;
+  };
+}
+
+/**
+ * Seed a `running` pipeline run with one `running` skill stage_execution —
+ * no live coding-agent required. Lets e2e specs exercise the Runs-tab live
+ * activity pane and Overview in-flight card deterministically.
+ *
+ * Returns the seeded ticket/run/stage-execution ids.
+ */
+export async function seedRunningRun(opts: {
+  orgSlug: string;
+  ticketTitle: string;
+  stageName?: string;
+}): Promise<{ ticket_id: string; run_id: string; stage_execution_id: string; org_id: string }> {
+  const r = await fetch(`${YAAOS_URL}/api/testing/seed/running_run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      org_slug: opts.orgSlug,
+      ticket_title: opts.ticketTitle,
+      stage_name: opts.stageName ?? "write-code",
+    }),
+  });
+  if (!r.ok) {
+    throw new Error(`seedRunningRun → ${r.status}: ${await r.text()}`);
+  }
+  return (await r.json()) as {
+    ticket_id: string;
+    run_id: string;
+    stage_execution_id: string;
+    org_id: string;
+  };
+}
+
+/**
+ * Inject a pre-normalized `{kind,ts,message,detail}` activity frame directly
+ * onto the workspace-activity Redis channel for the given `(orgId, runId)`.
+ * Used by e2e specs to simulate live agent output without a live coding-agent.
+ * The backend publishes the payload verbatim — no further normalization occurs.
+ */
+export async function publishWorkspaceActivity(opts: {
+  orgId: string;
+  runId: string;
+  payload: { kind: string; ts: string; message: string; detail: Record<string, unknown> | null };
 }): Promise<void> {
-  await jsonPost(`${YAAOS_URL}/api/testing/seed/repo_skill`, {
-    org_slug: opts.orgSlug,
-    repo_external_id: opts.repoExternalId,
-    skill_name: opts.skillName,
+  await jsonPost(`${YAAOS_URL}/api/testing/publish/workspace_activity`, {
+    org_id: opts.orgId,
+    run_id: opts.runId,
+    payload: opts.payload,
   });
 }
 
@@ -130,13 +198,12 @@ export function prPayload(opts: {
  *  /__test/dispatch_webhook does the signing with the shared test secret.
  *
  *  For `pull_request` events we also seed the PR JSON into fake-github
- *  BEFORE dispatching, so the reviewer's subsequent `fetch_pr` call returns
+ *  BEFORE dispatching, so intake's subsequent `fetch_pr` call returns
  *  200 instead of 404. fake-github's default seed only covers `acme/web#1` /
  *  `acme/api#1`; specs use arbitrary PR numbers, so the auto-seed is what
  *  makes them work. Diff content is left untouched — specs that care about
- *  diff content (e.g. the secrets pre-flight) call `seedPRDiff` themselves;
- *  specs that don't care get an empty diff from fake-github, which the stub
- *  coding agent handles fine.
+ *  diff content call `seedPRDiff` themselves; specs that don't care get an
+ *  empty diff from fake-github.
  */
 export async function dispatchWebhook(opts: {
   event: "pull_request" | "issue_comment" | "pull_request_review_comment" | "installation";
@@ -154,9 +221,8 @@ export async function dispatchWebhook(opts: {
         number: pr.number,
         pr,
       });
-      // Seed a default diff + file list so yaaos's reviewer admission
-      // pipeline sees `src/example.ts` in the PR's diff (the stub coding
-      // agent emits findings anchored there). Specs that need a custom
+      // Seed a default diff + file list so `src/example.ts` is present in
+      // the PR's diff for any spec that reads it. Specs that need a custom
       // diff call `seedPRDiff` explicitly after `dispatchWebhook` to
       // overwrite this.
       await jsonPost(`${FAKE_GITHUB_URL}/__test/seed_diff`, {
@@ -243,46 +309,6 @@ export async function gitHeadSha(owner: string, repo: string): Promise<string> {
     throw new Error(`gitHeadSha ${owner}/${repo}: empty sha (${body.error ?? "unknown"})`);
   }
   return body.sha;
-}
-
-/**
- * Return the most-recent workflow run state for the ticket matching `title`
- * on `orgSlug`. Returns `null` when the ticket or runs aren't found yet, or
- * when the most recent run is still in a non-terminal state.
- *
- * Used by failure-path specs to assert the workflow actually completed with
- * a `failed` state (vs never having started at all).
- *
- * Uses `GET /api/tickets/:id/workflow-runs` which is the canonical source of
- * truth for workflow lifecycle state.
- */
-export async function ticketJobStatus(
-  orgSlug: string,
-  title: string,
-  request: APIRequestContext,
-): Promise<string | null> {
-  const listResp = await request.get(`${YAAOS_URL}/api/tickets?q=${encodeURIComponent(title)}`, {
-    headers: { "X-Yaaos-Org-Slug": orgSlug },
-  });
-  if (!listResp.ok()) return null;
-  const body = (await listResp.json()) as { items: Array<{ id: string; title: string }> };
-  const list = body.items ?? [];
-  const ticket = list.find((t) => t.title === title);
-  if (!ticket) return null;
-
-  const runsResp = await request.get(`${YAAOS_URL}/api/tickets/${ticket.id}/workflow-runs`, {
-    headers: { "X-Yaaos-Org-Slug": orgSlug },
-  });
-  if (!runsResp.ok()) return null;
-  const runs = (await runsResp.json()) as Array<{ state: string }>;
-  if (runs.length === 0) return null;
-  // Most recent run is last (API returns oldest-first).
-  const latestRun = runs[runs.length - 1];
-  if (!latestRun) return null;
-  // Return `null` while still running; surface the state once terminal.
-  const terminalStates = ["done", "failed", "cancelled"];
-  if (!terminalStates.includes(latestRun.state)) return null;
-  return latestRun.state;
 }
 
 /**

@@ -73,7 +73,7 @@ class Action(StrEnum):
     INTEGRATIONS_READ = "integrations.read"
     INTEGRATIONS_WRITE = "integrations.write"
 
-    # Org-scoped tickets / lessons / reviewer. Builder reads + mutates;
+    # Org-scoped tickets / lessons / pipeline runs. Builder reads + mutates;
     # Admin/Owner inherit via Role.covers().
     TICKETS_READ = "tickets.read"
     LESSONS_READ = "lessons.read"
@@ -83,6 +83,15 @@ class Action(StrEnum):
 
     # Workspace-agent lifecycle management. Admin only.
     WORKSPACE_AGENT_SHUTDOWN = "workspace_agent.shutdown"
+
+    # Pipeline-definition CRUD (`domain/pipelines`). Admin only — reads and
+    # writes both, unlike the READ/WRITE-split settings actions above.
+    PIPELINES_MANAGE = "pipelines.manage"
+
+    # Repo config (protected-code + auto-approve) + trigger bindings
+    # (`domain/repos`). Admin only — reads and writes both, same shape as
+    # PIPELINES_MANAGE.
+    REPOS_MANAGE = "repos.manage"
 
 
 class RouteSecurity(StrEnum):
@@ -175,6 +184,16 @@ USER_SCOPED_METHOD_EXACT: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
+# `GET /api/intake/points` overrides `/api/intake`'s otherwise-unclassified
+# fall-through (the prefix stays unclassified so `POST /api/intake/{type}` —
+# the bearer-less GitHub webhook — never gains an X-Yaaos-Org-Slug/CSRF
+# requirement). Only this one verb+path pair is ORG_SCOPED.
+ORG_SCOPED_METHOD_EXACT: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("GET", "/api/intake/points"),
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # Category 3 — ORG_SCOPED: session + X-Yaaos-Org-Slug + role check.
@@ -191,12 +210,19 @@ ORG_SCOPED_PREFIXES: tuple[str, ...] = (
     "/api/mcp-proxy",
     # Workspace connection status + activity SSE stream.
     "/api/workspaces",
-    # Org-scoped tickets / lessons / reviewer.
+    # Org-scoped tickets / lessons.
     "/api/tickets",
     "/api/lessons",
-    "/api/reviewer",
-    # SSE routes mounted at core/sse/web.py — org-scoped per-workflow streams.
+    # SSE routes mounted at core/sse/web.py — org-scoped per-run streams.
     "/api/sse",
+    # Pipeline-definition CRUD.
+    "/api/pipelines",
+    # Action-picker mirror (`domain/actions`).
+    "/api/actions",
+    # Repo config + trigger bindings (`domain/repos`).
+    "/api/repos",
+    # Read-only artifact bodies + version metadata (`domain/artifacts`).
+    "/api/artifacts",
 )
 
 
@@ -223,6 +249,8 @@ def classify_route(path: str, method: str | None = None) -> RouteSecurity | None
     # Method-specific exact overrides.
     if method is not None and (method, path) in USER_SCOPED_METHOD_EXACT:
         return RouteSecurity.USER_SCOPED
+    if method is not None and (method, path) in ORG_SCOPED_METHOD_EXACT:
+        return RouteSecurity.ORG_SCOPED
 
     # Exact matches.
     if path in PUBLIC_EXACT:

@@ -43,17 +43,18 @@ class TicketRow(Base):
     # a key leave it NULL.
     idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
     # optional payload bag carrying intake-time parameters that the
-    # workflow's first step consumes. Stays JSONB so future ticket types add
+    # pipeline run's first stage consumes. Stays JSONB so future ticket types add
     # fields without schema churn.
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
-    # pointer to the workflow execution currently driving this ticket.
-    # Soft FK (no DB constraint) — workflow_executions live in core/workflow
-    # and the link is informational.
-    current_workflow_execution_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), nullable=True
-    )
-    # Denormalized rollup written by reviewer after each review run or ack.
-    # Avoids a cross-module import from tickets → reviewer at list time.
+    # Soft ref (no DB constraint) to the pipeline_runs row currently driving
+    # this ticket.
+    current_run_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # Per-ticket work branch. Intake-supplied (PR tickets: the head branch
+    # LABEL — provenance/display only, checkout pins the head SHA) or minted
+    # at creation (yaaos/<slugified-title>-<shortid>). Every ticket has one.
+    branch_name: Mapped[str] = mapped_column(String, nullable=False)
+    # Denormalized rollup written by domain/findings after each finding
+    # report or verdict. Avoids a cross-module import at list time.
     findings_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     max_severity: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

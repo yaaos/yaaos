@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
@@ -198,7 +198,7 @@ def _row_to_info(row: WorkspaceRow) -> WorkspaceInfo:
     return WorkspaceInfo(
         id=str(row.id),
         provider_id=row.provider_id,
-        sha=row.spec.get("sha", ""),
+        sha=row.spec.get("sha") or "",
         status=WorkspaceStatus(row.status),
         created_at=row.created_at,
         activated_at=row.activated_at,
@@ -420,10 +420,11 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     sibling pods keep their bearers and their workspaces untouched.
 
     For each expired workspace that holds an in-flight `current_command_id`,
-    the owning workflow execution is resolved from `agent_commands.workflow_execution_id`
+    the owning run is resolved from `agent_commands.run_id`
     (the durable correlation column). A synthetic terminal-failure event is enqueued
-    via `HANDLE_AGENT_EVENT` so the WorkflowExecution resumes (fails the step)
-    rather than hanging in AWAITING_AGENT indefinitely.
+    via `agent_gateway.enqueue_agent_event` — the same agent-event consumer
+    registry `record_agent_event` uses — so `domain/pipelines` resumes (fails
+    the stage) rather than hanging in `running` indefinitely.
 
     Workspaces with a NULL `owning_agent_id` (legacy rows) are skipped — they
     carry no owning pod to declare lost.
@@ -433,11 +434,10 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
     DELETE handler (with the single agent's ID).
     """
     from app.core.agent_gateway import (  # noqa: PLC0415
-        get_command_workflow_execution_id,
+        enqueue_agent_event,
+        get_command_run_id,
         revoke_all_for_agent,
     )
-    from app.core.tasks import enqueue  # noqa: PLC0415
-    from app.core.workflow import HANDLE_AGENT_EVENT  # noqa: PLC0415
 
     # Active workspaces whose owning pod is in the offline set.
     # CREATING is excluded: lean-created rows enter ACTIVE on first event;
@@ -479,21 +479,16 @@ async def failsafe_agent_loss(s: Any, offline_agent_ids: set[UUID]) -> None:
         expired_count += 1
 
         # Synthesize a terminal failure for any in-flight command so the
-        # owning WorkflowExecution resumes (fails its step) rather than
+        # owning pipeline run resumes (fails its stage) rather than
         # waiting forever in AWAITING_AGENT. Correlation comes from
-        # agent_commands.workflow_execution_id — no workspace-row column needed.
+        # agent_commands.run_id — no workspace-row column needed.
         if current_command_id is not None:
-            holder_workflow_id = await get_command_workflow_execution_id(current_command_id, session=s)
-            if holder_workflow_id is not None:
-                await enqueue(
-                    HANDLE_AGENT_EVENT,
-                    args={
-                        "workflow_execution_id": str(holder_workflow_id),
-                        "agent_command_id": str(current_command_id),
-                        "outcome_label": "failure",
-                        "outputs": {},
-                        "traceparent": None,
-                    },
+            holder_run_id = await get_command_run_id(current_command_id, session=s)
+            if holder_run_id is not None:
+                await enqueue_agent_event(
+                    run_id=holder_run_id,
+                    agent_command_id=current_command_id,
+                    outcome_label="failure",
                     session=s,
                 )
 
@@ -657,9 +652,9 @@ async def get_workspace_owner(
     """Return the `(org_id, owning_agent_id)` projection for `workspace_id`,
     or None if the row is missing.
 
-    Used by Workspace WorkflowCommand `dispatch` bodies that need to enqueue
-    an AgentCommand pinned to the workspace's owning agent without crossing
-    the module boundary via a raw Row.
+    Used by workspace dispatch helpers that need to enqueue an AgentCommand
+    pinned to the workspace's owning agent without crossing the module
+    boundary via a raw Row.
     """
     row = (
         await session.execute(
@@ -682,7 +677,7 @@ async def get_workspace_claim_state(
 
     Used by `core/agent_gateway` to apply the stale-claim guard and locate the
     workspace owner without crossing the module boundary via a raw Row.
-    Workflow-execution correlation lives on `agent_commands.workflow_execution_id`.
+    Run correlation lives on `agent_commands.run_id`.
     """
     row = (
         await session.execute(
@@ -745,6 +740,25 @@ async def update_workspace_status(
     """
     await session.execute(
         update(WorkspaceRow).where(WorkspaceRow.id == workspace_id).values(status=new_status)
+    )
+
+
+async def extend_expiry(
+    workspace_id: UUID,
+    *,
+    seconds: int,
+    session: AsyncSession,
+) -> None:
+    """Push `expires_at` out to `now + seconds`, unconditionally.
+
+    Used by `domain/pipelines` to keep a paused run's workspace alive
+    through its HITL grace window — the normal reaper collects the
+    workspace once the deadline passes with no resolution.
+    """
+    await session.execute(
+        update(WorkspaceRow)
+        .where(WorkspaceRow.id == workspace_id)
+        .values(expires_at=_utcnow() + timedelta(seconds=seconds))
     )
 
 

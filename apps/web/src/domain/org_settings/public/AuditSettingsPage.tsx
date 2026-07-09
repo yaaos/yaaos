@@ -1,5 +1,5 @@
+import { OrgSettingsLayout } from "@shared/components/public/layout/org-settings-layout";
 import { AuditPage } from "../AuditPage";
-import { OrgSettingsLayout } from "../OrgSettingsLayout";
 
 export function AuditSettingsPage() {
   return (

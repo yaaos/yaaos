@@ -23,8 +23,8 @@ from app.core.coding_agent.run_service import (
     create_run,
     finalize_run,
     get_run_id_for_command,
-    get_run_id_for_workflow_step,
-    get_step_activity,
+    get_run_id_for_stage,
+    get_stage_activity,
 )
 from app.core.coding_agent.run_sink_impl import CodingAgentRunSinkImpl
 from app.core.coding_agent.types import ActivityLog, Usage
@@ -44,19 +44,20 @@ async def _seed_run(
     command_kind: str = "review",
     plugin_id: str = "claude_code",
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
-    """Insert a coding_agent_run with status=running. Returns (run_id, wfe_id, cmd_id, agent_cmd_id)."""
-    wfe_id = uuid.uuid4()
+    """Insert a coding_agent_run with status=running. Returns
+    (coding_agent_run_id, pipeline_run_id, cmd_id, agent_cmd_id)."""
+    pipeline_run_id = uuid.uuid4()
     cmd_id = uuid.uuid4()
-    run_id = await create_run(
+    coding_agent_run_id = await create_run(
         org_id=org_id,
-        workflow_execution_id=wfe_id,
-        step_id="review",
+        run_id=pipeline_run_id,
+        stage_execution_id=uuid.uuid4(),
         agent_command_id=cmd_id,
         command_kind=command_kind,
         plugin_id=plugin_id,
         session=db_session,
     )
-    return run_id, wfe_id, cmd_id, cmd_id
+    return coding_agent_run_id, pipeline_run_id, cmd_id, cmd_id
 
 
 # ── create_run ─────────────────────────────────────────────────────────────────
@@ -67,13 +68,14 @@ async def _seed_run(
 async def test_create_run_inserts_running_row(db_session) -> None:
     """create_run inserts a row with status=running and correct fields."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    pipeline_run_id = uuid.uuid4()
+    stage_execution_id = uuid.uuid4()
     cmd_id = uuid.uuid4()
 
     run_id = await create_run(
         org_id=org_id,
-        workflow_execution_id=wfe_id,
-        step_id="review",
+        run_id=pipeline_run_id,
+        stage_execution_id=stage_execution_id,
         agent_command_id=cmd_id,
         command_kind="review",
         plugin_id="claude_code",
@@ -87,8 +89,8 @@ async def test_create_run_inserts_running_row(db_session) -> None:
     assert row is not None
     assert row.status == "running"
     assert row.org_id == org_id
-    assert row.workflow_execution_id == wfe_id
-    assert row.step_id == "review"
+    assert row.run_id == pipeline_run_id
+    assert row.stage_execution_id == stage_execution_id
     assert row.agent_command_id == cmd_id
     assert row.command_kind == "review"
     assert row.plugin_id == "claude_code"
@@ -344,7 +346,7 @@ async def test_run_sink_skips_when_plugin_unregistered(db_session) -> None:
     assert row.completed_at is None
 
 
-# ── get_run_id_for_command / get_run_id_for_workflow_step ──────────────────────
+# ── get_run_id_for_command / get_run_id_for_stage ──────────────────────────────
 
 
 @pytest.mark.service
@@ -368,46 +370,48 @@ async def test_get_run_id_for_command_missing_returns_none(db_session) -> None:
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_get_run_id_for_workflow_step(db_session) -> None:
-    """get_run_id_for_workflow_step returns the run_id for (wfe_id, step_id)."""
+async def test_get_run_id_for_stage(db_session) -> None:
+    """get_run_id_for_stage returns the coding-agent run id for (run_id, stage_execution_id)."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    pipeline_run_id = uuid.uuid4()
+    stage_execution_id = uuid.uuid4()
     cmd_id = uuid.uuid4()
 
-    run_id = await create_run(
+    coding_agent_run_id = await create_run(
         org_id=org_id,
-        workflow_execution_id=wfe_id,
-        step_id="review",
+        run_id=pipeline_run_id,
+        stage_execution_id=stage_execution_id,
         agent_command_id=cmd_id,
         command_kind="review",
         plugin_id="claude_code",
         session=db_session,
     )
 
-    result = await get_run_id_for_workflow_step(wfe_id, "review", session=db_session)
-    assert result == run_id
+    result = await get_run_id_for_stage(pipeline_run_id, stage_execution_id, session=db_session)
+    assert result == coding_agent_run_id
 
-    # Wrong step_id returns None.
-    result2 = await get_run_id_for_workflow_step(wfe_id, "other_step", session=db_session)
+    # Wrong stage_execution_id returns None.
+    result2 = await get_run_id_for_stage(pipeline_run_id, uuid.uuid4(), session=db_session)
     assert result2 is None
 
 
-# ── get_step_activity ──────────────────────────────────────────────────────────
+# ── get_stage_activity ──────────────────────────────────────────────────────────
 
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_get_step_activity_returns_activity_log_when_present(db_session) -> None:
-    """get_step_activity returns the ActivityLog for (wfx_id, step_id) when
-    a finalize_run with an activity blob has landed."""
+async def test_get_stage_activity_returns_activity_log_when_present(db_session) -> None:
+    """get_stage_activity returns the ActivityLog for (run_id, stage_execution_id)
+    when a finalize_run with an activity blob has landed."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    pipeline_run_id = uuid.uuid4()
+    stage_execution_id = uuid.uuid4()
     cmd_id = uuid.uuid4()
 
     run_id = await create_run(
         org_id=org_id,
-        workflow_execution_id=wfe_id,
-        step_id="review",
+        run_id=pipeline_run_id,
+        stage_execution_id=stage_execution_id,
         agent_command_id=cmd_id,
         command_kind="review",
         plugin_id="claude_code",
@@ -436,7 +440,7 @@ async def test_get_step_activity_returns_activity_log_when_present(db_session) -
         session=db_session,
     )
 
-    result = await get_step_activity(wfe_id, "review", session=db_session)
+    result = await get_stage_activity(pipeline_run_id, stage_execution_id, session=db_session)
     assert result is not None
     assert isinstance(result, ActivityLog)
     assert len(result.events) == 1
@@ -445,27 +449,28 @@ async def test_get_step_activity_returns_activity_log_when_present(db_session) -
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_get_step_activity_returns_none_when_no_run(db_session) -> None:
-    """get_step_activity returns None when no run exists for the workflow step
-    (e.g. a non-InvokeClaudeCode step, or a step that hasn't dispatched)."""
-    result = await get_step_activity(uuid.uuid4(), "review", session=db_session)
+async def test_get_stage_activity_returns_none_when_no_run(db_session) -> None:
+    """get_stage_activity returns None when no run exists for the stage
+    (e.g. a non-InvokeClaudeCode stage, or a stage that hasn't dispatched)."""
+    result = await get_stage_activity(uuid.uuid4(), uuid.uuid4(), session=db_session)
     assert result is None
 
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_get_step_activity_returns_none_when_partition_aged_out(db_session) -> None:
-    """get_step_activity returns None when the run row exists but no activity
+async def test_get_stage_activity_returns_none_when_partition_aged_out(db_session) -> None:
+    """get_stage_activity returns None when the run row exists but no activity
     blob was persisted (simulating a dropped weekly partition past the 4-week TTL).
     The SPA renders this as 'activity expired'."""
     org_id = uuid.uuid4()
-    wfe_id = uuid.uuid4()
+    pipeline_run_id = uuid.uuid4()
+    stage_execution_id = uuid.uuid4()
     cmd_id = uuid.uuid4()
 
     run_id = await create_run(
         org_id=org_id,
-        workflow_execution_id=wfe_id,
-        step_id="review",
+        run_id=pipeline_run_id,
+        stage_execution_id=stage_execution_id,
         agent_command_id=cmd_id,
         command_kind="review",
         plugin_id="claude_code",
@@ -482,5 +487,5 @@ async def test_get_step_activity_returns_none_when_partition_aged_out(db_session
         session=db_session,
     )
 
-    result = await get_step_activity(wfe_id, "review", session=db_session)
+    result = await get_stage_activity(pipeline_run_id, stage_execution_id, session=db_session)
     assert result is None

@@ -13,8 +13,6 @@ import pytest
 
 EXPECTED_ALL = frozenset(
     [
-        # ABC for coding-agent workflow commands
-        "CodingAgentCommand",
         # Protocol + types
         "CodingAgentPlugin",
         "Invocation",
@@ -35,7 +33,8 @@ EXPECTED_ALL = frozenset(
         "list_plugins",
         "dispatch_invocation",
         "create_run",
-        "get_step_activity",
+        "finalize_run",
+        "get_stage_activity",
         # Test isolation seam
         "set_coding_agents_for_tests",
         # BYOK secrets provider
@@ -45,6 +44,7 @@ EXPECTED_ALL = frozenset(
 
 # Names that were deleted from the Protocol — importing any of them must fail.
 RETIRED_NAMES = [
+    "CodingAgentCommand",
     "review",
     "incremental_review",
     "verify_fix",
@@ -84,7 +84,8 @@ def test_all_matches_expected_set() -> None:
 @pytest.mark.service
 def test_protocol_has_expected_methods() -> None:
     """CodingAgentPlugin Protocol must expose exactly compile_invocation, parse_result,
-    and validate_settings as non-dunder, non-`plugin_id` protocol methods."""
+    parse_activity_line, and validate_settings as non-dunder, non-`plugin_id` protocol
+    methods."""
     from app.core.coding_agent import CodingAgentPlugin  # noqa: PLC0415
 
     # Collect Protocol method names (non-dunder, non-plugin_id members
@@ -94,7 +95,13 @@ def test_protocol_has_expected_methods() -> None:
         for name, _ in inspect.getmembers(CodingAgentPlugin, predicate=inspect.isfunction)
         if not name.startswith("_")
     }
-    assert proto_methods == {"compile_invocation", "byok_requirement", "parse_result", "validate_settings"}
+    assert proto_methods == {
+        "compile_invocation",
+        "byok_requirement",
+        "parse_result",
+        "parse_activity_line",
+        "validate_settings",
+    }
 
 
 @pytest.mark.service

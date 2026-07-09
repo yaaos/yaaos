@@ -13,15 +13,25 @@ import sys
 
 
 def main() -> int:
-    # Side-effect imports: workflow commands + workspace providers + VCS
-    # plugins all register at import time. The worker dispatches workflow
-    # task bodies, which look up commands/workflows/providers via the
-    # registries — those registries are empty until the modules below load.
-    # Imported here (outside `core/tasks`) because `core` cannot depend on
-    # `plugins` or `testing` under layering rules.
+    # Side-effect imports: coding-agent registry + workspace providers + VCS
+    # plugins all register at import time. The worker dispatches task
+    # bodies, which look up plugins/providers via the registries — those
+    # registries are empty until the modules below load. Imported here
+    # (outside `core/tasks`) because `core` cannot depend on `plugins` or
+    # `testing` under layering rules.
     import app.core.coding_agent  # noqa: PLC0415
-    import app.core.workflow  # noqa: PLC0415
-    import app.domain.reviewer  # noqa: PLC0415
+
+    # The six run-engine modules. isort alphabetizes this block — harmless,
+    # since none of these modules has an import-time side effect that
+    # depends on load order (`app.domain.pipelines` registers its own
+    # `@scheduled` jobs and agent-event consumer at import regardless of
+    # position in this block).
+    import app.domain.actions  # noqa: PLC0415
+    import app.domain.artifacts  # noqa: PLC0415
+    import app.domain.findings  # noqa: PLC0415
+    import app.domain.pipelines  # noqa: PLC0415
+    import app.domain.pr_review  # noqa: PLC0415
+    import app.domain.repos  # noqa: PLC0415
 
     # Workspace providers registration.
     from app.core.workspace import register_workspace_providers  # noqa: PLC0415
@@ -42,7 +52,6 @@ def main() -> int:
     import app.domain.integrations.scheduler  # noqa: PLC0415
     import app.domain.mcp_proxy.service  # noqa: PLC0415
     import app.domain.orgs.invitation_sweeper  # noqa: PLC0415
-    import app.domain.reviewer.orphan_sweep  # noqa: PLC0415
     import app.plugins.claude_code  # noqa: PLC0415
     import app.plugins.github  # noqa: F401, PLC0415
     from app.core.config import get_settings  # noqa: PLC0415

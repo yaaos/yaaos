@@ -27,11 +27,10 @@ user_id_var: ContextVar[UUID | None] = ContextVar("yaaos_user_id", default=None)
 actor_kind_var: ContextVar[ActorKind | None] = ContextVar("yaaos_actor_kind", default=None)
 actor_id_var: ContextVar[UUID | None] = ContextVar("yaaos_actor_id", default=None)
 
-# Workflow scope contextvars. None outside an active workflow task body.
-# Set/reset by workflow task bodies in `core/workflow/service.py` around each
-# dispatch so the span processor stamps them on every child span and structlog
-# log lines carry them as queryable attributes.
-workflow_execution_id_var: ContextVar[str | None] = ContextVar("yaaos_workflow_execution_id", default=None)
+# Run/command scope contextvars — read by `core/observability`'s span
+# processor to stamp `run_id`/`command_id` on every child span
+# and structlog log line when set. No production setter today.
+run_id_var: ContextVar[str | None] = ContextVar("yaaos_run_id", default=None)
 command_id_var: ContextVar[str | None] = ContextVar("yaaos_command_id", default=None)
 
 # Set by the middleware (for PUBLIC / USER_SCOPED paths) and by route deps
@@ -100,7 +99,7 @@ _REQUEST_STRUCTLOG_KEYS = (
     "yaaos_user_id",
     "yaaos_actor_kind",
     "yaaos_actor_id",
-    "yaaos_workflow_execution_id",
+    "yaaos_run_id",
     "yaaos_command_id",
 )
 

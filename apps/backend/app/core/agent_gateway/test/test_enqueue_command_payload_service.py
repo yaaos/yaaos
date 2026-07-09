@@ -43,6 +43,7 @@ def _invoke_fields() -> InvokeClaudeCodeFields:
         mcp_servers=[],
         limits={"wallclock_seconds": 300},
         result_spec={},
+        skill_path=".claude/skills/pr_review/SKILL.md",
     )
 
 
@@ -64,7 +65,7 @@ async def test_enqueue_command_payload_row_and_span(db_session) -> None:
 
     command_id = uuid7()
     workspace_id = uuid4()
-    workflow_id = uuid4()
+    run_id = uuid4()
     fields = _invoke_fields()
 
     with span_capture() as exporter:
@@ -75,7 +76,7 @@ async def test_enqueue_command_payload_row_and_span(db_session) -> None:
             workspace_id=workspace_id,
             payload_fields=fields,
             session=db_session,
-            workflow_execution_id=workflow_id,
+            run_id=run_id,
         )
 
     # Row was inserted with the expected PK and kind.
@@ -85,7 +86,7 @@ async def test_enqueue_command_payload_row_and_span(db_session) -> None:
     assert row is not None, "agent_commands row not found after enqueue_command_payload"
     assert row.command_kind == "InvokeClaudeCode"
     assert row.status == "pending"
-    assert row.workflow_execution_id == workflow_id
+    assert row.run_id == run_id
     # The dispatch span injects `traceparent` into the payload — all other keys
     # must be present and untouched.
     assert row.payload.get("invocation") == fields.invocation
@@ -105,7 +106,7 @@ async def test_enqueue_command_payload_row_and_span(db_session) -> None:
     assert attrs.get("kind") == "InvokeClaudeCode", f"unexpected kind attr: {attrs}"
     assert attrs.get("command_id") == str(command_id), f"unexpected command_id attr: {attrs}"
     assert attrs.get("workspace_id") == str(workspace_id), f"unexpected workspace_id attr: {attrs}"
-    assert attrs.get("workflow_id") == str(workflow_id), f"unexpected workflow_id attr: {attrs}"
+    assert attrs.get("run_id") == str(run_id), f"unexpected run_id attr: {attrs}"
 
 
 @pytest.mark.asyncio

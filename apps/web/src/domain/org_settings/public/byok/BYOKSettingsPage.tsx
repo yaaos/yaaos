@@ -1,5 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
+import { OrgSettingsLayout } from "@shared/components/public/layout/org-settings-layout";
 import { PageHeader } from "@shared/components/public/layout/page-header";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
@@ -10,7 +11,6 @@ import { Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { OrgSettingsLayout } from "../../OrgSettingsLayout";
 import {
   type ByokProviderStatus,
   useByokProviders,

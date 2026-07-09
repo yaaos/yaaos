@@ -76,7 +76,7 @@ Supervisor maintains a bidirectional WS to `/api/v1/agent/activity` when `Config
 
 ### Live progress streaming
 
-`RealHandler.RunClaude` dispatches via the `RunFunc` seam (production default: `RunStreaming`) and wires `OnStdoutLine` to push each Claude Code stream-json line as a `kind=progress` AgentEvent while also accumulating locally for the terminal event. `progress` events record without resuming the workflow engine — only `completed_*` events resume it.
+`RealHandler.RunClaude` dispatches via the `RunFunc` seam (production default: `RunStreaming`) and wires `OnStdoutLine` to push each Claude Code stream-json line as a `kind=progress` AgentEvent while also accumulating locally for the terminal event. `progress` events record without resuming the run engine — only `completed_*` events resume it.
 
 ### Per-command completion token
 
@@ -102,6 +102,16 @@ Full state machine and record shapes → [workspace_lifecycle.md](workspace_life
 ### InvokeClaudeCode failure excerpt
 
 On a non-zero claude exit, `RunClaude` returns `claude exit <code>: stderr=<…head…> stdout_tail=<…tail…>` — the supervisor maps this to the `completed_failure` event's `failure_reason`. Both halves ride because claude with `--output-format=stream-json` emits its `{"type":"result","is_error":true,…}` event at the end of stdout, so stderr alone is usually empty. Caps live in `realhandler.go` (`claudeErrStderrCap`, `claudeErrStdoutTailCap`); excerpts mark truncation explicitly (`...[truncated tail]` on stderr head, `...[truncated head]` on stdout tail). Empty halves render `<empty>` so a missing capture is distinguishable from a captured-nothing.
+
+### Skill-path check + artifact collection + exit-push
+
+`RunClaude` performs three additional steps around every `InvokeClaudeCode` invocation, all in `realhandler.go`:
+
+- **Pre-spawn skill check.** `InvokeClaudeCodeCommand.SkillPath` (backend-computed, convention `.claude/skills/<skill_name>/SKILL.md`) is stat'd inside the checkout before claude is spawned. Empty → `completed_failure` with `failure_reason="skill not found: (empty skill_path)"` (rejected explicitly, before the stat — `filepath.Join(path, "")` resolves to the checkout root, which always exists, so an unchecked empty value would otherwise pass silently). Non-empty but absent from the checkout → `completed_failure` with `failure_reason="skill not found: <path>"`. Either way no subprocess ever launches. Zero agent policy — the convention is entirely backend-side; the agent only stats the path it's given.
+- **Artifact collection.** `TMPDIR` is set on the claude subprocess to a workspace-local directory (`workspaceTmpDirName`, torn down by `Cleanup`'s `os.RemoveAll` — no per-file deletion, so a failed run's artifact survives for debugging until then). After the subprocess exits — regardless of its own exit status — `readArtifact` reads `$TMPDIR/<command_id>.md` through `io.LimitReader(f, artifactMaxBytes+1)` (2 MiB cap) rather than a Stat-then-Read pair, so the size cap is enforced atomically with the read instead of racing a file that could grow between a separate stat and read. Three outcomes: file absent → `(nil, "")` (legitimate — review invocations and non-completed main-skill outcomes write none); file present and under cap → `(&body, "")`; file present and over cap → `(nil, "<message>")`, distinguishing "wrote none" from "wrote too much". Both fields ride the terminal `AgentEvent`'s top-level `artifact`/`artifact_error` (not inside `outputs`) via `command.InvokeResult.ArtifactPayload()`, which `workspace.executeCommand` reads on both the success and error return paths — a push failure never masks a real artifact.
+- **Exit-push.** `maybePushOriginHead` runs `git push origin HEAD` iff HEAD is a named branch (`headBranchName` via `git symbolic-ref -q --short HEAD`); a detached checkout (today's only real-world case — see `gitClone` above) or a non-repo directory both resolve to "skip, not a failure". A named branch with no new commits is itself a push no-op (git reports "Everything up-to-date"). A genuine push failure (most commonly non-fast-forward) is a stage failure carrying the redacted git stderr — the artifact still ships on that same terminal event.
+
+Mechanical exit order: skill-stat (pre-spawn) → TMPDIR set (pre-spawn) → subprocess runs → artifact read → conditional push → terminal event reported.
 
 ### BYOK credential delivery
 
@@ -141,8 +151,8 @@ All three OTel signals (traces, metrics, logs) share two standard dimensions on 
 
 | Span name | Parent | Where | Notable attributes |
 |---|---|---|---|
-| `supervisor.dispatch.<kind>` | backend's `agent_command.dispatch.<kind>` span (propagated via the `traceparent` field in the `AgentCommand` wire payload) | `supervisor.go` `routeCommand` | `workspace_id`, `command_id`, `kind`; `workflow_id` when present |
-| `workspace.handle.<kind>` | `supervisor.dispatch.<kind>` | `workspace.go` `executeCommand` | `workspace_id`, `command_id`, `kind`; `workflow_id` when present |
+| `supervisor.dispatch.<kind>` | backend's `agent_command.dispatch.<kind>` span (propagated via the `traceparent` field in the `AgentCommand` wire payload) | `supervisor.go` `routeCommand` | `workspace_id`, `command_id`, `kind`; `run_id` when present |
+| `workspace.handle.<kind>` | `supervisor.dispatch.<kind>` | `workspace.go` `executeCommand` | `workspace_id`, `command_id`, `kind`; `run_id` when present |
 | `workspace.clone` | `workspace.handle.ProvisionWorkspace` | `realhandler.go` `ProvisionWorkspace` | |
 | `workspace.runclaude` | `workspace.handle.InvokeClaudeCode` | `realhandler.go` `RunClaude` | |
 | `agent.identity_exchange` | inherits caller context; root at current call sites | `supervisor.go` `exchangeIdentity` | |
@@ -161,7 +171,7 @@ The supervisor's normal error model is: retry-with-backoff forever, log warnings
 
 After first exchange, `supervisor` pins `agentID` and `orgID`. Every subsequent call to `exchangeIdentity` (bearer renewal) must return the same values. If the backend returns different `AgentID` or `OrgID`, `runOneRefreshCycle` returns `fatal=true` and `bearerRefreshLoop` calls `os.Exit(1)`.
 
-Rationale: an agent instance that silently continues operating under a different identity would corrupt org-scoped audit and workflow records. A hard exit forces the orchestrator to restart with a fresh exchange rather than propagating bad identity silently.
+Rationale: an agent instance that silently continues operating under a different identity would corrupt org-scoped audit and run records. A hard exit forces the orchestrator to restart with a fresh exchange rather than propagating bad identity silently.
 
 ## Concurrency model
 

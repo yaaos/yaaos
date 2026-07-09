@@ -19,4 +19,4 @@ cd "$(dirname "$0")/.."
 docker compose \
   -f docker/docker-compose.dev.yml \
   --env-file .env \
-  up -d --force-recreate web worker
+  up -d --force-recreate api worker

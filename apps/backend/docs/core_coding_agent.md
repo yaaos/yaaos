@@ -4,9 +4,9 @@
 
 ## Scope
 
-Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `byok_requirement`, `parse_result`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), BYOK aggregator (`build_byok_secrets_for_org`), and the `coding_agent_runs` + `coding_agent_activity` tables.
+Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `byok_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), BYOK aggregator (`build_byok_secrets_for_org`), and the `coding_agent_runs` + `coding_agent_activity` tables.
 
-Does NOT own: business-domain types — `ReviewContext`, `ReportedFindingShape`, `CodeReviewResponse` live in `domain/reviewer`. Does NOT own prompt assembly, skill resolution, output-format choice, or workspace mechanics.
+Does NOT own: prompt assembly, skill resolution, output-format choice, or workspace mechanics — those are plugin- or caller-owned (`plugins/claude_code`, `domain/pipelines`).
 
 Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Protocol and is depended on by `plugins/`.
 
@@ -15,47 +15,41 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 - **Remote-dispatch only.** All review work dispatches via the `WorkspaceAgent` — the control plane never execs the CLI in-process.
 - **Plugin owns skill resolution, stdout parsing, and settings validation.** `core/coding_agent` owns dispatch and the run lifecycle; plugins own the exec-spec shape, parse logic, and schema enforcement for their settings.
 - **BYOK secrets delivered via ConfigUpdate, not invocation env.** `build_byok_secrets_for_org` aggregates per-org secrets across all registered plugins and registers as the `BytokSecretsProvider` IoC seam in `core/agent_gateway`. `_build_config_update_dto` calls the provider to populate `AgentConfig.byok_secrets` on every ConfigUpdate. The agent injects them as env vars when spawning Claude Code. `InvokeCodingAgent.env` is intentionally empty — no credentials travel via the exec env.
-- **`dispatch_invocation` is Layer 3 — the full intent-to-wire helper.** Takes `workspace_id`, `invocation`, `plugin`, `ctx`, `session`. Loads the workspace owner for `org_id`, calls `plugin.compile_invocation(invocation)` to get the exec block, builds an `InvokeClaudeCodeCommand`, delegates to `dispatch_via_workspace` (Layer 2 in `core/workspace`) with `claim_workspace=True`, then inserts a `coding_agent_runs` row. Returns the minted `command_id`. Durable iff the caller's transaction commits.
+- **`dispatch_invocation` is Layer 3 — the full intent-to-wire helper.** Takes `invocation`, `plugin`, `ctx`, a required caller-minted `command_id`, `session`. Loads the workspace owner for `org_id`, calls `plugin.compile_invocation(invocation)` to get the exec block, builds an `InvokeClaudeCodeCommand`, delegates to `dispatch_via_workspace` (Layer 2 in `core/workspace`) with `claim_workspace=True`, then inserts a `coding_agent_runs` row. Returns `command_id`. Durable iff the caller's transaction commits.
+- **`command_id` is caller-minted, not minted inside `dispatch_invocation`.** `domain/pipelines`'s skill-stage dispatch mints it before calling `dispatch_invocation`, since it also needs the id for the skill's `artifact_path = "$TMPDIR/<command_id>.md"` — no default, no shim.
 
 ## `CodingAgentPlugin` Protocol
 
 Signatures in `app/core/coding_agent/types.py`.
 
 - `plugin_id: str` — registry key and run-row attribute.
-- `compile_invocation(invocation: Invocation) -> InvokeCodingAgent` — pure function: translates skill + model + effort + context + wallclock cap into the exact argv/env/stdin the Go agent runs. Returns `env={}` — credentials are delivered via ConfigUpdate `byok_secrets`, not the exec env. Raises `CodingAgentError` on unknown skills or missing context keys.
+- `compile_invocation(invocation: Invocation) -> InvokeCodingAgent` — pure function: translates skill + model + effort + context + wallclock cap into the exact argv/env/stdin the Go agent runs. Returns `env={}` — credentials are delivered via ConfigUpdate `byok_secrets`, not the exec env. Raises `CodingAgentError` when required context keys are missing.
 - `byok_requirement(self) -> str | None` — returns the BYOK `provider_id` this plugin needs (e.g. `"anthropic"`), or `None` if no key is required. Called by `build_byok_secrets_for_org` to determine which per-org secrets to include in ConfigUpdate.
-- `parse_result(terminal_event_payload: Mapping[str, Any]) -> RunResult` — pure function: decodes a terminal AgentEvent `outputs` dict into a `RunResult`. Reads `stdout` and `exit_code`; extracts `RunResult.output` from the `result` field of the terminal stream-json event (the agent's structured response JSON, validated downstream by `CodingAgentCommand.handle_response`); populates `usage`, `activity`, `duration_ms`. Never raises on missing keys.
+- `parse_result(terminal_event_payload: Mapping[str, Any]) -> RunResult` — pure function: decodes a terminal AgentEvent `outputs` dict into a `RunResult`. Reads `stdout` and `exit_code`; extracts `RunResult.output` from the `result` field of the terminal stream-json event (the agent's structured response JSON — the caller validates it against the invocation's own output schema); populates `usage`, `activity`, `duration_ms`. Never raises on missing keys.
 - `validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]` — pure function: validates a raw settings dict and returns the normalized form. Raises `ValueError` on invalid input (unknown keys, bad types). The `/api/coding-agents` install and update endpoints call this before persisting to `org_coding_agents.settings`; a `ValueError` becomes a 422 with `{"error": "invalid_settings", "message": ...}`.
-
-### `CodingAgentCommand` (abstract base)
-
-`CodingAgentCommand(AgentDispatchCommand)` in `commands_base.py` is the ABC for workflow commands that invoke a coding-agent plugin. Subclasses declare:
-- `plugin_id: ClassVar[str]` — identifies the registered plugin.
-- `ExpectedResponse: ClassVar[type[BaseModel]]` — the Pydantic model the agent's JSON output must validate against.
-- `build_invocation(inputs, ctx, *, session) -> Invocation` — abstract; builds the high-level intent.
-
-The `@final dispatch` (inherited from `AgentDispatchCommand`) calls `build_invocation`, then auto-injects `ExpectedResponse.model_json_schema()` into `invocation.context["output_schema"]` before delegating to `dispatch_invocation`. The injection is transparent to subclasses.
-
-`handle_response(output: str, ctx: CommandContext) -> Outcome` — default implementation called by the engine on `completed_success` events. Validates `output` against `ExpectedResponse.model_validate_json`. On success: `Outcome.success(outputs=Outputs(response=parsed))`. On `ValidationError`: `Outcome.failure(reason="<kind> response schema violation: …", retryable=False)`. Subclasses may override. The `output: str` signature (not `RunResult`) avoids the `core.coding_agent` → `core.workflow` circular import.
+- `parse_activity_line(line: str) -> ActivityEvent | None` — pure function: decodes one raw `stream-json` output line into a normalized `ActivityEvent`. Returns `None` for blank lines or lines the plugin does not recognize. Called by `CodingAgentRunSinkImpl.handle_progress_event` on every `progress` AgentEvent's `stream_line` field to produce the `{kind, ts, message, detail}` frame published on the workspace-activity SSE channel.
 
 ### `dispatch_invocation`
 
-`dispatch_invocation(*, workspace_id: UUID, invocation: Invocation, plugin: CodingAgentPlugin, ctx: CommandContext, session: AsyncSession) -> UUID`
+`dispatch_invocation(*, invocation: Invocation, plugin: CodingAgentPlugin, ctx: DispatchContext, command_id: UUID, session: AsyncSession) -> UUID`
 
-Layer 3 helper in `service.py`. Flow:
-1. `get_workspace_owner(workspace_id)` — loads `org_id` + `owning_agent_id` from the workspace row; raises `WorkspaceNotFoundError` if absent.
-2. `plugin.compile_invocation(invocation)` — translates high-level intent to an exec block; raises `CodingAgentError` on unknown skills.
-3. Mints a UUIDv7 `command_id`; builds `InvokeClaudeCodeCommand` with `invocation.exec` wrapped correctly.
-4. `dispatch_via_workspace(command, workspace_id, ctx, session, claim_workspace=True)` — Layer 2: enqueues, pins to owning agent, atomically claims via `try_claim`; raises `WorkspaceClaimFailed` when busy or inactive.
-5. `create_run(...)` — inserts `coding_agent_runs` row.
+Layer 3 helper in `service.py`. `ctx: DispatchContext` (`core/agent_gateway`) carries the calling run's correlation fields (`run_id`, `ticket_id`, `stage_execution_id`, `attempt`, `traceparent`). `workspace_id` is read from `invocation.workspace_id`. Flow:
+1. `get_workspace_owner(invocation.workspace_id)` — loads `org_id` + `owning_agent_id` from the workspace row; raises `WorkspaceNotFoundError` if absent.
+2. `plugin.compile_invocation(invocation)` — translates high-level intent to an exec block; raises `CodingAgentError` on a malformed context.
+3. Computes `skill_path = f".claude/skills/{invocation.skill}/SKILL.md"` — the conventional on-disk path of the named skill inside the checkout.
+4. Builds `InvokeClaudeCodeCommand` from the caller-supplied `command_id` with `invocation.exec` wrapped correctly and `skill_path` set.
+5. `dispatch_via_workspace(command, workspace_id, ctx, session, claim_workspace=True)` — Layer 2: enqueues, pins to owning agent, atomically claims via `try_claim`; raises `WorkspaceClaimFailed` when busy or inactive.
+6. `create_run(...)` — inserts `coding_agent_runs` row.
 Returns `command_id`. `org_id` is resolved from the workspace row, not a caller parameter.
+
+The agent stats `skill_path` before spawning claude — absent → `completed_failure` with `failure_reason="skill not found: <path>"`. Zero policy on the agent side; the convention is entirely backend-computed.
 
 ### Value objects
 
 - `Invocation{skill, model, effort, context, wallclock_seconds}` — high-level intent. Context is an opaque mapping the plugin interprets per skill.
 - `Effort = str` — plugin-specific effort level. Opaque to `core/coding_agent`.
 - `InvokeCodingAgent{argv, env, stdin, wallclock_seconds}` — concrete exec block.
-- `RunResult{output, error_message, usage, duration_ms, exit_code, activity}` — `output` is the structured response JSON extracted from the stream-json `result` field (what `CodingAgentCommand.handle_response` validates against `ExpectedResponse`). `error_message` is always `None` from `parse_result`; the sink derives status from the wire event kind. `duration_ms` lives here, not on `Usage`.
+- `RunResult{output, error_message, usage, duration_ms, exit_code, activity}` — `output` is the structured response JSON extracted from the stream-json `result` field (the caller validates it against the invocation's own output schema — `domain/pipelines`' `SkillReturn`/`SkillReviewReturn`). `error_message` is always `None` from `parse_result`; the sink derives status from the wire event kind. `duration_ms` lives here, not on `Usage`.
 - `RunStatus` — `StrEnum`: `SUCCESS`, `FAILURE`, `TIMEOUT`, `CANCELLED`.
 - `Usage{tokens_in: int | None, tokens_out: int | None}` — token counts from the terminal `result` stream event.
 - `ActivityEvent{seq, ts, kind, message, detail}` — one rendered event. `kind` is a `Literal` over six values: `session_start`, `subagent_dispatched`, `tool_call_started`, `assistant_message`, `tool_call_finished`, `result`. `ts` is a `datetime` (Pydantic coerces ISO strings on parse). `detail` is a kind-specific `dict[str, Any]` — shapes documented in `app/core/coding_agent/types.py`. Construction rejects unknown `kind` values. `ACTIVITY_EVENT_KINDS` is a `frozenset` of the same values, exported for tests.
@@ -75,8 +69,8 @@ Returns `command_id`. `org_id` is resolved from the workspace row, not a caller 
 |---|---|
 | `id` | UUIDv7 PK. |
 | `org_id` | Soft FK — org-scoped queries. |
-| `workflow_execution_id` | Soft FK — links to workflow execution. |
-| `step_id` | Workflow step id (e.g. `"review"`). |
+| `run_id` | Soft FK — links to the pipeline run. |
+| `stage_execution_id` | Soft FK — links to the stage execution (e.g. the review stage). |
 | `agent_command_id` | FK to `agent_commands.id`. |
 | `command_kind` | Command kind string (`"InvokeClaudeCode"`). |
 | `plugin_id` | Plugin that issued the run (sink resolves which plugin parses the terminal event). |
@@ -92,13 +86,18 @@ Returns `command_id`. `org_id` is resolved from the workspace row, not a caller 
 - `create_run(...)` — inserts with `status=running`, flushes, returns the run id. In `__all__`; cross-module tests (e.g. `agent_gateway/test/`) seed run rows via this public function.
 - `get_run_ref_for_command(agent_command_id, *, session)` — returns `(run_id, plugin_id)`; used by the run sink to resolve which plugin parses the terminal event.
 - `finalize_run(run_id, *, usage, duration_ms, activity, exit_code, status, session)` — updates status, tokens, duration, activity blob.
-- `get_step_activity(workflow_execution_id, step_id, *, session)` — public; two-hop: resolve run id, then read the `coding_agent_activity` JSONB payload. Returns `None` when absent (partition TTL, no run).
+- `get_stage_activity(run_id, stage_execution_id, *, session)` — public; two-hop: resolve the coding-agent run id, then read the `coding_agent_activity` JSONB payload. Returns `None` when absent (partition TTL, no run).
 - `get_run_id_for_command(agent_command_id, *, session)` — internal helper (not in `__all__`); lookup by command id. Reachable via direct submodule import within `core/coding_agent/test/`.
-- `get_run_id_for_workflow_step(workflow_execution_id, step_id, *, session)` — internal helper (not in `__all__`); lookup by `(workflow_execution_id, step_id)`. Reachable via direct submodule import within `core/coding_agent/test/`.
+- `get_run_id_for_stage(run_id, stage_execution_id, *, session)` — internal helper (not in `__all__`); lookup by `(run_id, stage_execution_id)`. Reachable via direct submodule import within `core/coding_agent/test/`.
 
 ### `AgentRunSink` (IoC seam)
 
-`core/agent_gateway` defines the `AgentRunSink` Protocol. `core/coding_agent.__init__` registers `CodingAgentRunSinkImpl()` at import. `record_agent_event` calls the sink on every terminal `AgentEvent`; for `InvokeClaudeCode` it resolves the plugin via `get_run_ref_for_command`, calls `plugin.parse_result(outputs)`, then calls `finalize_run`. Returns an `AgentEventEnrichment` (`output` + `error_message`) for downstream workflow steps. See [core_agent_gateway.md](core_agent_gateway.md).
+`core/agent_gateway` defines the `AgentRunSink` Protocol. `core/coding_agent.__init__` registers `CodingAgentRunSinkImpl()` at import.
+
+- **Terminal events** — `record_agent_event` calls `handle_terminal_event` on every terminal `AgentEvent`; for `InvokeClaudeCode` it resolves the plugin via `get_run_ref_for_command`, calls `plugin.parse_result(outputs)`, then calls `finalize_run`. Returns an `AgentEventEnrichment` (`output` + `error_message`) for the downstream run.
+- **Progress events** — `record_agent_event` also calls `handle_progress_event(*, org_id, run_id, event)` on every `progress` AgentEvent. The sink looks up the `coding_agent_runs` row for `event.command_id`, resolves the plugin via `plugin_id`, calls `plugin.parse_activity_line(event.stream_line)`, and if the result is non-`None`, publishes the normalized `ActivityEvent` dict to `core/sse.publish_workspace_activity` on the `{org_id}:workspace_activity:{run_id}` channel.
+
+See [core_agent_gateway.md](core_agent_gateway.md).
 
 ### Table — `coding_agent_activity`
 
@@ -120,10 +119,10 @@ Partitioned RANGE on `created_at` (weekly child partitions, ~4-week TTL). One ro
 
 - `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `set_coding_agents_for_tests` isolation.
 - `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set, Protocol has exactly `compile_invocation` + `byok_requirement` + `parse_result` + `validate_settings`, retired names not importable.
-- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns UUIDv7, inserts run row, resolvable via `get_run_id_for_command`.
+- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns exactly the caller-supplied `command_id` (a UUIDv7), inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` on the enqueued command from the `.claude/skills/<skill_name>/SKILL.md` convention.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service: create/finalize round-trip, activity blob, `get_step_activity`.
 - `app/core/coding_agent/test/test_sink_uses_parse_result_service.py` — service: `CodingAgentRunSinkImpl.handle_terminal_event` calls `plugin.parse_result`, writes run row, returns `output` + `error_message`; non-`InvokeClaudeCode` kinds return `None`.
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `_parse_usage` + `_render_activity_log` private helpers.
-- `app/plugins/claude_code/test/test_build_invocation_method.py` — `ClaudeCodePlugin.compile_invocation` unit tests.
+- `app/plugins/claude_code/test/test_build_invocation_method.py` — `ClaudeCodePlugin.compile_invocation` unit tests: any skill name compiles, prompt renders the stage-invocation-context fields, missing required context keys raise `CodingAgentError`.
 - `app/plugins/claude_code/test/test_parse_result_method.py` — `ClaudeCodePlugin.parse_result` unit tests.
-- `app/core/coding_agent/test/test_handle_response_service.py` — `CodingAgentCommand.handle_response`: valid JSON → typed `Outcome.success`; schema violation → `Outcome.failure(retryable=False)`; empty string → failure; `ExpectedResponse` ClassVar auto-resolves for schema injection.
+- `app/plugins/claude_code/test/test_parse_activity_line.py` — `ClaudeCodePlugin.parse_activity_line` unit tests: blank line → `None`; `assistant_message` type → `kind="assistant_message"`, `message` set; tool-use `input_start` type → `kind="tool_call_started"`, `detail` has `tool` key; unrecognized type → `kind="unknown"`, `message` from raw line.

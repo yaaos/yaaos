@@ -9,7 +9,7 @@ import (
 )
 
 func TestDecodeInbound_Subscribe(t *testing.T) {
-	raw := []byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`)
+	raw := []byte(`{"type":"subscribe","workspace_id":"ws-1","run_id":"wf-1"}`)
 	msg, err := DecodeInbound(raw)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
@@ -20,13 +20,13 @@ func TestDecodeInbound_Subscribe(t *testing.T) {
 	if msg.WorkspaceID != "ws-1" {
 		t.Errorf("workspace_id: got %q", msg.WorkspaceID)
 	}
-	if msg.WorkflowExecutionID != "wf-1" {
-		t.Errorf("workflow_execution_id: got %q", msg.WorkflowExecutionID)
+	if msg.RunID != "wf-1" {
+		t.Errorf("run_id: got %q", msg.RunID)
 	}
 }
 
 func TestDecodeInbound_Unsubscribe(t *testing.T) {
-	raw := []byte(`{"type":"unsubscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`)
+	raw := []byte(`{"type":"unsubscribe","workspace_id":"ws-1","run_id":"wf-1"}`)
 	msg, err := DecodeInbound(raw)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
@@ -48,7 +48,7 @@ func TestDecodeInbound_UnknownKindReturnsError(t *testing.T) {
 }
 
 func TestDecodeInbound_MissingWorkspaceIDIsError(t *testing.T) {
-	raw := []byte(`{"type":"subscribe","workflow_execution_id":"wf-1"}`)
+	raw := []byte(`{"type":"subscribe","run_id":"wf-1"}`)
 	_, err := DecodeInbound(raw)
 	if err == nil {
 		t.Fatal("missing workspace_id should error")
@@ -79,8 +79,8 @@ func TestEncodeBatch_RoundTrip(t *testing.T) {
 	if decoded["type"] != "activity_batch" {
 		t.Errorf("type: got %v", decoded["type"])
 	}
-	if decoded["workflow_execution_id"] != "wf-1" {
-		t.Errorf("workflow_execution_id: got %v", decoded["workflow_execution_id"])
+	if decoded["run_id"] != "wf-1" {
+		t.Errorf("run_id: got %v", decoded["run_id"])
 	}
 	evs, ok := decoded["events"].([]any)
 	if !ok {

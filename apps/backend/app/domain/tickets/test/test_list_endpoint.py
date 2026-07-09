@@ -45,8 +45,8 @@ async def _seed_ticket(
     await db_session.execute(
         text(
             "INSERT INTO tickets (id, org_id, source, source_external_id, title, status,"
-            " plugin_id, repo_external_id)"
-            " VALUES (:id, :org_id, 'github_pr', :ext, :title, :status, 'github', :repo)"
+            " plugin_id, repo_external_id, branch_name)"
+            " VALUES (:id, :org_id, 'github_pr', :ext, :title, :status, 'github', :repo, :branch)"
         ),
         {
             "id": ticket_id,
@@ -55,6 +55,7 @@ async def _seed_ticket(
             "title": title,
             "status": status,
             "repo": repo,
+            "branch": f"yaaos/{title}",
         },
     )
     return ticket_id

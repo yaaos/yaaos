@@ -47,7 +47,7 @@ func TestConductor_HandleInbound_SubscribeUpdatesBothSetAndMapping(t *testing.T)
 	c.Start(ctx)
 	defer c.Stop()
 
-	raw := []byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`)
+	raw := []byte(`{"type":"subscribe","workspace_id":"ws-1","run_id":"wf-1"}`)
 	if err := c.HandleInbound(raw); err != nil {
 		t.Fatalf("HandleInbound: %v", err)
 	}
@@ -68,8 +68,8 @@ func TestConductor_HandleInbound_UnsubscribeRemovesBoth(t *testing.T) {
 	c.Start(ctx)
 	defer c.Stop()
 
-	_ = c.HandleInbound([]byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`))
-	_ = c.HandleInbound([]byte(`{"type":"unsubscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`))
+	_ = c.HandleInbound([]byte(`{"type":"subscribe","workspace_id":"ws-1","run_id":"wf-1"}`))
+	_ = c.HandleInbound([]byte(`{"type":"unsubscribe","workspace_id":"ws-1","run_id":"wf-1"}`))
 
 	if c.subs.Contains("ws-1") {
 		t.Error("unsubscribe should remove from SubscriptionSet")
@@ -94,7 +94,7 @@ func TestConductor_PublishFlushesEncodedFrame(t *testing.T) {
 		t.Cleanup(cancel)
 		c.Start(ctx)
 
-		_ = c.HandleInbound([]byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`))
+		_ = c.HandleInbound([]byte(`{"type":"subscribe","workspace_id":"ws-1","run_id":"wf-1"}`))
 		c.Publish("ws-1", protocol.AgentEvent{CommandID: "c-1", Kind: protocol.EventProgress})
 		c.Publish("ws-1", protocol.AgentEvent{CommandID: "c-1", Kind: protocol.EventProgress})
 
@@ -116,8 +116,8 @@ func TestConductor_PublishFlushesEncodedFrame(t *testing.T) {
 			if env["type"] != "activity_batch" {
 				t.Errorf("type: got %v", env["type"])
 			}
-			if env["workflow_execution_id"] != "wf-1" {
-				t.Errorf("workflow_execution_id: got %v", env["workflow_execution_id"])
+			if env["run_id"] != "wf-1" {
+				t.Errorf("run_id: got %v", env["run_id"])
 			}
 			evs, _ := env["events"].([]any)
 			total += len(evs)
@@ -154,7 +154,7 @@ func TestConductor_PublishWithoutMappingDropsBatch(t *testing.T) {
 	// from the WorkspaceMapping (shouldn't happen with the slice-79
 	// payload shape, but be conservative), the Conductor drops the
 	// batch rather than sending an activity_batch with an empty
-	// workflow_execution_id which the backend would reject.
+	// run_id which the backend would reject.
 	synctest.Test(t, func(t *testing.T) {
 		send := &recordingSender{}
 		c := NewConductor(20*time.Millisecond, send.Send)
@@ -189,7 +189,7 @@ func TestConductor_SendErrorDoesNotPanic(t *testing.T) {
 		c.Start(ctx)
 		t.Cleanup(c.Stop)
 
-		_ = c.HandleInbound([]byte(`{"type":"subscribe","workspace_id":"ws-1","workflow_execution_id":"wf-1"}`))
+		_ = c.HandleInbound([]byte(`{"type":"subscribe","workspace_id":"ws-1","run_id":"wf-1"}`))
 		c.Publish("ws-1", protocol.AgentEvent{CommandID: "c-1", Kind: protocol.EventProgress})
 		// Advance fake time past a flush cycle to let the attempt + log happen.
 		time.Sleep(50 * time.Millisecond)

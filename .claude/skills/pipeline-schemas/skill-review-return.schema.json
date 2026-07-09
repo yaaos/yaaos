@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "PriorFindingVerdict": {
+      "additionalProperties": false,
+      "description": "One assertion about a finding the skill was shown as `prior_findings`.\n`status=None` means no status assertion (reply-only, e.g. answering a\nquestion) \u2014 the engine applies no transition for it.",
+      "properties": {
+        "finding_id": {
+          "format": "uuid",
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "fixed",
+                "still_present",
+                "user_overrode"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "reply": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reply"
+        }
+      },
+      "required": [
+        "finding_id"
+      ],
+      "title": "PriorFindingVerdict",
+      "type": "object"
+    },
+    "SkillReviewFinding": {
+      "additionalProperties": false,
+      "description": "Facts only \u2014 the skill never labels fixed/residual. `defect_in_artifact`\nis exceptional: the stage-name key of the INPUT artifact the skill was\nshown that contains the root cause. An unknown name (not one of the\nstage's `upstream_stages`) degrades to a plain residual \u2014 logged, not a\ncontract violation.\n\n`category` is the skill-reported functional classification (`sec`,\n`arch`, `code`, \u2026) \u2014 one lowercase word. It becomes the finding's\n`display_prefix` (handle `<category>-<seq>`), so review type is\nqueryable per finding; each review skill's SKILL.md owns its canonical\nvocabulary.",
+      "properties": {
+        "category": {
+          "pattern": "^[a-z]{2,12}$",
+          "title": "Category",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "blocker",
+            "should_fix",
+            "nit"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "code_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code File"
+        },
+        "code_line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code Line"
+        },
+        "artifact_section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Section"
+        },
+        "defect_in_artifact": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Defect In Artifact"
+        }
+      },
+      "required": [
+        "category",
+        "severity",
+        "body"
+      ],
+      "title": "SkillReviewFinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Review-skill structured output \u2014 the `ExpectedResponse` for both a\n`SkillStage`'s attached review loop and a standalone `ReviewSkillStage`.",
+  "properties": {
+    "new_findings": {
+      "items": {
+        "$ref": "#/$defs/SkillReviewFinding"
+      },
+      "title": "New Findings",
+      "type": "array"
+    },
+    "prior_finding_verdicts": {
+      "items": {
+        "$ref": "#/$defs/PriorFindingVerdict"
+      },
+      "title": "Prior Finding Verdicts",
+      "type": "array"
+    },
+    "confidence": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "integer"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "new_findings",
+    "confidence",
+    "summary"
+  ],
+  "title": "SkillReviewReturn",
+  "type": "object"
+}

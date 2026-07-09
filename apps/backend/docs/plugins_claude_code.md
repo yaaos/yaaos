@@ -4,11 +4,11 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — four methods (`compile_invocation`, `byok_requirement`, `parse_result`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` and `claude_code_repos` tables and the `/api/claude_code/repos` HTTP routes. Knows nothing about tickets, review jobs, audit log, or workspace paths.
+Implements `CodingAgentPlugin` — five methods (`compile_invocation`, `byok_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` table and the `/api/claude_code/defaults` HTTP route. Knows nothing about tickets, review jobs, audit log, or workspace paths. Skill selection is not this plugin's concern — a pipeline stage's own `skill_name` picks the skill (see [domain_pipelines.md](domain_pipelines.md)).
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
-Does NOT own: `ReviewContext`, `ReportedFindingShape`, `CodeReviewResponse`, or review output validation — those live in `domain/reviewer`. `parse_result` extracts the structured response from stream-json; validation against `CodeReviewResponse` happens in `CodingAgentCommand.handle_response`.
+Does NOT own skill-specific prompt content — every skill file (`.claude/skills/<skill>/SKILL.md` in the checkout) owns its own instructions. This plugin only renders the generic stage context (`domain/pipelines.StageInvocationContext`) every invocation carries, plus the engine-injected output schema; it has no per-skill knowledge and no skill allowlist.
 
 ## Module architecture
 
@@ -16,7 +16,7 @@ Singleton `_plugin = ClaudeCodePlugin()` holds no decrypted credentials — sett
 
 ### `compile_invocation`
 
-Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Supports only `skill="pr_review"`. Validates `context` carries required keys (`org_id`, `repo_external_id`, `pr_external_id`, `head_sha`, `base_sha`). Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --allowed-tools=…`), and a review prompt (with base/head SHA + strict JSON output directive). Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.byok_secrets["anthropic"]` and injected as `ANTHROPIC_API_KEY` at subprocess exec time. Raises `CodingAgentError` on unknown skills or missing context keys.
+Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Works for any skill name — `invocation.skill` is untyped, resolved against the checkout by the agent's pre-spawn stat, not validated here. Validates `context` carries the fields every stage invocation supplies (`stage_name`, `input`, `artifact_path`); raises `CodingAgentError` when they're missing. `_render_stage_prompt` renders the full `StageInvocationContext` (input text, PR diff pointers, upstream artifacts, revision/re-entry text, prior findings, artifact write path) plus a strict-JSON-output directive built from the engine-injected `output_schema`, and tells the model which named skill to use. Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --permission-mode=bypassPermissions`) — no `--allowed-tools` restriction; `bypassPermissions` already grants the full toolset, and tool scoping (e.g. a review skill staying read-only) is the skill file's own discipline, not a backend policy. Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.byok_secrets["anthropic"]` and injected as `ANTHROPIC_API_KEY` at subprocess exec time.
 
 ### `byok_requirement`
 
@@ -25,6 +25,10 @@ Returns `"anthropic"` — the BYOK `provider_id` this plugin needs. Called by `c
 ### `parse_result`
 
 Takes a terminal AgentEvent `outputs` dict. Reads `stdout` and `exit_code`. Delegates to `_parse_usage(stdout)` and `_render_activity_log(stdout)` internally. Reads `duration_ms` from the terminal `type=result` stream event inside stdout. Returns `RunResult{output, error_message=None, usage, duration_ms, exit_code, activity}`. Never raises on missing keys.
+
+### `parse_activity_line`
+
+Decodes one raw `stream-json` newline into a normalized `ActivityEvent | None`. Blank lines return `None`. Parseable events map to `ActivityEvent.kind` via the same `_render_activity` helper used by `parse_result`'s `_render_activity_log` — but operates on a single line, not the full stdout blob. Unrecognized event types produce `kind="unknown"` with the raw line as `message`. Used by `CodingAgentRunSinkImpl.handle_progress_event` to normalize live `progress` AgentEvent frames before publishing to the workspace-activity SSE channel.
 
 ### `validate_settings`
 
@@ -57,7 +61,6 @@ Never branches on `YAAOS_CODING_AGENT_STUB`. When that env var is set, `app/web.
 ## Data owned
 
 - `claude_code_settings` — one row per org: `cli_path` (optional; controls the binary name the remote agent resolves). Anthropic API key is stored in `byok_keys` (provider=`anthropic`), not here.
-- `claude_code_repos` — one row per `(org_id, repo_external_id)`. Columns: `skill_name` (nullable text — reserved for per-repo skill overrides in future; currently unused), `created_at`, `updated_at`.
 
 ## HTTP routes
 
@@ -65,14 +68,13 @@ All under `/api/claude_code/`:
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/repos` | `CODING_AGENT_READ` | Live VCS repos joined with stored `skill_name`. Repo list from `core/vcs.list_installation_repos("github", org_id)`. Returns `{repos: [{repo_external_id, skill_name}]}`. Repos absent from DB included with `skill_name=null`; DB rows for gone repos omitted. |
-| `GET` | `/repos/{repo_external_id:path}` | `CODING_AGENT_READ` | Skill name for one repo. `:path` type handles `owner/repo` slash. |
-| `PUT` | `/repos/{repo_external_id:path}` | `CODING_AGENT_WRITE` | Upsert skill name for one repo. |
+| `GET` | `/defaults` | `CODING_AGENT_READ` | Model / effort dropdown enums for the settings UI's stage-editor pickers. |
 
 ## How it's tested
 
 Unit tests in `app/plugins/claude_code/test/`:
 - `test_stream_parsing.py` — `_parse_stream_events` + `_parse_usage` + `_render_activity_log` private helpers: well-formed streams, garbage interleaved with valid JSON, partial streams (timeout case).
+- `test_build_invocation_method.py` — `compile_invocation`: any skill name compiles, prompt renders the stage-invocation-context fields (input, PR pointers, strict-JSON-output directive), missing required context keys raise `CodingAgentError`.
 - `test_settings_schema.py` — settings round-trip on `{mcp_proxy_ids}`.
 - `test_defaults_endpoint.py` — auth gate + response shape for `GET /api/claude_code/defaults`.
 - `test_set_claude_code_plugin_for_tests.py` — `set_claude_code_plugin_for_tests` swaps and restores the singleton for the block.

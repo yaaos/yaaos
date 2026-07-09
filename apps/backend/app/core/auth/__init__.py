@@ -29,8 +29,8 @@ from app.core.auth.context import (
     public_route,
     require_org_context,
     route_security_resolved,
+    run_id_var,
     user_id_var,
-    workflow_execution_id_var,
 )
 from app.core.auth.cookies import (
     CSRF_COOKIE_NAME,
@@ -99,7 +99,7 @@ __all__ = [
     "require_org_context",
     "required_role_for",
     "route_security_resolved",
+    "run_id_var",
     "session_cookie_attrs",
     "user_id_var",
-    "workflow_execution_id_var",
 ]

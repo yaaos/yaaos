@@ -18,8 +18,8 @@ from app.core.coding_agent.types import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.agent_gateway import DispatchContext
     from app.core.coding_agent.types import Invocation
-    from app.core.workflow import CommandContext
 
 log = structlog.get_logger("coding_agent")
 
@@ -121,27 +121,31 @@ async def dispatch_invocation(
     *,
     invocation: Invocation,
     plugin: CodingAgentPlugin,
-    ctx: CommandContext,
+    ctx: DispatchContext,
+    command_id: UUID,
     session: AsyncSession,
 ) -> UUID:
     """Build an `InvokeClaudeCode` AgentCommand, dispatch via the workspace
     (Layer 3 → Layer 2 → Layer 1), and insert a run row.
+
+    `command_id` is caller-minted — required, no default. `domain/pipelines`
+    mints it before calling this function, since `command_id` also has to
+    appear in the skill's `artifact_path`. Minting here would make that
+    ordering impossible.
 
     `workspace_id` is read from `invocation.workspace_id`. Calls
     `plugin.compile_invocation(invocation)` to get the exec block, builds
     an `InvokeClaudeCodeCommand`, and delegates to `dispatch_via_workspace`
     with `claim_workspace=True` — which loads the workspace row (for `org_id`
     + `owning_agent_id`), enqueues, pins to the owning agent, and atomically
-    claims. Then inserts a `coding_agent_runs` row. Returns the minted
-    `command_id`. Durable iff the caller's transaction commits.
+    claims. Then inserts a `coding_agent_runs` row. Returns `command_id`.
+    Durable iff the caller's transaction commits.
 
     Raises:
         `CodingAgentError` — `plugin.compile_invocation` failed.
         `WorkspaceNotFoundError` — workspace row absent.
         `WorkspaceClaimFailed` — workspace busy or inactive.
     """
-    from uuid import uuid7  # noqa: PLC0415
-
     from app.core.agent_gateway import (  # noqa: PLC0415
         InvokeClaudeCodeCommand,
         InvokeClaudeCodeLimits,
@@ -161,10 +165,15 @@ async def dispatch_invocation(
 
     invocation_data = plugin.compile_invocation(invocation)
 
+    # Conventional path of the named skill inside the checkout. The agent
+    # stats this before spawning claude and fails deterministically
+    # (`completed_failure`, reason "skill not found: <path>") when it's
+    # absent — zero agent policy, the convention lives here.
+    skill_path = f".claude/skills/{invocation.skill}/SKILL.md"
+
     # Build the typed command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
     # the `exec` wrapper is required — a flat argv dict leaves `inv.Exec.Argv`
     # empty after json.Unmarshal and causes `completed_failure`.
-    command_id = uuid7()
     cmd = InvokeClaudeCodeCommand(
         command_id=command_id,
         workspace_id=workspace_id,
@@ -179,6 +188,7 @@ async def dispatch_invocation(
         mcp_servers=(),
         limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
         result_spec={},
+        skill_path=skill_path,
     )
 
     # Layer 2: enqueue + pin + claim atomically.
@@ -192,8 +202,8 @@ async def dispatch_invocation(
 
     await create_run(
         org_id=owner.org_id,
-        workflow_execution_id=UUID(ctx.workflow_execution_id),
-        step_id=ctx.step_id,
+        run_id=ctx.run_id,
+        stage_execution_id=ctx.stage_execution_id,
         agent_command_id=command_id,
         command_kind="InvokeClaudeCode",
         plugin_id=plugin.plugin_id,

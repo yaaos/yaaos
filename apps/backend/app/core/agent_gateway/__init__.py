@@ -58,13 +58,15 @@ from app.core.agent_gateway.service import (
     claim_next,
     compute_agent_liveness_transitions,
     connection_status_for_org,
+    enqueue_agent_event,
     enqueue_command,
     enqueue_command_payload,
     enqueue_config_update_for_all_org_agents,
     ensure_agent_row,
     get_agent_info,
     get_command_org_and_payload,
-    get_command_workflow_execution_id,
+    get_command_run_id,
+    get_command_status,
     has_any_reachable_agent,
     list_agents_for_org,
     mark_agent_configured,
@@ -75,7 +77,9 @@ from app.core.agent_gateway.service import (
     record_agent_event,
     record_heartbeat,
     record_workspace_event,
+    register_agent_event_consumer,
     requeue_stale_claimed,
+    resolve_run_route,
     retire_command,
     shutdown_agents,
     stale_agent_ids,
@@ -94,11 +98,13 @@ from app.core.agent_gateway.types import (
     AgentEventKind,
     AgentMetadata,
     AgentRef,
+    Artifact,
     AuthBlock,
     CancelShutdownCommand,
     ClaimRequest,
     CleanupWorkspaceCommand,
     ConfigUpdateCommand,
+    DispatchContext,
     GatewayError,
     HeartbeatRequest,
     HeartbeatResponse,
@@ -109,6 +115,7 @@ from app.core.agent_gateway.types import (
     InvokeClaudeCodeFields,
     InvokeClaudeCodeLimits,
     ProvisionWorkspaceCommand,
+    PushBranchCommand,
     RefreshWorkspaceAuthCommand,
     RepoRef,
     ShutdownCommand,
@@ -131,12 +138,14 @@ __all__ = [
     "AgentMetadata",
     "AgentRef",
     "AgentRunSink",
+    "Artifact",
     "AuthBlock",
     "CancelShutdownCommand",
     "CancelShutdownResult",
     "ClaimRequest",
     "CleanupWorkspaceCommand",
     "ConfigUpdateCommand",
+    "DispatchContext",
     "GatewayError",
     "HeartbeatRequest",
     "HeartbeatResponse",
@@ -148,6 +157,7 @@ __all__ = [
     "InvokeClaudeCodeLimits",
     "OrgArnRef",
     "ProvisionWorkspaceCommand",
+    "PushBranchCommand",
     "RefreshWorkspaceAuthCommand",
     "RepoRef",
     "ShutdownCommand",
@@ -169,6 +179,7 @@ __all__ = [
     "compute_agent_liveness_transitions",
     "connection_status_for_org",
     "delete_identity_exchange_rate_limits",
+    "enqueue_agent_event",
     "enqueue_command",
     "enqueue_command_payload",
     "enqueue_config_update_for_all_org_agents",
@@ -176,7 +187,8 @@ __all__ = [
     "get_agent_info",
     "get_byok_secrets_provider",
     "get_command_org_and_payload",
-    "get_command_workflow_execution_id",
+    "get_command_run_id",
+    "get_command_status",
     "get_report_sink",
     "get_run_sink",
     "has_any_reachable_agent",
@@ -190,11 +202,13 @@ __all__ = [
     "record_agent_event",
     "record_heartbeat",
     "record_workspace_event",
+    "register_agent_event_consumer",
     "register_byok_secrets_provider",
     "register_org_arn_lookup",
     "register_report_sink",
     "register_run_sink",
     "requeue_stale_claimed",
+    "resolve_run_route",
     "retire_command",
     "revoke_all_for_agent",
     "revoke_all_for_arn",
@@ -209,3 +223,22 @@ __all__ = [
 
 # shutdown() is registered with register_web_shutdown_hook in subscribers.py
 # at module import time — no second registration needed here.
+
+# Wire the demand-pull subscriber lifecycle into core/sse. core/sse cannot
+# import agent_gateway (that edge would cycle — agent_gateway already imports
+# sse to publish activity frames), so the registration flows in this direction:
+# agent_gateway imports sse and registers three callables that sse/web.py
+# calls on every workspace-activity SSE stream attach, heartbeat, and detach.
+# Pattern mirrors domain/repos.register_pipeline_lookup and core/byok.register_validator.
+from app.core.agent_gateway.lifecycle_hooks import (
+    on_attach,
+    on_detach,
+    on_heartbeat,
+)
+from app.core.sse import register_activity_subscriber_lifecycle
+
+register_activity_subscriber_lifecycle(
+    on_attach=on_attach,
+    on_heartbeat=on_heartbeat,
+    on_detach=on_detach,
+)

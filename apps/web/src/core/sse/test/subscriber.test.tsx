@@ -132,6 +132,57 @@ describe("server-event subscriber", () => {
     expect(invalidatedKeys).toContain(JSON.stringify(["reviewer", "metrics"]));
   });
 
+  it("invalidates the runs + overview + ticket keys on run_state_changed", () => {
+    const qc = new QueryClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    attachQueryClient(qc);
+    setOrgSlug("acme");
+    const es = live()[0];
+    if (!es) throw new Error("expected one EventSource instance");
+
+    es.emit({ kind: "run_state_changed", ticket_id: "t1", run_id: "r1", state: "paused" });
+    vi.advanceTimersByTime(250);
+
+    const invalidatedKeys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    expect(invalidatedKeys).toContain(JSON.stringify(["runs", "t1"]));
+    expect(invalidatedKeys).toContain(JSON.stringify(["runs", "overview", "t1"]));
+    expect(invalidatedKeys).toContain(JSON.stringify(["tickets", "t1"]));
+  });
+
+  it("invalidates the runs key and stage-activity prefix on stage_state_changed", () => {
+    const qc = new QueryClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    attachQueryClient(qc);
+    setOrgSlug("acme");
+    const es = live()[0];
+    if (!es) throw new Error("expected one EventSource instance");
+
+    es.emit({ kind: "stage_state_changed", ticket_id: "t1", run_id: "r1" });
+    vi.advanceTimersByTime(250);
+
+    const invalidatedKeys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    // Invalidates the run list so the stage row re-fetches its status.
+    expect(invalidatedKeys).toContain(JSON.stringify(["runs", "t1"]));
+    // Also invalidates the stage-activity prefix so persisted blobs re-fetch at terminal.
+    expect(invalidatedKeys).toContain(JSON.stringify(["runs", "stage-activity"]));
+  });
+
+  it("invalidates the artifacts key on artifact_stored", () => {
+    const qc = new QueryClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    attachQueryClient(qc);
+    setOrgSlug("acme");
+    const es = live()[0];
+    if (!es) throw new Error("expected one EventSource instance");
+
+    es.emit({ kind: "artifact_stored", ticket_id: "t1" });
+    vi.advanceTimersByTime(250);
+
+    expect(spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey))).toEqual([
+      JSON.stringify(["artifacts", "t1"]),
+    ]);
+  });
+
   it("ignores events with unparseable JSON without crashing", () => {
     const qc = new QueryClient();
     const spy = vi.spyOn(qc, "invalidateQueries");

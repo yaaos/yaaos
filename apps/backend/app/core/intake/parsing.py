@@ -1,32 +1,27 @@
 """Re-review command parsing — pure helper.
 
-Canonical PR-comment command set: `@yaaos review` (incremental),
-`@yaaos full review`, `@yaaos cancel`. The deprecated `@yaaos rereview`
-form still maps to `full review` for backward compat. Plus `confirm` as a
-bare body matches the mid-band acknowledgment confirmation path.
+Canonical PR-comment command set: `@yaaos re-review`, `@yaaos cancel`. The
+deprecated `@yaaos rereview` form still maps to `re-review` for backward
+compat. Plus `confirm` as a bare body matches the mid-band acknowledgment
+confirmation path.
 """
 
 import re
 
-# Match the longest forms first so `full review` doesn't accidentally
-# parse as `review` + trailing junk.
-_YAAOS_FULL_REVIEW_RE = re.compile(r"@yaaos\s+full\s+review\b", re.IGNORECASE)
-_YAAOS_REVIEW_RE = re.compile(r"@yaaos\s+review\b", re.IGNORECASE)
+_YAAOS_REREVIEW_RE = re.compile(r"@yaaos\s+re-review\b", re.IGNORECASE)
 _YAAOS_CANCEL_RE = re.compile(r"@yaaos\s+cancel\b", re.IGNORECASE)
-# Deprecated: @yaaos rereview (with optional -<specialty>) — still
-# accepted; maps to `full review`.
+# Deprecated: @yaaos rereview (no hyphen, with optional -<specialty>) —
+# still accepted; maps to `re-review`.
 _LEGACY_REREVIEW_RE = re.compile(r"@yaaos(?:-[a-z0-9-]+)?\s+rereview\b", re.IGNORECASE)
 
 
 def parse_yaaos_command(body: str) -> str | None:
-    """Returns `'review' | 'full review' | 'cancel'` or `None`."""
+    """Returns `'re-review' | 'cancel'` or `None`."""
     s = body or ""
-    if _YAAOS_FULL_REVIEW_RE.search(s):
-        return "full review"
+    if _YAAOS_REREVIEW_RE.search(s):
+        return "re-review"
     if _LEGACY_REREVIEW_RE.search(s):
-        return "full review"
-    if _YAAOS_REVIEW_RE.search(s):
-        return "review"
+        return "re-review"
     if _YAAOS_CANCEL_RE.search(s):
         return "cancel"
     return None

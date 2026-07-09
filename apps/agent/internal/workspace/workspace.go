@@ -99,8 +99,8 @@ func executeCommand(ctx context.Context, cmd command.WorkspaceCommand, ops comma
 		attribute.String("command_id", header.CommandID),
 		attribute.String("kind", string(header.Kind)),
 	}
-	if header.WorkflowExecutionID != "" {
-		spanAttrs = append(spanAttrs, attribute.String("workflow_id", header.WorkflowExecutionID))
+	if header.RunID != "" {
+		spanAttrs = append(spanAttrs, attribute.String("run_id", header.RunID))
 	}
 	ctx, end := tracing.StartSpan(ctx, "workspace.handle."+string(header.Kind), spanAttrs...)
 	childTP := tracing.InjectTraceparent(ctx)
@@ -118,6 +118,19 @@ func executeCommand(ctx context.Context, cmd command.WorkspaceCommand, ops comma
 	}
 
 	res, err := cmd.Execute(ctx, ops)
+	// Artifact fields ride the AgentEvent's top-level artifact/artifact_error —
+	// distinct from the ToWire() Outputs map below, and populated on BOTH the
+	// success and error return paths (a push failure after a successful
+	// invocation must not mask the artifact the invocation produced). Results
+	// that don't carry an artifact (every kind but InvokeClaudeCode) simply
+	// don't satisfy this interface.
+	if ar, ok := res.(command.ArtifactResult); ok {
+		body, artifactErr := ar.ArtifactPayload()
+		if body != nil {
+			base.Artifact = &protocol.Artifact{Body: *body}
+		}
+		base.ArtifactError = artifactErr
+	}
 	if err != nil {
 		base.Kind = protocol.EventCompletedFailure
 		base.FailureReason = err.Error()

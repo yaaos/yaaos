@@ -6,19 +6,12 @@
 # registers its sink here).
 from app.core.agent_gateway import register_report_sink as _register_report_sink
 from app.core.workspace.agent_report import WorkspaceAgentReportSinkImpl
-from app.core.workspace.commands import (
-    CleanupWorkspace,
-    CleanupWorkspaceInputs,
-    CleanupWorkspaceOutputs,
-    ProvisionWorkspace,
-    ProvisionWorkspaceInputs,
-    ProvisionWorkspaceOutputs,
-    RefreshWorkspaceAuth,
-    RefreshWorkspaceAuthInputs,
-    RefreshWorkspaceAuthOutputs,
-)
-from app.core.workspace.commands_base import WorkspaceOpCommand
 from app.core.workspace.dispatch import (
+    ProvisionWorkspaceSpec,
+    dispatch_auth_refresh,
+    dispatch_cleanup,
+    dispatch_provision,
+    dispatch_push,
     dispatch_via_workspace,
     release_claim,
     try_claim,
@@ -26,6 +19,7 @@ from app.core.workspace.dispatch import (
 from app.core.workspace.remote_provider import register_workspace_providers
 from app.core.workspace.service import (
     close_workspace,
+    extend_expiry,
     get_provider,
     get_workspace_claim_state,
     get_workspace_command_state,
@@ -67,19 +61,11 @@ from app.core.workspace.types import (
 _register_report_sink(WorkspaceAgentReportSinkImpl())
 
 __all__ = [
-    "CleanupWorkspace",
-    "CleanupWorkspaceInputs",
-    "CleanupWorkspaceOutputs",
     "CodingAgentCliResult",
     "HealthStatus",
     "NetworkPolicy",
     "OnStreamLine",
-    "ProvisionWorkspace",
-    "ProvisionWorkspaceInputs",
-    "ProvisionWorkspaceOutputs",
-    "RefreshWorkspaceAuth",
-    "RefreshWorkspaceAuthInputs",
-    "RefreshWorkspaceAuthOutputs",
+    "ProvisionWorkspaceSpec",
     "RepoRefForSpec",
     "ResourceCaps",
     "Workspace",
@@ -93,14 +79,18 @@ __all__ = [
     "WorkspaceExpiredError",
     "WorkspaceInfo",
     "WorkspaceNotFoundError",
-    "WorkspaceOpCommand",
     "WorkspaceOwner",
     "WorkspaceProvider",
     "WorkspaceProvisionError",
     "WorkspaceSpec",
     "WorkspaceStatus",
     "close_workspace",
+    "dispatch_auth_refresh",
+    "dispatch_cleanup",
+    "dispatch_provision",
+    "dispatch_push",
     "dispatch_via_workspace",
+    "extend_expiry",
     "get_provider",
     "get_workspace_claim_state",
     "get_workspace_command_state",

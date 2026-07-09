@@ -24,12 +24,15 @@ type fakeWorkspaceOps struct {
 	invokeErr       error
 	cleanupResult   command.CleanupResult
 	cleanupErr      error
+	pushResult      command.PushBranchResult
+	pushErr         error
 
 	provisionCalled bool
 	writeCalled     bool
 	refreshCalled   bool
 	invokeCalled    bool
 	cleanupCalled   bool
+	pushCalled      bool
 }
 
 func (f *fakeWorkspaceOps) ProvisionWorkspace(ctx context.Context, cmd *protocol.ProvisionWorkspaceCommand) (command.ProvisionResult, error) {
@@ -55,6 +58,11 @@ func (f *fakeWorkspaceOps) RunClaude(ctx context.Context, cmd *protocol.InvokeCl
 func (f *fakeWorkspaceOps) Cleanup(ctx context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	f.cleanupCalled = true
 	return f.cleanupResult, f.cleanupErr
+}
+
+func (f *fakeWorkspaceOps) PushBranch(ctx context.Context, cmd *protocol.PushBranchCommand) (command.PushBranchResult, error) {
+	f.pushCalled = true
+	return f.pushResult, f.pushErr
 }
 
 // fakeAgentOps records calls to each AgentOps method.
@@ -283,6 +291,38 @@ func TestCleanupWorkspaceCommand_Execute(t *testing.T) {
 		t.Errorf("wire[destroyed] = %v, want true", wire["destroyed"])
 	}
 	assertWireKey(t, wire, "path", "/tmp/ws-5")
+}
+
+// ── PushBranchCommand.Execute ─────────────────────────────────────────────────
+
+func TestPushBranchCommand_Execute(t *testing.T) {
+	ops := &fakeWorkspaceOps{
+		pushResult: command.PushBranchResult{
+			WorkspaceID: "ws-6",
+			Pushed:      true,
+		},
+	}
+	cmd := &command.PushBranchCommand{
+		Proto: protocol.PushBranchCommand{
+			CommandHeader: protocol.CommandHeader{
+				CommandID:   "cmd-6",
+				WorkspaceID: "ws-6",
+				Kind:        protocol.KindPushBranch,
+			},
+		},
+	}
+	res, err := cmd.Execute(context.Background(), ops)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !ops.pushCalled {
+		t.Error("PushBranch not called")
+	}
+	wire := res.ToWire()
+	assertWireKey(t, wire, "workspace_id", "ws-6")
+	if wire["pushed"] != true {
+		t.Errorf("wire[pushed] = %v, want true", wire["pushed"])
+	}
 }
 
 // ── ConfigUpdateCommand.Execute ───────────────────────────────────────────────

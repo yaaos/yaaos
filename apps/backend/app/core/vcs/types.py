@@ -1,6 +1,6 @@
 """Abstract VCS types used by every plugin and consumer.
 
-Finding taxonomy lives in `domain/reviewer`, not here. This module owns
+Finding taxonomy lives in `domain/findings`, not here. This module owns
 transport types (PR, diff, comment, events) and the `VCSPlugin` Protocol.
 `post_finding` and `post_comment` are the two write operations; plugins
 render per-platform from named primitive args.
@@ -83,7 +83,7 @@ class PullRequestSynchronized(VCSEventBase):
     kind: Literal["pr_synchronized"] = "pr_synchronized"
     new_head_sha: str
     # `before` SHA from the GitHub webhook payload. Populated for `synchronize`
-    # events; the reviewer uses it as the `prev_sha` boundary for incremental
+    # events; a caller can use it as the `prev_sha` boundary for incremental
     # review scoping. None when the upstream event didn't carry it.
     prev_head_sha: str | None = None
     force_push: bool = False
@@ -107,9 +107,8 @@ class CommentCreated(VCSEventBase):
     author_type: Literal["user", "bot"]
     in_reply_to_comment_external_id: str | None = None
     # GitHub review-thread id (from `pull_request_review_comment.pull_request_review_id`
-    # or the threaded `in_reply_to_id` lineage). Used by reviewer.handle_developer_reply
-    # to resolve external thread → internal CommentThread without a fallback
-    # parent-message lookup.
+    # or the threaded `in_reply_to_id` lineage). Lets a caller resolve external
+    # thread → internal CommentThread without a fallback parent-message lookup.
     external_thread_id: str | None = None
 
 
@@ -284,5 +283,38 @@ class VCSPlugin(Protocol):
         provider — sibling plugins read repo enumeration through this method
         (via the `core/vcs` registry), never by importing the VCS plugin.
         Returns an empty list when the install is absent or the call fails.
+        """
+        ...
+
+    async def create_pr(
+        self,
+        org_id: UUID,
+        repo_external_id: str,
+        *,
+        head_branch: str,
+        base_branch: str,
+        title: str,
+        body: str,
+    ) -> str:
+        """Open a PR from `head_branch` to `base_branch`. Returns the external id.
+
+        Idempotent on an existing open PR for the same head branch — returns
+        that PR's external id instead of erroring.
+        """
+        ...
+
+    async def approve_pr(self, org_id: UUID, external_id: str) -> None:
+        """Submit an approving review as the app. Never merges."""
+        ...
+
+    async def resolve_finding_thread(self, org_id: UUID, external_id: str, comment_external_id: str) -> None:
+        """Resolve the review thread anchoring the given posted comment."""
+        ...
+
+    async def has_active_approval(self, org_id: UUID, external_id: str) -> bool:
+        """Does yaaos currently hold a non-dismissed approval on this PR?
+
+        The VCS provider is the source of truth for approval state (dismiss-
+        on-push configs, manual dismissals) — no local marker is kept.
         """
         ...

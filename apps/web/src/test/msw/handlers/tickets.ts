@@ -38,23 +38,7 @@ export const ticketsHandlers = [
     return HttpResponse.json({ error: "not found" }, { status: 404 });
   }),
 
-  http.get("/api/tickets/:ticketId/workflow-runs", () => {
-    return HttpResponse.json([]);
-  }),
-
   http.get("/api/tickets/:ticketId/audit", () => {
-    return HttpResponse.json([]);
-  }),
-
-  http.get("/api/tickets/:ticketId/hitl/history", () => {
-    return HttpResponse.json([]);
-  }),
-
-  http.post("/api/tickets/:ticketId/hitl/respond", () => {
-    return HttpResponse.json({ stage: "pr_review_v1", next_state: "running" });
-  }),
-
-  http.get("/api/reviewer/findings/by-ticket/:ticketId", () => {
     return HttpResponse.json([]);
   }),
 

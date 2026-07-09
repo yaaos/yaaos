@@ -22,15 +22,22 @@ Prereqs (one-time): `pnpm install` + `pnpm exec playwright install chromium` fro
 
 | File | User journey |
 |---|---|
-| `onboarding-stepper.spec.ts` | Empty DB → paste credentials + dispatch install webhook + save Anthropic key → dashboard flips to populated. |
-| `pr-review-end-to-end.spec.ts` | PR opens → ticket created → reviewer posts → fake-github recorded the Review. |
-| `pr-resync-reruns-review.spec.ts` | `pull_request.synchronize` triggers a fresh review run (also exercises force-push compare). |
-| `secrets-refuse-to-review.spec.ts` | Diff with `AKIA…` → review skips with `secrets_detected` → refuse-to-review comment posted. |
-| `manual-rereview-and-cancel.spec.ts` | Re-review through UI; cancel through API (`POST /api/reviewer/cancel`); assert `review_job.cancelled` audit entry. |
-| `teach-yaaos-from-finding.spec.ts` | Open a posted finding → Teach modal → save → lesson visible on `/lessons`. |
-| `lesson-applied-next-review.spec.ts` | Pre-seed a lesson → run review → audit `prompt_sent` reports `lessons_count >= 1`. |
-| `settings-cards-are-independent.spec.ts` | Save Anthropic without GitHub installed; save GitHub credentials with Anthropic set — no gating. |
-| `sse-step-progress-live.spec.ts` | Open ticket detail, dispatch webhook, review card reaches `posted` without page reload — SSE-driven. |
+| `accessibility.spec.ts` | axe-core WCAG AA sweep across anchor pages. |
+| `focus-reset.spec.ts` | Route change moves focus to the new page's `<h1>`/`<main>`. |
+| `github-install-handshake.spec.ts` | GitHub App Manifest-Flow install handshake end-to-end. |
+| `integrations-and-multi-org.spec.ts` | Integration provider settings + switching between orgs. |
+| `login-and-membership.spec.ts` | Login, membership resolution, role-gated navigation. |
+| `pipeline-run-overview.spec.ts` | Seeded paused run renders the attention block; approve continues it live over SSE; non-responder sees disabled actions + "Waiting on {names}.". |
+| `pipeline-run-tabs.spec.ts` | Runs tab stage rows with boundary outcomes; Artifacts tab version dropdown + rendered markdown. |
+| `pipeline-settings-crud.spec.ts` | Pipeline from template → boundary edit → cycle-rejection banner → referenced-delete block; builder sees no Pipelines link. |
+| `repo-settings-crud.spec.ts` | Trigger binding round-trip + chip; protected-mode inversion confirm; path-set + owners round-trip; `unconfigured` badge. |
+| `session-died-redirect.spec.ts` | Dead session cookie hard-redirects to `/login`. |
+| `sso-flow.spec.ts` | SAML SSO login flow. |
+| `workspace-agent-graceful-shutdown.spec.ts` | Agent drain → self-exit lifecycle reflected live on the fleet page. |
+| `workspaces-admin-cancel-shutdown.spec.ts` | Admin cancels an in-flight agent shutdown. |
+| `workspaces-admin-drain.spec.ts` | Admin drains an agent from the fleet page. |
+| `workspaces-agents.spec.ts` | Fleet page sections/states for active/draining/unconfigured/inactive agents. |
+| `workspaces-builder-readonly.spec.ts` | Builder sees the fleet read-only — no admin affordances. |
 
 Intentionally small. Coverage is golden-path user flows and critical regressions. Each spec is cheap (seconds of wall time) but still slower than backend integration tests — keep the set small.
 
@@ -43,6 +50,7 @@ No batch-seeded fixture. Each spec drives its own preconditions in `beforeEach` 
 | `resetStack()` | `POST /api/testing/reset` (truncates every yaaos DB table) + `POST /__test/reset` on fake-github. Parallel. |
 | `seedGithubInstall()` | `POST /api/testing/seed/github_install` — writes `claude_code_settings` + an active `github_app_installations` row. Bypasses the install handshake; never pair with the install-handshake spec. Platform GitHub App credentials come from `yaaos_github_app_*` env vars. |
 | `seedLesson({repo_external_id, title, body})` | `POST /api/testing/seed/lesson`. |
+| `seedPausedRun(...)` | `POST /api/testing/seed/paused_run` — a pipeline run parked at an `always_hitl` boundary with an open pause row (drives the ticket Overview specs). |
 | `dispatchWebhook({event, payload})` | For `pull_request` events: auto-seeds PR JSON into fake-github (so subsequent `fetch_pr` returns 200), then forwards to fake-github's `/__test/dispatch_webhook`. |
 | `seedPRDiff({repo, number, diff, files})` | Sets a specific diff. Used by the secrets spec to inject `AKIA…`. |
 | `seedCompareDiverged(before, after)` | Forces fake-github's `/compare` to return `"diverged"`. |
@@ -77,4 +85,4 @@ A prior shape ran `bin/seed_test_data` at container startup; every spec inherite
 - Playwright 1.48 + TypeScript.
 - Own `package.json`; pnpm workspace member.
 - `playwright.config.ts` — `workers: 1`, `fullyParallel: false`, `retries: 0`, 60s per test.
-- Suite runtime: ~30s for all 10 specs on a warm stack.
+- Suite runtime: a few minutes for the full set on a warm stack.

@@ -5,7 +5,7 @@ with a real `coding_agent_runs` row in place. Verifies:
 
 (a) The sink's `output` key (parsed skill stdout from `plugin.parse_result`) is
     forwarded into the `HANDLE_AGENT_EVENT` task args as `outputs["output"]`.
-(b) Raw `stdout` is stripped from the forwarded outputs so downstream workflow
+(b) Raw `stdout` is stripped from the forwarded outputs so downstream run
     steps cannot accidentally read the stale key.
 
 The boot-time assert in web.py / worker.py guarantees the sink is always
@@ -23,6 +23,7 @@ import pytest
 from app.core.agent_gateway import (
     AgentEvent,
     AgentEventKind,
+    Artifact,
     InvokeClaudeCodeCommand,
     InvokeClaudeCodeLimits,
     RepoRef,
@@ -100,7 +101,7 @@ def _reset_report_sink():
 async def _seed_invoke_command(
     org_id: UUID,
     *,
-    workflow_execution_id: UUID,
+    run_id: UUID,
     session: object,
 ) -> UUID:
     """Enqueue an InvokeClaudeCodeCommand and a linked coding_agent_runs row.
@@ -126,12 +127,13 @@ async def _seed_invoke_command(
         ),
         invocation={"prompt": "review the code"},
         limits=InvokeClaudeCodeLimits(wallclock_seconds=300),
+        skill_path=".claude/skills/pr_review/SKILL.md",
     )
     await enqueue_command(
         org_id=org_id,
         command=command,
         session=session,
-        workflow_execution_id=workflow_execution_id,
+        run_id=run_id,
     )
 
     # Seed the coding_agent_runs row — the real sink resolves it to determine
@@ -139,8 +141,8 @@ async def _seed_invoke_command(
     # stub-wrapped plugin registered by _canonical_registries.
     await create_run(
         org_id=org_id,
-        workflow_execution_id=workflow_execution_id,
-        step_id="step_review",
+        run_id=run_id,
+        stage_execution_id=uuid4(),
         agent_command_id=cmd_id,
         command_kind="InvokeClaudeCode",
         plugin_id="claude_code",
@@ -163,9 +165,9 @@ async def test_real_sink_forwards_output_and_strips_stdout(db_session) -> None:
         the canonical `output` key only.
     """
     org_id = uuid4()
-    wfx_id = uuid4()
+    run_id = uuid4()
 
-    cmd_id = await _seed_invoke_command(org_id, workflow_execution_id=wfx_id, session=db_session)
+    cmd_id = await _seed_invoke_command(org_id, run_id=run_id, session=db_session)
     await db_session.commit()
 
     # The stub plugin's parse_result sets output=stdout, error_message=None.
@@ -186,8 +188,12 @@ async def test_real_sink_forwards_output_and_strips_stdout(db_session) -> None:
         await record_agent_event(event, session=db_session)
 
     payloads = await get_pending_outbox_payloads(db_session)
-    handle_payloads = [p for p in payloads if p.get("task_name", "").endswith("handle_agent_event")]
-    assert len(handle_payloads) == 1, f"expected exactly one handle_agent_event; got {handle_payloads}"
+    # `record_agent_event` also enqueues the seeding outbox row; filter to
+    # the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
+    assert len(handle_payloads) == 1, (
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
+    )
 
     task_outputs = handle_payloads[0]["args"]["outputs"]
 
@@ -198,3 +204,82 @@ async def test_real_sink_forwards_output_and_strips_stdout(db_session) -> None:
 
     # (b) raw `stdout` is stripped — downstream steps must not read the stale key.
     assert "stdout" not in task_outputs, f"stdout should be stripped; got keys: {list(task_outputs)}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_agent_event_artifact_fields_forwarded_to_outbox_payload(db_session) -> None:
+    """`AgentEvent.artifact` / `artifact_error` ride the `HANDLE_AGENT_EVENT`
+    task args' `outputs` dict — the durable outbox row is where the artifact
+    lives until an engine reads it."""
+    org_id = uuid4()
+    run_id = uuid4()
+
+    cmd_id = await _seed_invoke_command(org_id, run_id=run_id, session=db_session)
+    await db_session.commit()
+
+    event = AgentEvent(
+        command_id=cmd_id,
+        kind=AgentEventKind.COMPLETED_SUCCESS,
+        outputs={"exit_code": 0, "stdout": "## Requirements\nDone."},
+        reported_at=datetime.now(UTC),
+        traceparent="",
+        artifact=Artifact(body="## Requirements\nDone."),
+    )
+
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
+    async with org_context(org_id, ActorKind.WORKSPACE):
+        await record_agent_event(event, session=db_session)
+
+    payloads = await get_pending_outbox_payloads(db_session)
+    # `record_agent_event` also enqueues the seeding outbox row; filter to
+    # the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
+    assert len(handle_payloads) == 1, (
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
+    )
+
+    task_outputs = handle_payloads[0]["args"]["outputs"]
+    assert task_outputs.get("artifact") == {"body": "## Requirements\nDone."}
+    assert "artifact_error" not in task_outputs
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_agent_event_artifact_error_forwarded_to_outbox_payload(db_session) -> None:
+    """`artifact_error` rides the forwarded outputs when the artifact was
+    over-cap (or otherwise unreadable) — distinct from a null artifact."""
+    org_id = uuid4()
+    run_id = uuid4()
+
+    cmd_id = await _seed_invoke_command(org_id, run_id=run_id, session=db_session)
+    await db_session.commit()
+
+    event = AgentEvent(
+        command_id=cmd_id,
+        kind=AgentEventKind.COMPLETED_SUCCESS,
+        outputs={"exit_code": 0, "stdout": ""},
+        reported_at=datetime.now(UTC),
+        traceparent="",
+        artifact_error="artifact exceeds 2097152 bytes (was 3000000)",
+    )
+
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
+    async with org_context(org_id, ActorKind.WORKSPACE):
+        await record_agent_event(event, session=db_session)
+
+    payloads = await get_pending_outbox_payloads(db_session)
+    # `record_agent_event` also enqueues the seeding outbox row; filter to
+    # the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
+    assert len(handle_payloads) == 1, (
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
+    )
+
+    task_outputs = handle_payloads[0]["args"]["outputs"]
+    assert task_outputs.get("artifact_error") == "artifact exceeds 2097152 bytes (was 3000000)"
+    assert "artifact" not in task_outputs

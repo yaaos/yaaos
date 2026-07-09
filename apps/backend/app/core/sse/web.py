@@ -3,7 +3,7 @@
 | Method | Path                                              | Auth                |
 |--------|---------------------------------------------------|---------------------|
 | GET    | `/api/sse/general`                                | `ORG_READ` — org-scoped general event stream for the caller's resolved org. |
-| GET    | `/api/sse/workspace_activity/{workflow_execution_id}` | `ORG_READ`. Cross-org isolation is the channel key: subscribers attach to `{caller_org}:workspace_activity:{wfx_id}`; publishers publish to `{owner_org}:…`, so a cross-org request silently yields an empty stream rather than 404. |
+| GET    | `/api/sse/workspace_activity/{run_id}` | `ORG_READ`. Cross-org isolation is the channel key: subscribers attach to `{caller_org}:workspace_activity:{run_id}`; publishers publish to `{owner_org}:…`, so a cross-org request silently yields an empty stream rather than 404. |
 
 The `/api/sse` prefix is classified as `ORG_SCOPED` in `core/auth/types.py`,
 so `AuthMiddleware` enforces the `X-Yaaos-Org-Slug` header before the handler runs.
@@ -35,6 +35,9 @@ from fastapi.responses import StreamingResponse
 from app.core.auth import Action, org_id_var
 from app.core.sessions import require
 from app.core.sse.service import (
+    _attach_activity_subscriber,
+    _detach_activity_subscriber,
+    _heartbeat_activity_subscriber,
     serialize_for_sse,
     sse_prelude,
     subscribe_general,
@@ -53,6 +56,14 @@ _default_shutdown_event: asyncio.Event | None = None
 # browser to reconnect in ~1 s; the comment line is ignored by `onmessage`
 # so it never surfaces as a spurious event.
 _SHUTDOWN_FRAME = "retry: 1000\n: server closing\n\n"
+
+# Wait-timeout on the workspace-activity stream's race between the next
+# event and shutdown. On elapse (neither has arrived) the generator calls
+# the registered `on_heartbeat` hook and keeps waiting on the same tasks —
+# a heartbeat cadence, not a delivery delay. Mirrors
+# `core/agent_gateway/subscribers.py`'s `_SSE_HEARTBEAT_INTERVAL_SECONDS`
+# (kept as an independent constant — `core/sse` cannot import `agent_gateway`).
+_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS = 30
 
 
 def _get_event() -> asyncio.Event:
@@ -134,31 +145,64 @@ async def _general_stream(org_id: UUID) -> AsyncIterator[str]:
             return
 
 
-async def _workspace_activity_stream(org_id: UUID, workflow_execution_id: UUID) -> AsyncIterator[str]:
+async def _workspace_activity_stream(org_id: UUID, run_id: UUID) -> AsyncIterator[str]:
     """Translate workspace-activity pub/sub events into SSE frames.
 
     Yields a connect prelude first (see `sse_prelude`) for the same
-    header-flush reason as `_general_stream`.  Races each subscription
-    `__anext__` against the shutdown event for the same graceful-close reason.
+    header-flush reason as `_general_stream`. Races each subscription
+    `__anext__` against the shutdown event for the same graceful-close reason,
+    with a `_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS` wait-timeout on that race —
+    on elapse (neither the next event nor shutdown arrived), calls the
+    registered `on_heartbeat` hook and keeps waiting on the SAME tasks (no
+    frame emitted, no delivery delay).
+
+    Calls `on_attach` after the prelude and `on_detach` in `finally` — the
+    async-generator self-cleanup pattern — so the registered
+    `SubscriberRegistry` reflects exactly the streams actually watching this
+    run. When no lifecycle hooks are registered (or `on_attach` resolves no
+    route, returning `None`), streams exactly as before this seam existed.
+
+    The Redis SUBSCRIBE is established (via `on_subscribed` event) BEFORE
+    yielding the prelude so the browser's `onopen` fires only after the
+    subscription is ready — preventing a race where a test (or fast publisher)
+    publishes between the prelude being sent and the SUBSCRIBE completing.
     """
+    subscribed = asyncio.Event()
+    it = subscribe_workspace_activity(org_id, run_id, on_subscribed=subscribed).__aiter__()
+    next_task = asyncio.create_task(it.__anext__())
+    # Await the Redis SUBSCRIBE confirmation before emitting the prelude.
+    # This is fast (<1ms, local Redis), and guarantees no events are missed
+    # between onopen and the subscription being ready.
+    await subscribed.wait()
     yield sse_prelude()
-    it = subscribe_workspace_activity(org_id, workflow_execution_id).__aiter__()
-    while True:
-        next_task = asyncio.create_task(it.__anext__())
+    conn_token = await _attach_activity_subscriber(org_id, run_id)
+    try:
         shutdown_task = asyncio.create_task(_get_event().wait())
-        done, pending = await asyncio.wait(
-            {next_task, shutdown_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for t in pending:
-            t.cancel()
-        if shutdown_task in done:
-            yield _SHUTDOWN_FRAME
-            return
-        try:
-            yield serialize_for_sse(next_task.result())
-        except StopAsyncIteration:
-            return
+        while True:
+            done, _pending = await asyncio.wait(
+                {next_task, shutdown_task},
+                timeout=_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                # Heartbeat window elapsed with neither task done — re-stamp
+                # subscriber liveness and keep waiting on the same tasks.
+                if conn_token is not None:
+                    await _heartbeat_activity_subscriber(run_id, conn_token)
+                continue
+            if shutdown_task in done:
+                next_task.cancel()
+                yield _SHUTDOWN_FRAME
+                return
+            try:
+                yield serialize_for_sse(next_task.result())
+            except StopAsyncIteration:
+                shutdown_task.cancel()
+                return
+            next_task = asyncio.create_task(it.__anext__())
+    finally:
+        if conn_token is not None:
+            await _detach_activity_subscriber(run_id, conn_token)
 
 
 @router.get("/general", dependencies=[Depends(require(Action.ORG_READ))])
@@ -175,20 +219,20 @@ async def stream_general() -> StreamingResponse:
 
 
 @router.get(
-    "/workspace_activity/{workflow_execution_id}",
+    "/workspace_activity/{run_id}",
     dependencies=[Depends(require(Action.ORG_READ))],
 )
-async def stream_workspace_activity(workflow_execution_id: UUID) -> StreamingResponse:
-    """Subscribe an SSE client to the per-workflow activity event stream.
+async def stream_workspace_activity(run_id: UUID) -> StreamingResponse:
+    """Subscribe an SSE client to the per-run activity event stream.
 
     Cross-org isolation is the channel key: subscribers attach to
-    `{caller_org}:workspace_activity:{wfx_id}`. A request for a wfx owned by a
+    `{caller_org}:workspace_activity:{run_id}`. A request for a run owned by a
     different org subscribes to a channel nobody publishes to and yields an
     empty stream.
     """
     org_id = org_id_var.get()
     return StreamingResponse(
-        _workspace_activity_stream(org_id, workflow_execution_id),
+        _workspace_activity_stream(org_id, run_id),
         media_type="text/event-stream",
     )
 

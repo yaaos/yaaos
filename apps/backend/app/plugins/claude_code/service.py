@@ -400,6 +400,88 @@ def _render_activity_log(stdout: str) -> ActivityLog:
     return ActivityLog(events=rendered)
 
 
+# ── Stage-invocation prompt rendering ─────────────────────────────────────────
+#
+# Renders `Invocation.context` (a `domain/pipelines.StageInvocationContext`
+# dump plus the engine-injected `output_schema`) into the headless prompt a
+# pipeline skill stage runs against. The skill file itself
+# (`.claude/skills/<skill>/SKILL.md`) owns every skill-specific instruction —
+# this rendering only supplies the generic stage context every invocation
+# carries, so the plugin stays skill-agnostic.
+
+
+def _render_stage_prompt(skill: str, ctx: Mapping[str, Any]) -> str:
+    lines: list[str] = [
+        f'Use the "{skill}" skill (.claude/skills/{skill}/SKILL.md) to complete this pipeline stage.'
+    ]
+
+    stage_name = ctx.get("stage_name")
+    ticket_id = ctx.get("ticket_id")
+    header = f"\nStage: {stage_name}" if stage_name else ""
+    if header and ticket_id:
+        header += f" (ticket {ticket_id})"
+    if header:
+        lines.append(header)
+
+    lines.append("\n## Input\n")
+    lines.append(str(ctx.get("input") or ""))
+
+    pr = ctx.get("pr")
+    if pr:
+        lines.append("\n## Pull request\n")
+        lines.append(f"- PR: {pr['pr_external_id']}")
+        lines.append(f"- Base SHA: {pr['base_sha']}")
+        lines.append(f"- Head SHA: {pr['head_sha']}")
+        prev = pr.get("prev_reviewed_head_sha")
+        lines.append(f"- Previously reviewed head SHA: {prev or 'none (first review)'}")
+        diff_base = prev or pr["base_sha"]
+        lines.append(f"\nRun `git diff {diff_base}..{pr['head_sha']}` to inspect the change.")
+
+    upstream_stages = ctx.get("upstream_stages") or []
+    if upstream_stages:
+        lines.append("\n## Upstream artifacts\n")
+        for stage in upstream_stages:
+            lines.append(f"### {stage['stage_name']} — {stage['description']}\n")
+            lines.append(stage["artifact_body"])
+
+    revision = ctx.get("revision")
+    if revision:
+        source_label = {
+            "instruction": "Human instruction",
+            "send_back": "Send-back gap",
+            "fix": "Fix request",
+        }.get(revision["source"], revision["source"])
+        lines.append(f"\n## Revision ({source_label})\n")
+        lines.append(revision["text"])
+        lines.append("\n### Prior artifact\n")
+        lines.append(revision["prior_artifact"])
+
+    prior_findings = ctx.get("prior_findings") or []
+    if prior_findings:
+        lines.append("\n## Prior findings\n")
+        for finding in prior_findings:
+            if finding.get("code_file"):
+                loc = f" ({finding['code_file']}:{finding.get('code_line') or '?'})"
+            elif finding.get("artifact_section"):
+                loc = f" ({finding['artifact_section']})"
+            else:
+                loc = ""
+            lines.append(f"- [{finding['finding_id']}] [{finding['severity']}]{loc} {finding['body']}")
+
+    artifact_path = ctx.get("artifact_path")
+    lines.append("\n## Output\n")
+    if artifact_path:
+        lines.append(f"Write your artifact output to `{artifact_path}`.\n")
+
+    schema_str = json.dumps(ctx.get("output_schema", {}), indent=2)
+    lines.append(
+        "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
+        "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
+        f"{schema_str}"
+    )
+    return "\n".join(lines)
+
+
 # ── Plugin ────────────────────────────────────────────────────────────────────
 
 
@@ -413,49 +495,21 @@ class ClaudeCodePlugin:
     def compile_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
         """Translate a high-level `Invocation` into a concrete exec block.
 
-        Delegates argv/stdin/env composition to a synthetic ReviewContext
-        from `invocation.context` for the `pr_review` skill. Raises
-        `CodingAgentError` for unknown skills or when the context dict lacks
-        required keys.
+        Generic across every pipeline skill: the backend supplies the full
+        `StageInvocationContext` (rendered into the prompt below) plus the
+        engine-injected `output_schema`; the named skill file
+        (`.claude/skills/<skill>/SKILL.md` in the checkout) owns all
+        skill-specific instructions — this plugin has no per-skill knowledge.
+        Raises `CodingAgentError` when the context is missing the fields
+        every stage invocation carries.
         """
-        if invocation.skill != "pr_review":
-            raise CodingAgentError(
-                f"ClaudeCodePlugin does not support skill {invocation.skill!r}; only 'pr_review' is supported"
-            )
-        from app.domain.reviewer import ReviewContext as _ReviewContext  # noqa: PLC0415
-
-        # Build a ReviewContext-compatible object from the generic context dict.
-        # The invocation.context for pr_review carries ReviewContext keys plus
-        # `output_schema` auto-injected by CodingAgentCommand.@final dispatch.
-        # We validate the required ReviewContext keys here.
         ctx_dict = invocation.context
-        required = {"head_sha", "base_sha", "pr_external_id", "repo_external_id", "org_id"}
+        required = {"stage_name", "input", "artifact_path"}
         missing = required - set(ctx_dict)
         if missing:
-            raise CodingAgentError(
-                f"compile_invocation: context missing required keys for pr_review: {sorted(missing)}"
-            )
-        review_ctx = _ReviewContext(
-            org_id=ctx_dict["org_id"],
-            repo_external_id=ctx_dict["repo_external_id"],
-            pr_external_id=ctx_dict["pr_external_id"],
-            head_sha=ctx_dict["head_sha"],
-            base_sha=ctx_dict["base_sha"],
-        )
+            raise CodingAgentError(f"compile_invocation: context missing required keys: {sorted(missing)}")
 
-        # Build the review prompt from the context.
-        # `output_schema` is auto-injected by CodingAgentCommand.@final dispatch.
-        import json as _json  # noqa: PLC0415
-
-        schema_str = _json.dumps(ctx_dict.get("output_schema", {}), indent=2)
-        prompt = (
-            f"Review the pull request. Base SHA: {review_ctx.base_sha}. Head SHA: {review_ctx.head_sha}.\n"
-            f"Run `git diff {review_ctx.base_sha}..HEAD` to inspect changes.\n\n"
-            "## Output Format (STRICT)\n\n"
-            "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
-            "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
-            f"{schema_str}\n"
-        )
+        prompt = _render_stage_prompt(invocation.skill, ctx_dict)
 
         argv = [
             "claude",
@@ -467,10 +521,6 @@ class ClaudeCodePlugin:
             invocation.model,
             "--effort",
             invocation.effort,
-            "--allowed-tools="
-            "Read,Glob,Grep,LS,NotebookRead,TodoWrite,WebFetch,WebSearch,Task,"
-            "Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),"
-            "Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git status)",
         ]
 
         return InvokeCodingAgent(
@@ -534,6 +584,27 @@ class ClaudeCodePlugin:
             exit_code=exit_code,
             activity=activity,
         )
+
+    def parse_activity_line(self, line: str) -> ActivityEvent | None:
+        """Map one stream-json line from a live `progress` AgentEvent into a
+        renderable `ActivityEvent`, reusing `_render_activity` — the exact
+        per-line mapping `parse_result`/`_render_activity_log` apply at
+        finalize, so live and persisted views never diverge in taxonomy.
+
+        Returns `None` for unparseable JSON, a non-dict line, or a line with
+        no useful render (same null cases as `_render_activity`). `seq` is
+        always 0 — a single line carries no run-wide ordering context.
+        """
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(event, dict):
+            return None
+        rendered = _render_activity(event)
+        if rendered is None:
+            return None
+        return ActivityEvent(**{**rendered, "seq": 0})
 
 
 _plugin = ClaudeCodePlugin()

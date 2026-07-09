@@ -11,8 +11,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from app.core.agent_gateway import CleanupWorkspaceCommand
-from app.core.workflow import CommandContext
+from app.core.agent_gateway import CleanupWorkspaceCommand, DispatchContext
 from app.core.workspace import (
     WorkspaceClaimFailed,
     WorkspaceNotFoundError,
@@ -33,11 +32,11 @@ def _cmd(ws_id: UUID) -> CleanupWorkspaceCommand:
     )
 
 
-def _ctx(wfe_id: UUID | None = None) -> CommandContext:
-    return CommandContext(
-        workflow_execution_id=str(wfe_id or uuid.uuid4()),
-        ticket_id=str(uuid.uuid4()),
-        step_id="cleanup",
+def _ctx(wfe_id: UUID | None = None) -> DispatchContext:
+    return DispatchContext(
+        run_id=wfe_id or uuid.uuid4(),
+        ticket_id=uuid.uuid4(),
+        stage_execution_id=uuid.uuid4(),
         attempt=1,
     )
 

@@ -3,7 +3,7 @@
 Two contracts:
 1. Cross-org request yields an empty 200 stream — cross-org isolation is the
    per-org channel key, not a 404 guard.
-2. Happy path streams events scoped to (org, workflow_execution_id).
+2. Happy path streams events scoped to (org, run_id).
 
 The streaming test drives `_workspace_activity_stream` directly (mirrors the
 general-endpoint test) because httpx-ASGITransport hangs on close for
@@ -46,7 +46,7 @@ def _client() -> httpx.AsyncClient:
 
 @pytest_asyncio.fixture
 async def cross_org_seed(db_session) -> AsyncIterator[dict[str, object]]:
-    """Caller in org A; the requested wfx id belongs to a different org."""
+    """Caller in org A; the requested run_id id belongs to a different org."""
     user = await create_user(db_session, display_name="OrgAOwner")
 
     org_a = await insert_org(db_session, slug=f"wfa-a-{uuid.uuid4().hex[:8]}")
@@ -56,33 +56,33 @@ async def cross_org_seed(db_session) -> AsyncIterator[dict[str, object]]:
 
     created = await mint_session(db_session, user_id=user.id, workspace_id=None)
     await db_session.commit()
-    # `wfx_id` deliberately points at no row; the route never reads it, only
-    # the (caller_org, wfx_id) channel key does.
-    yield {"org_a": org_a, "foreign_wfx_id": uuid.uuid4(), "token": created.raw_token}
+    # `run_id` deliberately points at no row; the route never reads it, only
+    # the (caller_org, run_id) channel key does.
+    yield {"org_a": org_a, "foreign_run_id": uuid.uuid4(), "token": created.raw_token}
 
 
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_non_owned_wfx_yields_empty_stream(cross_org_seed, redis_or_skip) -> None:
-    """Authenticated as org A; request a wfx that no one in org A owns → empty stream.
+async def test_non_owned_run_yields_empty_stream(cross_org_seed, redis_or_skip) -> None:
+    """Authenticated as org A; request a run_id that no one in org A owns → empty stream.
 
-    Cross-org isolation is the channel key: subscribing to `{org_a}:…:{wfx}` reaches
+    Cross-org isolation is the channel key: subscribing to `{org_a}:…:{run_id}` reaches
     a channel nobody publishes to. The stream is open and authorized; it just emits
     nothing. Drives `_workspace_activity_stream` directly because httpx-ASGITransport
     hangs on close for infinite streams.
     """
-    gen = _workspace_activity_stream(cross_org_seed["org_a"].org_id, cross_org_seed["foreign_wfx_id"])
-    # Drain the connect prelude (yielded before subscription) so the collector
-    # below waits on a real data frame, not the prelude.
+    gen = _workspace_activity_stream(cross_org_seed["org_a"].org_id, cross_org_seed["foreign_run_id"])
+    # Drain the connect prelude.  The subscription is established BEFORE the
+    # prelude is sent (see _workspace_activity_stream), so no sleep is needed
+    # before publishing — but we keep asyncio.sleep(0.1) below for clarity.
     prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
     assert prelude.startswith(":"), f"expected comment prelude first; got {prelude!r}"
     collector = asyncio.create_task(gen.__anext__())
-    # Yield control to let the subscription register, then publish to a
-    # different org's channel for the same wfx id — should NOT reach the stream.
+    # Publish to a different org's channel for the same run_id — should NOT reach the stream.
     await asyncio.sleep(0.1)
     await publish_workspace_activity(
         org_id=uuid.uuid4(),
-        workflow_execution_id=cross_org_seed["foreign_wfx_id"],
+        run_id=cross_org_seed["foreign_run_id"],
         payload={"kind": "agent_event", "id": str(uuid.uuid4()), "body": "leak?"},
     )
     with pytest.raises(asyncio.TimeoutError):
@@ -94,29 +94,30 @@ async def test_non_owned_wfx_yields_empty_stream(cross_org_seed, redis_or_skip) 
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_workspace_activity_endpoint_streams_org_scoped(redis_or_skip) -> None:
-    """Happy path: publish to (org, wfx); the stream emits the event.
+    """Happy path: publish to (org, run_id); the stream emits the event.
 
     Drives `_workspace_activity_stream` directly — httpx-ASGITransport hangs
     on close for infinite streams. The HTTP wiring above this is a thin
     wrapper with no logic of its own.
     """
     org_id = uuid.uuid4()
-    wfx_id = uuid.uuid4()
+    run_id = uuid.uuid4()
 
-    gen = _workspace_activity_stream(org_id, wfx_id)
-    # Drain the connect prelude (yielded before subscription) so the collector
-    # below waits on the first real data frame.
+    gen = _workspace_activity_stream(org_id, run_id)
+    # Drain the connect prelude.  The subscription is established BEFORE the
+    # prelude is sent (see _workspace_activity_stream), so by the time we
+    # get the prelude the Redis SUBSCRIBE is already confirmed.
     prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
     assert prelude.startswith(":"), f"expected comment prelude first; got {prelude!r}"
     collector = asyncio.create_task(gen.__anext__())
-    # Yield control so the generator registers its Redis subscription before
-    # we publish — Redis pub/sub is fire-and-forget; earlier publishes drop.
-    await asyncio.sleep(0.1)
+    # No sleep needed — subscription is already established.  Keep a short
+    # yield so the asyncio event loop can schedule the collector task.
+    await asyncio.sleep(0)
 
     payload = {"kind": "agent_event", "id": str(uuid.uuid4()), "body": "hello"}
     await publish_workspace_activity(
         org_id=org_id,
-        workflow_execution_id=wfx_id,
+        run_id=run_id,
         payload=payload,
     )
 

@@ -1,6 +1,6 @@
 """Service test: GitHub PR-opened intake path writes to both outbox and SSE.
 
-Covers `_prepare_pr_review` producing:
+Covers `_prepare_pipeline_runs` producing:
 - one `notifications.fanout` outbox row with NotificationSpecs for org members, and
 - one general SSE event with kind "ticket_status_changed".
 
@@ -11,52 +11,15 @@ covers the durable outbox + Redis-based SSE path.
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
 from uuid import uuid4
 
 import pytest
 
+from app.core.audit_log import Actor
 from app.core.tasks import get_pending_outbox_payloads
-from app.core.workflow import (
-    CommandContext,
-    Empty,
-    Outcome,
-    TerminalAction,
-    Workflow,
-    step,
-)
+from app.domain.pipelines import ActionStage, PipelineDefinition, create_pipeline
+from app.domain.repos import TriggerBindingSpec, add_binding
 from app.plugins.github.intake_type import GithubIntakeType
-from app.testing.workflow_harness import set_engine_for_tests
-
-
-class _NoopLocal:
-    kind: Literal["NoopIntake"] = "NoopIntake"
-    Inputs = Empty
-    Outputs = Empty
-    restart_safe = True
-
-    async def execute(self, inputs: Empty, ctx: CommandContext, *, session=None) -> Outcome:
-        del inputs, ctx, session
-        return Outcome.success()
-
-
-_noop_intake_step = step(_NoopLocal)
-
-
-@pytest.fixture
-def _stub_pr_review_engine():  # type: ignore[no-untyped-def]
-    """Stub workflow engine so _prepare_pr_review can call engine.start."""
-    with set_engine_for_tests() as eng:
-        eng.register_workflow(
-            Workflow(
-                name="pr_review_v1",
-                version=1,
-                steps=(_noop_intake_step,),
-                entry=_noop_intake_step,
-                transitions={_noop_intake_step: {"success": TerminalAction.COMPLETE_WORKFLOW}},
-            )
-        )
-        yield eng
 
 
 def _pr_payload() -> dict:
@@ -117,20 +80,38 @@ async def _seed_org_with_members(db_session, num_members: int = 2):  # type: ign
     return org.id, user_ids
 
 
+async def _bind_pipeline(db_session, org_id) -> None:  # type: ignore[no-untyped-def]
+    pipeline_id = await create_pipeline(
+        org_id=org_id,
+        definition=PipelineDefinition(
+            name=f"pipeline-{uuid4().hex[:6]}", stages=(ActionStage(action_id="github:create_pr"),)
+        ),
+        actor=Actor.system(),
+        session=db_session,
+    )
+    await add_binding(
+        org_id,
+        "org/repo",
+        spec=TriggerBindingSpec(intake_point_id="github:pr_opened", pipeline_id=pipeline_id),
+        actor=Actor.system(),
+        session=db_session,
+    )
+    await db_session.commit()
+
+
 @pytest.mark.service
 @pytest.mark.asyncio
-async def test_intake_enqueues_fanout_via_ticket_policy(
-    db_session, redis_or_skip, _stub_pr_review_engine
-) -> None:
-    """A PR-opened webhook must:
+async def test_intake_enqueues_fanout_via_ticket_policy(db_session, redis_or_skip) -> None:
+    """A PR-opened webhook on a bound repo must:
     - publish a general SSE event after commit with kind 'ticket_status_changed'
       with new_status 'pending' (create_from_pr inserts at pending; running comes later
-      via the workflow start hook).
+      via `transition_ticket_on_run_start`).
     - NOT enqueue a fanout row (pending does not warrant user notifications).
     """
     from app.core.sse import subscribe_general  # noqa: PLC0415
 
     org_id, _user_ids = await _seed_org_with_members(db_session, num_members=2)
+    await _bind_pipeline(db_session, org_id)
     received: list[dict] = []
 
     async def _consume() -> None:
@@ -141,7 +122,7 @@ async def test_intake_enqueues_fanout_via_ticket_policy(
     consumer = asyncio.create_task(_consume())
     await asyncio.sleep(0.1)  # let Redis subscription register
 
-    outcome = await GithubIntakeType()._prepare_pr_review(
+    outcome = await GithubIntakeType()._prepare_review_or_run(
         payload=_pr_payload(),
         delivery=f"evt-{uuid4().hex}",
         org_id=org_id,
@@ -149,7 +130,7 @@ async def test_intake_enqueues_fanout_via_ticket_policy(
     )
     await db_session.commit()
 
-    assert outcome.detail == "pr_review_started"
+    assert outcome.detail == "pipeline_run_started"
 
     # SSE event
     await asyncio.wait_for(consumer, timeout=3.0)

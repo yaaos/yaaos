@@ -67,8 +67,8 @@ async def test_get_workspace_claim_state_returns_projection_for_claimed_workspac
     assert state is not None
     assert state.workspace_id == ws.id
     assert state.status == "active"
-    # current_holder_workflow_id column is gone.
-    assert not hasattr(state, "current_holder_workflow_id")
+    # current_holder_run_id column is gone.
+    assert not hasattr(state, "current_holder_run_id")
 
 
 @pytest.mark.asyncio
