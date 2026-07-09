@@ -799,6 +799,50 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRealHandler_RunClaude_FakeRunFunc_RWXEnvVar(t *testing.T) {
+	// Asserts that apiKeyProviderEnvVars injects RWX_ACCESS_TOKEN when the
+	// ApiKeys getter returns a "rwx" secret — mirrors the anthropic entry test.
+	var capturedOpts RunStreamingOptions
+	fake := fakeRunFunc(
+		&RunStreamingResult{Stdout: []byte(""), ExitCode: 0, Duration: time.Millisecond},
+		nil,
+		func(opts RunStreamingOptions) { capturedOpts = opts },
+	)
+	rwxToken := secret.New("rwx-test-token")
+	h := NewRealHandler(RealHandlerConfig{
+		Root:      t.TempDir(),
+		CloneFunc: noopClone,
+		RunFunc:   fake,
+		ApiKeys: func() map[string]secret.Secret {
+			return map[string]secret.Secret{"rwx": rwxToken}
+		},
+	})
+	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-rwx"))
+	writeTestSkill(t, cr.Path)
+
+	emitter := &recordingEmitter{}
+	ctx := ContextWithEmitter(context.Background(), emitter)
+
+	_, err := h.RunClaude(ctx, &protocol.InvokeClaudeCodeCommand{
+		CommandHeader: protocol.CommandHeader{CommandID: "c-rwx", WorkspaceID: "ws-rwx"},
+		Invocation:    rawInvocation(t, []string{"claude", "--print"}, "prompt", map[string]string{}),
+		SkillPath:     testSkillPath,
+	})
+	if err != nil {
+		t.Fatalf("RunClaude: %v", err)
+	}
+
+	foundRWX := false
+	for _, kv := range capturedOpts.Env {
+		if kv == "RWX_ACCESS_TOKEN=rwx-test-token" {
+			foundRWX = true
+		}
+	}
+	if !foundRWX {
+		t.Errorf("RWX_ACCESS_TOKEN not found in RunFunc env: %v", capturedOpts.Env)
+	}
+}
+
 func TestRealHandler_RunClaude_FakeRunFunc_NonZeroExit_ReturnsError(t *testing.T) {
 	// Non-zero exit from the fake: RunClaude must map it to a command error
 	// per the error taxonomy (return nil result + error with exit code).

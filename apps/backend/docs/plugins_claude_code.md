@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — five methods (`compile_invocation`, `api_key_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` table and the `/api/claude_code/defaults` HTTP route. Knows nothing about tickets, review jobs, audit log, or workspace paths. Skill selection is not this plugin's concern — a pipeline stage's own `skill_name` picks the skill (see [domain_pipelines.md](domain_pipelines.md)).
+Implements `CodingAgentPlugin` — four methods (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` table and the `/api/claude_code/defaults` HTTP route. Knows nothing about tickets, review jobs, audit log, or workspace paths. Skill selection is not this plugin's concern — a pipeline stage's own `skill_name` picks the skill (see [domain_pipelines.md](domain_pipelines.md)).
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
@@ -16,11 +16,7 @@ Singleton `_plugin = ClaudeCodePlugin()` holds no decrypted credentials — sett
 
 ### `compile_invocation`
 
-Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Works for any skill name — `invocation.skill` is untyped, resolved against the checkout by the agent's pre-spawn stat, not validated here. Validates `context` carries the fields every stage invocation supplies (`stage_name`, `input`, `artifact_path`); raises `CodingAgentError` when they're missing. `_render_stage_prompt` renders the full `StageInvocationContext` (input text, PR diff pointers, upstream artifacts, revision/re-entry text, prior findings, artifact write path) plus a strict-JSON-output directive built from the engine-injected `output_schema`, and tells the model which named skill to use. Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --permission-mode=bypassPermissions`) — no `--allowed-tools` restriction; `bypassPermissions` already grants the full toolset, and tool scoping (e.g. a review skill staying read-only) is the skill file's own discipline, not a backend policy. Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.api_keys["anthropic"]` and injected as `ANTHROPIC_API_KEY` at subprocess exec time.
-
-### `api_key_requirement`
-
-Returns `"anthropic"` — the `provider_id` this plugin needs. Called by `core/coding_agent.build_api_key_secrets_for_org` to look up the org's stored Anthropic key and include it in `AgentConfig.api_keys` on every ConfigUpdate.
+Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Works for any skill name — `invocation.skill` is untyped, resolved against the checkout by the agent's pre-spawn stat, not validated here. Validates `context` carries the fields every stage invocation supplies (`stage_name`, `input`, `artifact_path`); raises `CodingAgentError` when they're missing. `_render_stage_prompt` renders the full `StageInvocationContext` (input text, PR diff pointers, upstream artifacts, revision/re-entry text, prior findings, artifact write path) plus a strict-JSON-output directive built from the engine-injected `output_schema`, and tells the model which named skill to use. Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --permission-mode=bypassPermissions`) — no `--allowed-tools` restriction; `bypassPermissions` already grants the full toolset, and tool scoping (e.g. a review skill staying read-only) is the skill file's own discipline, not a backend policy. Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.api_keys["anthropic"]` (forward-all from `core/coding_agent.build_api_key_secrets_for_org`) and injected as `ANTHROPIC_API_KEY` at subprocess exec time.
 
 ### `parse_result`
 

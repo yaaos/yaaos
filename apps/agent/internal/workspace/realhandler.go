@@ -83,6 +83,7 @@ var tokenRedactRe = regexp.MustCompile(`x-access-token:[^@]*@`)
 // Adding a new provider here requires no other change in the agent.
 var apiKeyProviderEnvVars = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",
+	"rwx":       "RWX_ACCESS_TOKEN",
 }
 
 // Excerpt caps for the `claude exit N` failure string. Stderr stays small;

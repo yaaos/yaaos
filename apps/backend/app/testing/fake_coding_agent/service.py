@@ -67,10 +67,6 @@ class FakeCodingAgentPlugin:
         """Fake implementation — always succeeds, returns settings unchanged."""
         return dict(settings)
 
-    def api_key_requirement(self) -> str | None:
-        """Fake implementation — stateless, needs no API key."""
-        return None
-
     def parse_activity_line(self, line: str) -> ActivityEvent | None:
         """Deterministic fake mapping: every non-blank line renders as an
         `assistant_message` event; blank lines render nothing."""

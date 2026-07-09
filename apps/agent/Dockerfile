@@ -76,7 +76,29 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o /out/agent \
     ./cmd/agent
 
-# ── Stage 2: runtime ───────────────────────────────────────────────────
+# ── Stage 2: rwx CLI ───────────────────────────────────────────────────
+# Download and verify the rwx CLI binary. Using a separate stage keeps curl
+# out of the runtime image — the runtime stage COPY-s only the binary.
+# TARGETARCH is set by Docker buildx; map to the rwx release arch names:
+#   amd64 → x86_64, arm64 → aarch64.
+FROM debian:bookworm-slim AS rwx-downloader
+ARG TARGETARCH
+ARG RWX_VERSION=v3.16.0
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && case "${TARGETARCH}" in \
+      arm64) RWX_ARCH="aarch64" ;; \
+      amd64) RWX_ARCH="x86_64" ;; \
+      *)     echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL \
+      "https://github.com/rwx-cloud/rwx/releases/download/${RWX_VERSION}/rwx-linux-${RWX_ARCH}" \
+      -o /usr/local/bin/rwx \
+ && chmod +x /usr/local/bin/rwx \
+ && /usr/local/bin/rwx --version
+
+# ── Stage 3: runtime ───────────────────────────────────────────────────
 FROM node:24-bookworm-slim
 
 # `git` is required: the agent shells out to it for ProvisionWorkspace
@@ -102,8 +124,11 @@ RUN groupadd --system --gid 65532 nonroot \
 USER 65532:65532
 WORKDIR /home/nonroot
 
-# The binary itself.
+# The agent binary.
 COPY --from=builder --chown=nonroot:nonroot /out/agent /usr/local/bin/agent
+
+# The rwx CLI — available to the nonroot subprocess as a named binary.
+COPY --from=rwx-downloader --chown=nonroot:nonroot /usr/local/bin/rwx /usr/local/bin/rwx
 
 # Default workspace root — overridable via YAAOS_WORKSPACE_ROOT env. The
 # ECS task definition mounts a tmpfs or EBS volume here in production.

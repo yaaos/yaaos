@@ -94,10 +94,6 @@ class StubCodingAgentPlugin:
         """Stub implementation — always succeeds, returns settings unchanged."""
         return dict(settings)
 
-    def api_key_requirement(self) -> str | None:
-        """Stub — always stateless; no API key needed."""
-        return None
-
     def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:
         """Return a minimal stub `RunResult` from the payload."""
         stdout: str = terminal_event_payload.get("stdout", "") or ""

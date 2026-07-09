@@ -33,6 +33,7 @@ import (
 // package depends on the other for this constant.
 var apiKeyProcessEnvVars = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",
+	"rwx":       "RWX_ACCESS_TOKEN",
 }
 
 // ExecSpawn returns a SpawnFunc that runs `<binary> workspace` as a child

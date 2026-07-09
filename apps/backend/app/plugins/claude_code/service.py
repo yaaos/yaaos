@@ -488,10 +488,6 @@ def _render_stage_prompt(skill: str, ctx: Mapping[str, Any]) -> str:
 class ClaudeCodePlugin:
     plugin_id = "claude_code"
 
-    def api_key_requirement(self) -> str | None:
-        """Claude Code requires an Anthropic API key."""
-        return "anthropic"
-
     def compile_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
         """Translate a high-level `Invocation` into a concrete exec block.
 

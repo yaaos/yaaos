@@ -18,3 +18,10 @@
 **`register_on_change(cb)` fan-out** — any caller may register an async `(org_id, *, session) -> None` callback invoked after every successful `set()` or `clear()`. Used by `core/coding_agent` to trigger `enqueue_config_update_for_all_org_agents` so agents receive fresh `api_keys` on key rotation without polling. Callbacks run in the caller's transaction — they must only enqueue work (e.g. outbox rows), never block.
 
 **Callers must not log the result of `get()`.**
+
+## Registered providers
+
+| Provider | Registered by | Validator probe | Agent env var |
+|---|---|---|---|
+| `anthropic` | `plugins/claude_code.bootstrap()` | 1-token `messages.create` to `api.anthropic.com` | `ANTHROPIC_API_KEY` |
+| `rwx` | `plugins/rwx.bootstrap()` | `GET cloud.rwx.com/mint/api/orgs` (auth check) | `RWX_ACCESS_TOKEN` |

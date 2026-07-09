@@ -93,7 +93,7 @@ def test_all_matches_expected_set() -> None:
 def test_protocol_has_expected_methods() -> None:
     """CodingAgentPlugin Protocol must expose exactly compile_invocation, parse_result,
     parse_activity_line, and validate_settings as non-dunder, non-`plugin_id` protocol
-    methods."""
+    methods. api_key_requirement was removed — secrets are forwarded via forward-all."""
     from app.core.coding_agent import CodingAgentPlugin  # noqa: PLC0415
 
     # Collect Protocol method names (non-dunder, non-plugin_id members
@@ -105,7 +105,6 @@ def test_protocol_has_expected_methods() -> None:
     }
     assert proto_methods == {
         "compile_invocation",
-        "api_key_requirement",
         "parse_result",
         "parse_activity_line",
         "validate_settings",

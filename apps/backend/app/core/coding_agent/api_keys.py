@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.agent_gateway import (
     enqueue_config_update_for_all_org_agents as _enqueue_config_update_for_all_org_agents,
 )
-from app.core.coding_agent.service import _get as _get_coding_agent_registry
 
 
 async def build_api_key_secrets_for_org(
@@ -26,24 +25,23 @@ async def build_api_key_secrets_for_org(
     *,
     session: AsyncSession,
 ) -> dict[str, SecretStr]:
-    """Return a dict of provider_id → SecretStr for every registered plugin
-    that has an api_key_requirement and a stored key for the org.
+    """Return a dict of provider_id → SecretStr for every key stored for the org.
+
+    Forwards all stored org keys — the agent-side env maps act as the allowlist;
+    unknown providers are ignored there by design. Wraps each plaintext in
+    SecretStr immediately so it never crosses module boundaries as a bare string.
 
     Called by `core/agent_gateway._build_config_update_dto` via the registered
-    api-key-secrets-provider IoC seam. Reads API keys for all plugins that declare
-    an `api_key_requirement()`. Wraps each plaintext in SecretStr immediately so it
-    never crosses module boundaries as a bare string.
+    api-key-secrets-provider IoC seam.
     """
     import app.core.api_keys as _api_keys  # noqa: PLC0415
 
+    stored_keys = await _api_keys.list_keys_for_org(org_id, session=session)
     result: dict[str, SecretStr] = {}
-    for plugin in _get_coding_agent_registry().list():
-        req = plugin.api_key_requirement()
-        if req is None:
-            continue
-        plaintext = await _api_keys.get(org_id, req, session=session)
+    for api_key in stored_keys:
+        plaintext = await _api_keys.get(org_id, api_key.provider, session=session)
         if plaintext is not None:
-            result[req] = SecretStr(plaintext)
+            result[api_key.provider] = SecretStr(plaintext)
     return result
 
 

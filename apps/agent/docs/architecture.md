@@ -115,10 +115,21 @@ Mechanical exit order: skill-stat (pre-spawn) → TMPDIR set (pre-spawn) → sub
 
 ### API key credential delivery
 
-Per-org API keys (e.g. `ANTHROPIC_API_KEY`) arrive via `ConfigUpdate.AgentConfig.ApiKeys` — a `map[string]secret.Secret` keyed by provider ID. The mapping from provider ID to env var name lives in two identical package-level tables:
+Per-org API keys arrive via `ConfigUpdate.AgentConfig.ApiKeys` — a `map[string]secret.Secret` keyed by provider ID. The mapping from provider ID to env var name lives in two identical package-level tables:
 
 - `apiKeyProviderEnvVars` in `internal/workspace/realhandler.go` — used by `RealHandlerConfig.RunClaude` when the workspace subprocess is run in-process (test path; `InProcessSpawn`).
 - `apiKeyProcessEnvVars` in `internal/supervisor/exec_spawn.go` — used by `ExecSpawn` to inject secrets into the OS subprocess's `cmd.Env` before `exec.Command.Start`. This is the production path.
+
+Currently registered providers and their injected env vars:
+
+| Provider | Env var |
+|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `rwx` | `RWX_ACCESS_TOKEN` |
+
+The backend's `build_api_key_secrets_for_org` forwards **all** stored org keys; the tables above are the agent-side allowlist — unknown providers are ignored.
+
+**rwx CLI binary** — the `rwx` CLI is bundled into the agent Docker image via a dedicated `rwx-downloader` build stage in `apps/agent/Dockerfile`. The stage curls the Linux binary from `github.com/rwx-cloud/rwx/releases` (versioned by `RWX_VERSION` build-arg, default `v3.16.0`) and the runtime stage copies it to `/usr/local/bin/rwx`. `RWX_ACCESS_TOKEN` (injected by `ExecSpawn`) is the credential that authenticates the subprocess to RWX cloud services when executing `rwx` commands.
 
 The production flow: `ExecSpawn` accepts an `apiKeyGetter func() map[string]secret.Secret` parameter. The supervisor passes a closure over `s.config.Load()` (`atomic.Pointer[command.AgentConfig]`) so `apiKeyGetter` always reads the latest applied config — key rotations take effect on the next workspace spawn without restarting the supervisor. Secret values are unwrapped via `.Value()` only at the `cmd.Env = append(cmd.Env, envVar+"="+sec.Value())` site inside `ExecSpawn` — the only point they leave the `secret.Secret` wrapper.
 
