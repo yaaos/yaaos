@@ -156,7 +156,6 @@ __all__ = [
 # These web files import from `app.core.sessions` which is loaded on demand
 # here and never creates a cycle (sessions has no dependency on domain.orgs).
 import app.domain.orgs.audit_web  # noqa: E402
-import app.domain.orgs.byok_routes  # noqa: E402
 import app.domain.orgs.coding_agents_web  # noqa: E402
 import app.domain.orgs.org_settings_web  # noqa: E402
 import app.domain.orgs.sso_web  # noqa: E402

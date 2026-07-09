@@ -27,11 +27,11 @@ import (
 	"github.com/yaaos/agent/internal/tracing"
 )
 
-// byokProcessEnvVars maps provider_id → environment variable name for
+// apiKeyProcessEnvVars maps provider_id → environment variable name for
 // secrets injected into the workspace subprocess. Mirrors the mapping in
-// workspace.byokProviderEnvVars — kept private to each file so neither
+// workspace.apiKeyProviderEnvVars — kept private to each file so neither
 // package depends on the other for this constant.
-var byokProcessEnvVars = map[string]string{
+var apiKeyProcessEnvVars = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",
 }
 
@@ -40,14 +40,14 @@ var byokProcessEnvVars = map[string]string{
 // re-invoked with a different subcommand. The supervisor's stderr is
 // inherited so workspace logs land beside the supervisor's.
 //
-// byokGetter is called at spawn time to resolve the current per-org BYOK
+// apiKeyGetter is called at spawn time to resolve the current per-org API key
 // secrets; the resolved env vars are injected into the workspace subprocess
 // environment so Claude Code grand-children inherit them. Pass nil when no
 // secrets are available (e.g. before the first ConfigUpdate).
 //
 // The closeGrace controls the SIGTERM→SIGKILL window for the process
 // group (default 5s).
-func ExecSpawn(binary string, closeGrace time.Duration, log Logger, byokGetter func() map[string]secret.Secret) SpawnFunc {
+func ExecSpawn(binary string, closeGrace time.Duration, log Logger, apiKeyGetter func() map[string]secret.Secret) SpawnFunc {
 	if closeGrace <= 0 {
 		closeGrace = 5 * time.Second
 	}
@@ -69,13 +69,13 @@ func ExecSpawn(binary string, closeGrace time.Duration, log Logger, byokGetter f
 		// is most useful when a grand-grand-child (Claude Code) needs to
 		// inherit context from outside the command stream.
 		cmd.Env = os.Environ()
-		// Inject BYOK secrets so Claude Code grand-children inherit them.
+		// Inject API key secrets so Claude Code grand-children inherit them.
 		// Called at spawn time so keys reflect the ConfigUpdate in effect
 		// when this workspace process starts.
-		if byokGetter != nil {
-			if byok := byokGetter(); byok != nil {
-				for providerID, envVar := range byokProcessEnvVars {
-					if sec, ok := byok[providerID]; ok && !sec.IsZero() {
+		if apiKeyGetter != nil {
+			if apiKeys := apiKeyGetter(); apiKeys != nil {
+				for providerID, envVar := range apiKeyProcessEnvVars {
+					if sec, ok := apiKeys[providerID]; ok && !sec.IsZero() {
 						cmd.Env = append(cmd.Env, envVar+"="+sec.Value())
 					}
 				}

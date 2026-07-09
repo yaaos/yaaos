@@ -91,8 +91,8 @@ def test_api_key_forwarded_when_braintrust_not_configured(monkeypatch: pytest.Mo
     monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
     get_settings.cache_clear()
     prompt = load_prompt(FIXTURE_PATH)
-    runnable = _RecordingBuildModelRunnable(prompt, Verdict, api_key="org-byok-key")
+    runnable = _RecordingBuildModelRunnable(prompt, Verdict, api_key="org-api-key")
 
     runnable._build_model()
 
-    assert runnable.observed_api_key == "org-byok-key"
+    assert runnable.observed_api_key == "org-api-key"

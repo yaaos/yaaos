@@ -66,7 +66,7 @@ def test_wallclock_seconds_propagated() -> None:
 
 def test_env_does_not_carry_anthropic_api_key() -> None:
     """ANTHROPIC_API_KEY is never in InvokeCodingAgent.env — it is delivered via
-    ConfigUpdate.byok_secrets and injected by the agent at exec time."""
+    ConfigUpdate.api_keys and injected by the agent at exec time."""
     result = _plugin().compile_invocation(_stage_invocation())
     assert "ANTHROPIC_API_KEY" not in result.env
 

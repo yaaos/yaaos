@@ -67,8 +67,8 @@ class FakeCodingAgentPlugin:
         """Fake implementation — always succeeds, returns settings unchanged."""
         return dict(settings)
 
-    def byok_requirement(self) -> str | None:
-        """Fake implementation — stateless, needs no byok key."""
+    def api_key_requirement(self) -> str | None:
+        """Fake implementation — stateless, needs no API key."""
         return None
 
     def parse_activity_line(self, line: str) -> ActivityEvent | None:

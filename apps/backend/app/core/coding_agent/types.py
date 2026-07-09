@@ -232,12 +232,12 @@ class CodingAgentPlugin(Protocol):
         """
         ...
 
-    def byok_requirement(self) -> str | None:
-        """Return the BYOK provider_id this plugin needs, or None if stateless.
+    def api_key_requirement(self) -> str | None:
+        """Return the provider_id whose API key this plugin needs, or None if stateless.
 
         Pure function — no IO. E.g. `ClaudeCodePlugin` returns `"anthropic"`;
         a plugin with credentials delivered via other means returns `None`.
-        Used by `core/coding_agent.build_byok_secrets_for_org` to collect only
+        Used by `core/coding_agent.build_api_key_secrets_for_org` to collect only
         the keys the registered plugins actually need.
         """
         ...

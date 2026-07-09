@@ -11,7 +11,7 @@
 | DELETE | `/api/mcp-proxy/{provider}`             | `INTEGRATIONS_WRITE` — clear |
 
 Architecture writes paths as `/api/orgs/{slug}/integrations/{provider}/...`
-for human readability; the working implementation mirrors other settings endpoints (vcs, coding-agents, byok) — slug comes via the `X-Yaaos-Org-Slug`
+for human readability; the working implementation mirrors other settings endpoints (vcs, coding-agents, api-keys) — slug comes via the `X-Yaaos-Org-Slug`
 header so the SPA's `apiFetch` wrapper carries it automatically.
 
 The callback path is the exception: it's hit by the upstream OAuth provider,

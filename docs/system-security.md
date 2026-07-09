@@ -28,7 +28,7 @@
 ### Secrets at rest
 
 - `core/secrets` Fernet-encrypts everything that lives in the database. Master key is `YAAOS_TOTP_MASTER_KEY` (env var); `YAAOS_ENCRYPTION_KEY` is honored only as a non-prod fallback. Key bytes are read directly from the env on each encrypt/decrypt — not KDF-derived, not hard-coded.
-- Encrypted columns: `byok_keys.encrypted_value`, `sso_configs.sp_private_key_encrypted`, `user_totp_secrets.encrypted_secret`, `mcp_credentials.encrypted_access_token`, `mcp_credentials.encrypted_refresh_token`.
+- Encrypted columns: `org_api_keys.encrypted_value`, `sso_configs.sp_private_key_encrypted`, `user_totp_secrets.encrypted_secret`, `mcp_credentials.encrypted_access_token`, `mcp_credentials.encrypted_refresh_token`.
 - Platform GitHub App private key + webhook secret live in env vars (`YAAOS_GITHUB_APP_PRIVATE_KEY`, `YAAOS_GITHUB_APP_WEBHOOK_SECRET`), not the DB.
 
 ### Audit log
@@ -91,7 +91,7 @@ W3C trace context is a required field on every AgentCommand and AgentEvent (it i
 |---|---|---|
 | OAuth identity + sessions | `users`, `oauth_identities`, `sessions` | `oauth_identities` stores only `(provider, external_subject)` — no credential bytes. Session bearers sha256-hashed in `sessions.token_hash`; raw value only on the user's cookie. |
 | MCP integration credentials | `mcp_credentials` | `encrypted_access_token` + `encrypted_refresh_token`, Fernet via `core/secrets`. |
-| BYOK provider keys | `byok_keys.encrypted_value` | Fernet via `core/secrets`. |
+| Per-org API keys | `org_api_keys.encrypted_value` | Fernet via `core/secrets`. |
 | GitHub webhook secret + App private key | `YAAOS_GITHUB_APP_WEBHOOK_SECRET` + `YAAOS_GITHUB_APP_PRIVATE_KEY` env vars | Platform-deployment secrets (env vars, not DB). One App per yaaos deployment; never per-customer. |
 | SAML SP private key | `sso_configs.sp_private_key_encrypted` | Fernet via `core/secrets`. |
 | TOTP secrets | `user_totp_secrets.encrypted_secret` | Fernet via `core/secrets`. |

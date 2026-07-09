@@ -13,7 +13,7 @@ enqueue + pin + claim, then inserts a `coding_agent_runs` row.
 from __future__ import annotations
 
 from app.core.agent_gateway import (
-    register_byok_secrets_provider as _register_byok_secrets_provider,
+    register_api_key_secrets_provider as _register_api_key_secrets_provider,
 )
 from app.core.agent_gateway import (
     register_run_sink as _register_run_sink,
@@ -23,9 +23,9 @@ from app.core.agent_gateway import (
 # registers the daily `coding_agent_activity_partition_maintenance` task with
 # the broker + scheduler registry at import time.
 from app.core.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
-from app.core.coding_agent.byok import (
-    _register_byok_on_change,
-    build_byok_secrets_for_org,
+from app.core.coding_agent.api_keys import (
+    _register_api_key_on_change,
+    build_api_key_secrets_for_org,
 )
 from app.core.coding_agent.run_service import (
     create_run,
@@ -57,8 +57,8 @@ from app.core.coding_agent.types import (
 )
 
 _register_run_sink(CodingAgentRunSinkImpl())
-_register_byok_secrets_provider(build_byok_secrets_for_org)
-_register_byok_on_change()
+_register_api_key_secrets_provider(build_api_key_secrets_for_org)
+_register_api_key_on_change()
 
 __all__ = [
     "ACTIVITY_EVENT_KINDS",
@@ -73,7 +73,7 @@ __all__ = [
     "RunResult",
     "RunStatus",
     "Usage",
-    "build_byok_secrets_for_org",
+    "build_api_key_secrets_for_org",
     "create_run",
     "dispatch_invocation",
     "finalize_run",

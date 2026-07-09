@@ -235,7 +235,7 @@ type ClaimRequest struct {
 // AgentConfigWire is the raw JSON wire shape of the runtime configuration
 // delivered via ConfigUpdateCommand. The "Wire" suffix distinguishes it from
 // command.AgentConfig — the typed form Decode produces, whose OTLPToken and
-// ByokSecrets values are secret.Secret. Both are plain strings here (the raw
+// ApiKeys values are secret.Secret. Both are plain strings here (the raw
 // wire values); Decode wraps them in secret.Secret immediately, so this struct
 // must never be logged before that wrapping. Environment is a plain string —
 // the OTel `deployment.environment.name` resource attribute.
@@ -245,7 +245,7 @@ type AgentConfigWire struct {
 	OTLPToken     string            `json:"otlp_token"` // secret — wrapped by Decode; never log raw
 	OTLPDataset   string            `json:"otlp_dataset"`
 	Environment   string            `json:"environment"`
-	ByokSecrets   map[string]string `json:"byok_secrets"` // provider_id → token; wrapped by Decode
+	ApiKeys       map[string]string `json:"api_keys"` // provider_id → token; wrapped by Decode
 }
 
 // ConfigUpdateCommand is the agent-scoped command that delivers runtime

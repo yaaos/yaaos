@@ -37,7 +37,7 @@ Owns the `repo_settings` and `repo_trigger_bindings` tables. There is no `repos`
 
 ### Cross-module pipeline lookup (module boundary note)
 
-`domain/pipelines` already depends on `domain/repos` (`pipeline_referenced_by_binding`); the reverse import would cycle. So `add_binding`'s org-ownership check and `find_bindings`'/`TriggerBinding.pipeline_name`'s name resolution go through a registered callback instead: `domain/pipelines` calls `repos.register_pipeline_lookup(fn)` once at import time (mirrors `core/byok.register_validator`), handing over `async (pipeline_id, session) -> PipelineRef | None`.
+`domain/pipelines` already depends on `domain/repos` (`pipeline_referenced_by_binding`); the reverse import would cycle. So `add_binding`'s org-ownership check and `find_bindings`'/`TriggerBinding.pipeline_name`'s name resolution go through a registered callback instead: `domain/pipelines` calls `repos.register_pipeline_lookup(fn)` once at import time (mirrors `core/api_keys.register_validator`), handing over `async (pipeline_id, session) -> PipelineRef | None`.
 
 ### State machines
 

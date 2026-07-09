@@ -94,8 +94,8 @@ class StubCodingAgentPlugin:
         """Stub implementation — always succeeds, returns settings unchanged."""
         return dict(settings)
 
-    def byok_requirement(self) -> str | None:
-        """Stub — always stateless; no BYOK key needed."""
+    def api_key_requirement(self) -> str | None:
+        """Stub — always stateless; no API key needed."""
         return None
 
     def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:

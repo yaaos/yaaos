@@ -1,7 +1,7 @@
-"""BYOK service — encrypted per-(org, provider) API keys.
+"""api_keys service — encrypted per-(org, provider) API keys.
 
 Encryption goes through `core/secrets`. Every mutation emits an audit-log entry
-(`byok.set`, `byok.cleared`, `byok.validated`). Plaintext keys cross this
+(`api_key.set`, `api_key.cleared`, `api_key.validated`). Plaintext keys cross this
 module's surface in only two directions:
 
 - `set(... plaintext)` — caller hands in plaintext; ciphertext is persisted.
@@ -9,7 +9,7 @@ module's surface in only two directions:
 - `validate(org, provider, validator)` — passes plaintext to a caller-supplied
   callable that performs provider-specific verification (e.g. minimal LLM call).
 
-The `validator` pattern keeps `core/byok` free of provider-specific HTTP
+The `validator` pattern keeps `core/api_keys` free of provider-specific HTTP
 logic.
 
 Required-session: every transactional function takes `session: AsyncSession`
@@ -28,18 +28,18 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.api_keys.models import ApiKeyRow
 from app.core.audit_log import Actor, audit
-from app.core.byok.models import ByokKeyRow
 from app.core.secrets import SecretsDecryptError, decrypt, encrypt
 
-log = structlog.get_logger("core.byok")
+log = structlog.get_logger("core.api_keys")
 
 
-class ByokDecryptError(ValueError):
+class ApiKeyDecryptError(ValueError):
     """Stored ciphertext could not be decrypted with the configured master key."""
 
 
-class ByokKey(BaseModel):
+class ApiKey(BaseModel):
     """Read-only value object representing one org/provider key entry.
     Plaintext is never included — this carries only metadata."""
 
@@ -52,7 +52,7 @@ class ByokKey(BaseModel):
 
 
 # Validator registry — plugins register themselves at bootstrap time so
-# `core/byok` stays free of plugin imports. Each entry maps a `provider`
+# `core/api_keys` stays free of plugin imports. Each entry maps a `provider`
 # string to an `async (plaintext: str) -> bool` callable.
 _VALIDATORS: dict[str, Callable[[str], Awaitable[bool]]] = {}
 
@@ -60,13 +60,13 @@ _VALIDATORS: dict[str, Callable[[str], Awaitable[bool]]] = {}
 # Signature: async (org_id: UUID, *, session: AsyncSession) -> None.
 # Registered by consumers (e.g. `core/coding_agent`) that need to fan-out
 # a ConfigUpdate whenever a key changes. Session is the caller's transaction
-# so the fan-out enqueue is atomic with the byok mutation.
+# so the fan-out enqueue is atomic with the api_key mutation.
 _OnChangeCb = Callable[..., Awaitable[None]]
 _ON_CHANGE: list[_OnChangeCb] = []
 
 
 def register_on_change(cb: _OnChangeCb) -> None:
-    """Register a callback invoked after every successful byok `set` or `clear`.
+    """Register a callback invoked after every successful api_keys `set` or `clear`.
 
     Callback signature: ``async (org_id: UUID, *, session: AsyncSession) -> None``.
     Idempotent — re-registering the same callable is a no-op.
@@ -89,11 +89,11 @@ def known_providers() -> list[str]:
     return sorted(_VALIDATORS.keys())
 
 
-class _ByokAuditPayload(BaseModel):
+class _ApiKeyAuditPayload(BaseModel):
     provider: str
 
 
-class _ByokValidatePayload(BaseModel):
+class _ApiKeyValidatePayload(BaseModel):
     provider: str
     success: bool
 
@@ -105,10 +105,10 @@ async def get(
     session: AsyncSession,
 ) -> str | None:
     """Return the decrypted key, or `None` if no row exists. Raises
-    `ByokDecryptError` if the row exists but ciphertext is unreadable."""
+    `ApiKeyDecryptError` if the row exists but ciphertext is unreadable."""
     row = (
         await session.execute(
-            select(ByokKeyRow).where(ByokKeyRow.org_id == org_id, ByokKeyRow.provider == provider)
+            select(ApiKeyRow).where(ApiKeyRow.org_id == org_id, ApiKeyRow.provider == provider)
         )
     ).scalar_one_or_none()
     if row is None:
@@ -116,8 +116,8 @@ async def get(
     try:
         return decrypt(row.encrypted_value.encode()).decode()
     except SecretsDecryptError as exc:
-        log.error("byok.decrypt_failed", org_id=str(org_id), provider=provider)
-        raise ByokDecryptError("byok ciphertext unreadable") from exc
+        log.error("api_key.decrypt_failed", org_id=str(org_id), provider=provider)
+        raise ApiKeyDecryptError("api_key ciphertext unreadable") from exc
 
 
 async def set(
@@ -128,17 +128,17 @@ async def set(
     actor: Actor,
     session: AsyncSession,
 ) -> None:
-    """Upsert the encrypted key. Emits `byok.set` audit entry."""
+    """Upsert the encrypted key. Emits `api_key.set` audit entry."""
     if not plaintext:
         raise ValueError("plaintext key must be non-empty")
     ciphertext = encrypt(plaintext).decode()
     row = (
         await session.execute(
-            select(ByokKeyRow).where(ByokKeyRow.org_id == org_id, ByokKeyRow.provider == provider)
+            select(ApiKeyRow).where(ApiKeyRow.org_id == org_id, ApiKeyRow.provider == provider)
         )
     ).scalar_one_or_none()
     if row is None:
-        row = ByokKeyRow(org_id=org_id, provider=provider, encrypted_value=ciphertext)
+        row = ApiKeyRow(org_id=org_id, provider=provider, encrypted_value=ciphertext)
         session.add(row)
     else:
         row.encrypted_value = ciphertext
@@ -146,8 +146,8 @@ async def set(
     await audit(
         "org",
         org_id,
-        "byok.set",
-        _ByokAuditPayload(provider=provider),
+        "api_key.set",
+        _ApiKeyAuditPayload(provider=provider),
         actor,
         org_id=org_id,
         session=session,
@@ -164,17 +164,17 @@ async def clear(
     session: AsyncSession,
 ) -> bool:
     """Remove the row. Returns True if a row was removed, False if no-op.
-    Emits `byok.cleared` audit entry only when a row was removed."""
+    Emits `api_key.cleared` audit entry only when a row was removed."""
     result = await session.execute(
-        delete(ByokKeyRow).where(ByokKeyRow.org_id == org_id, ByokKeyRow.provider == provider)
+        delete(ApiKeyRow).where(ApiKeyRow.org_id == org_id, ApiKeyRow.provider == provider)
     )
     removed = bool(result.rowcount)
     if removed:
         await audit(
             "org",
             org_id,
-            "byok.cleared",
-            _ByokAuditPayload(provider=provider),
+            "api_key.cleared",
+            _ApiKeyAuditPayload(provider=provider),
             actor,
             org_id=org_id,
             session=session,
@@ -193,11 +193,11 @@ async def validate(
     session: AsyncSession,
 ) -> bool:
     """Decrypt the key, hand it to `validator` (a provider-supplied callable),
-    stamp `last_validated_at` on success, and emit `byok.validated` audit entry.
+    stamp `last_validated_at` on success, and emit `api_key.validated` audit entry.
     Returns False if no key is stored OR the validator returned False."""
     row = (
         await session.execute(
-            select(ByokKeyRow).where(ByokKeyRow.org_id == org_id, ByokKeyRow.provider == provider)
+            select(ApiKeyRow).where(ApiKeyRow.org_id == org_id, ApiKeyRow.provider == provider)
         )
     ).scalar_one_or_none()
     if row is None:
@@ -205,8 +205,8 @@ async def validate(
     try:
         plaintext = decrypt(row.encrypted_value.encode()).decode()
     except SecretsDecryptError as exc:
-        log.error("byok.decrypt_failed", org_id=str(org_id), provider=provider)
-        raise ByokDecryptError("byok ciphertext unreadable") from exc
+        log.error("api_key.decrypt_failed", org_id=str(org_id), provider=provider)
+        raise ApiKeyDecryptError("api_key ciphertext unreadable") from exc
     ok = await validator(plaintext)
     if ok:
         row.last_validated_at = datetime.now(UTC)
@@ -214,8 +214,8 @@ async def validate(
     await audit(
         "org",
         org_id,
-        "byok.validated",
-        _ByokValidatePayload(provider=provider, success=ok),
+        "api_key.validated",
+        _ApiKeyValidatePayload(provider=provider, success=ok),
         actor,
         org_id=org_id,
         session=session,
@@ -227,14 +227,14 @@ async def list_keys_for_org(
     org_id: UUID,
     *,
     session: AsyncSession,
-) -> list[ByokKey]:
+) -> list[ApiKey]:
     """Return metadata for all stored keys belonging to `org_id`.
 
-    No plaintext crosses this boundary — callers receive `ByokKey` value objects.
+    No plaintext crosses this boundary — callers receive `ApiKey` value objects.
     """
-    rows = (await session.execute(select(ByokKeyRow).where(ByokKeyRow.org_id == org_id))).scalars().all()
+    rows = (await session.execute(select(ApiKeyRow).where(ApiKeyRow.org_id == org_id))).scalars().all()
     return [
-        ByokKey(
+        ApiKey(
             org_id=row.org_id,
             provider=row.provider,
             last_validated_at=row.last_validated_at,

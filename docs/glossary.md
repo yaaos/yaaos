@@ -32,7 +32,7 @@
 | **Plugin install** | A specific `(org_id, plugin_id)` adoption. Mutations audit (`vcs.installed / vcs.cleared / coding_agent.installed / coding_agent.uninstalled`). |
 | **Verified GitHub username** | `users.github_username`. Denorm written by the OAuth callback on every sign-in. Re-binding is "sign in with GitHub again." Never user-typed. |
 | **Session-timeout override** | Nullable `orgs.session_timeout_override` (minutes). `require()` dep rejects sessions past `last_seen_at + override`. Null falls back to `SESSION_IDLE_TIMEOUT` (12h). |
-| **BYOK** | Bring-your-own-key per `(org_id, provider)`. Ships `anthropic` only. Plaintext only inbound on POST + outbound from `core/byok.get/.validate`; DB stores Fernet ciphertext. |
+| **API key** | Per-org, per-provider key (`(org_id, provider)`). Ships `anthropic` only. Plaintext only inbound on POST + outbound from `core/api_keys.get/.validate`; DB stores Fernet ciphertext in `org_api_keys`. |
 | **MCP** | Model Context Protocol — JSON-RPC-over-HTTP shape hosted integrations (Linear, Notion) speak to coding-agent CLIs. yaaos proxies every MCP request via `domain/mcp_proxy`. |
 | **MCP review token** | Opaque bearer authenticating the CLI to the yaaos proxy (`domain/mcp_proxy.mint_token`), scoped to a caller-chosen `review_id` (`sha256` persisted, raw returned once); revocable via `revoke_token`, swept hourly. 2h absolute TTL. |
 | **Integration** | yaaos record of a connected hosted provider for an org: encrypted OAuth tokens, per-tool allowlist, status. Owned by `domain/integrations`; one row per `(org_id, provider)`. |

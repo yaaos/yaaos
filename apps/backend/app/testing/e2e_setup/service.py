@@ -69,11 +69,11 @@ async def seed_github_install(
     vars (set on the test compose); no per-org credential row is needed.
 
     Deliberate side-effect: this seed path calls public service functions
-    (``github.record_app_install``, ``byok.set``,
+    (``github.record_app_install``, ``api_keys.set``,
     ``orgs.install_coding_agent``) so it emits the same audit rows and events
     that production writes would produce.
     """
-    import app.core.byok as byok_service  # noqa: PLC0415
+    import app.core.api_keys as api_keys_service  # noqa: PLC0415
     from app.core.audit_log import Actor  # noqa: PLC0415
     from app.domain.orgs import get_org_by_slug, install_coding_agent  # noqa: PLC0415
     from app.plugins.github import record_app_install  # noqa: PLC0415
@@ -92,7 +92,7 @@ async def seed_github_install(
             install_external_id="fake-install-1",
             account_login=org_login,
         )
-        await byok_service.set(
+        await api_keys_service.set(
             target_org_id,
             "anthropic",
             "TEST-FAKE-NOT-FOR-PROD-ANTHROPIC-KEY",

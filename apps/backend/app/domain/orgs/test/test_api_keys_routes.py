@@ -7,11 +7,10 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-import app.core.byok as byok_service
+import app.core.api_keys as api_keys_service
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.auth import AuthMiddleware, Role
 from app.core.identity import create_user, mint_session
-from app.domain.orgs import byok_routes as _byok_routes  # noqa: F401
 from app.domain.orgs import insert_membership, insert_org
 
 
@@ -20,7 +19,7 @@ def _ensure_anthropic_validator() -> None:
     async def _ok(_: str) -> bool:
         return True
 
-    byok_service.register_validator("anthropic", _ok)
+    api_keys_service.register_validator("anthropic", _ok)
 
 
 def _app() -> FastAPI:
@@ -29,7 +28,7 @@ def _app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     from app.core.webserver import mount_specs  # noqa: PLC0415
 
-    mount_specs(app, only={"byok"})
+    mount_specs(app, only={"api_keys"})
     return app
 
 
@@ -41,7 +40,7 @@ def _client() -> httpx.AsyncClient:
 async def seeded(db_session):
     admin = await create_user(db_session, display_name="A")
     member = await create_user(db_session, display_name="M")
-    org = await insert_org(db_session, slug="byok-ep-org")
+    org = await insert_org(db_session, slug="api-keys-ep-org")
     await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
     await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")
     admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)

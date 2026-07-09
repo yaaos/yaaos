@@ -4026,7 +4026,7 @@
         },
         "summary": "List Providers",
         "tags": [
-          "byok"
+          "api_keys"
         ]
       }
     },
@@ -4104,7 +4104,7 @@
         },
         "summary": "Clear Key",
         "tags": [
-          "byok"
+          "api_keys"
         ]
       },
       "post": {
@@ -4190,7 +4190,7 @@
         },
         "summary": "Set Key",
         "tags": [
-          "byok"
+          "api_keys"
         ]
       }
     },
@@ -4269,7 +4269,7 @@
         },
         "summary": "Validate Key",
         "tags": [
-          "byok"
+          "api_keys"
         ]
       }
     },

@@ -45,9 +45,9 @@ Both audit with `from_role` + `to_role` payload.
 - `clear_vcs` calls every hook registered via `register_vcs_clear_hook` (see `vcs.py`) before clearing the org row. VCS plugins (e.g. `plugins/github`) register a hook at boot to delete their per-org install rows — no direct model import needed in `domain/orgs`.
 - Many coding-agent plugins per org via `org_coding_agents(org_id, plugin_id)` with `settings jsonb`. All mutations audit.
 
-## BYOK routes
+## API key routes
 
-HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYOK keys are per-org; routes need `core/sessions` deps). `GET` returns `configured` / `not_set` only — plaintext never leaves. Provider list sourced from `core/byok`'s validator registry.
+HTTP surface for [`core/api_keys`](core_api_keys.md) lives in `api_keys_routes.py` here (keys are per-org; routes need `core/sessions` deps). `GET` returns `configured` / `not_set` only — plaintext never leaves. Provider list sourced from `core/api_keys`'s validator registry.
 
 ## Session-timeout override
 
@@ -55,7 +55,7 @@ HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYO
 
 ## Workspace cap — `workspace_max_count`
 
-`orgs.workspace_max_count` (NOT NULL int, default 4, CHECK 1..50) caps concurrent active workspaces per WorkspaceAgent. Rides the [`core/agent_gateway`](core_agent_gateway.md) `ConfigUpdate` AgentCommand to the Go agent as `AgentConfig.max_workspaces`. `PATCH /api/orgs` accepts `workspace_max_count`; on any change it calls `enqueue_config_update_for_all_org_agents(org_id)` in the same transaction so the new cap takes effect on the agent's next claim instead of waiting up to ~1 hr for the next bearer re-exchange (same fan-out pattern BYOK key rotations use). A re-send of the existing value is a no-op for fan-out.
+`orgs.workspace_max_count` (NOT NULL int, default 4, CHECK 1..50) caps concurrent active workspaces per WorkspaceAgent. Rides the [`core/agent_gateway`](core_agent_gateway.md) `ConfigUpdate` AgentCommand to the Go agent as `AgentConfig.max_workspaces`. `PATCH /api/orgs` accepts `workspace_max_count`; on any change it calls `enqueue_config_update_for_all_org_agents(org_id)` in the same transaction so the new cap takes effect on the agent's next claim instead of waiting up to ~1 hr for the next bearer re-exchange (same fan-out pattern API key rotations use). A re-send of the existing value is a no-op for fan-out.
 
 ## Data owned
 

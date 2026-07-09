@@ -139,9 +139,9 @@ func Decode(raw []byte) (Command, error) {
 				return nil, fmt.Errorf("command: ConfigUpdate otlp_endpoint must be a valid URL with scheme and host, got %q", v.Config.OTLPEndpoint)
 			}
 		}
-		byok := make(map[string]secret.Secret, len(v.Config.ByokSecrets))
-		for k, val := range v.Config.ByokSecrets {
-			byok[k] = secretFrom(val)
+		apiKeys := make(map[string]secret.Secret, len(v.Config.ApiKeys))
+		for k, val := range v.Config.ApiKeys {
+			apiKeys[k] = secretFrom(val)
 		}
 		return &ConfigUpdateCommand{
 			CommandHeader: v.CommandHeader,
@@ -151,7 +151,7 @@ func Decode(raw []byte) (Command, error) {
 				OTLPToken:     secretFrom(v.Config.OTLPToken),
 				OTLPDataset:   v.Config.OTLPDataset,
 				Environment:   v.Config.Environment,
-				ByokSecrets:   byok,
+				ApiKeys:       apiKeys,
 			},
 		}, nil
 	case protocol.KindShutdown:

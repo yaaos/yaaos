@@ -1,4 +1,4 @@
-"""SQLAlchemy model for `core/byok` — encrypted per-org provider keys."""
+"""SQLAlchemy model for `core/api_keys` — encrypted per-org provider keys."""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
 
-class ByokKeyRow(Base):
+class ApiKeyRow(Base):
     """One row per `(org_id, provider)`. `encrypted_value` is Fernet ciphertext
     produced by `core/secrets.encrypt`. Plaintext keys never live in the DB."""
 
-    __tablename__ = "byok_keys"
+    __tablename__ = "org_api_keys"
 
     org_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True

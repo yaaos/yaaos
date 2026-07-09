@@ -275,7 +275,7 @@ async def patch_org_settings(body: dict) -> _OrgSettingsResponse:
         updated = await _update_org_fields(s, org_id, **update_kwargs)
         # Fan-out a ConfigUpdate to every agent in the org so the new cap
         # takes effect on the next claim instead of waiting up to ~1 hr for
-        # the next bearer re-exchange.  Reuses the same enqueue path BYOK
+        # the next bearer re-exchange.  Reuses the same enqueue path API key
         # rotations use; mass duplicates are harmless (ApplyConfig is
         # last-write-wins on the agent side).
         if workspace_max_changed:
@@ -352,7 +352,7 @@ async def config_status() -> ConfigStatusResponse:
         missing.append("vcs")
     if not status.anthropic_key_set:
         missing.append("api_key")
-    # Coding-agent readiness piggybacks on the BYOK contributor today —
+    # Coding-agent readiness piggybacks on the api_key contributor today —
     # `anthropic_key_set` implies a Claude Code plugin row was provisioned at
     # the same point in the onboarding flow. When more coding-agent plugins
     # ship (Codex, Aider), this collapses into a separate contributor.

@@ -164,7 +164,7 @@ async def test_configured_claim_returns_none_when_empty(db_session) -> None:
 @pytest.mark.service
 async def test_configured_claim_returns_pending_config_update(db_session) -> None:
     """A ConfigUpdate enqueued after the agent is already configured (e.g. a
-    BYOK key rotation triggering enqueue_config_update_for_all_org_agents) must
+    API key rotation triggering enqueue_config_update_for_all_org_agents) must
     be claimable in the configured lifecycle. Without this branch the row sits
     pending forever and the agent never picks up the new credentials."""
     org_id = await seed_org()
@@ -189,7 +189,7 @@ async def test_configured_claim_returns_pending_config_update(db_session) -> Non
 @pytest.mark.service
 async def test_configured_claim_prefers_config_update_over_provision_workspace(db_session) -> None:
     """When both a ConfigUpdate (pinned to this agent) and an unassigned
-    ProvisionWorkspace are pending, ConfigUpdate wins. Rationale: a BYOK key /
+    ProvisionWorkspace are pending, ConfigUpdate wins. Rationale: an API key /
     OTLP-token rotation must land before the next workspace spawn injects
     per-process env (e.g. ANTHROPIC_API_KEY at ExecSpawn time, which lives for
     the workspace's whole life)."""

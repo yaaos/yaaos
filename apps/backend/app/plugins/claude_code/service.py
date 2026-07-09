@@ -21,7 +21,7 @@ import httpx
 import structlog
 from pydantic import SecretStr
 
-import app.core.byok as _byok
+import app.core.api_keys as _api_keys
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
@@ -488,8 +488,8 @@ def _render_stage_prompt(skill: str, ctx: Mapping[str, Any]) -> str:
 class ClaudeCodePlugin:
     plugin_id = "claude_code"
 
-    def byok_requirement(self) -> str | None:
-        """Claude Code requires an Anthropic API key delivered via BYOK."""
+    def api_key_requirement(self) -> str | None:
+        """Claude Code requires an Anthropic API key."""
         return "anthropic"
 
     def compile_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
@@ -667,12 +667,12 @@ def _invalidate_auth_cache() -> None:
 async def _onboarding_anthropic_key_set(org_id: UUID) -> bool:
     """Settings contributor — returns True iff a working key is present.
 
-    "Set" means: there's a byok row AND the key actually authenticates.
+    "Set" means: there's an api_keys row AND the key actually authenticates.
     A saved-but-invalid key does not satisfy the prereq.
     The auth probe is cached (5-min TTL per fingerprint).
     """
     async with db_session() as s:
-        plaintext = await _byok.get(org_id, "anthropic", session=s)
+        plaintext = await _api_keys.get(org_id, "anthropic", session=s)
     if not plaintext:
         return False
     healthy, _ = await _probe_anthropic_auth(SecretStr(plaintext))
@@ -680,15 +680,15 @@ async def _onboarding_anthropic_key_set(org_id: UUID) -> bool:
 
 
 def bootstrap() -> None:
-    from app.core.byok import register_validator as _byok_register_validator  # noqa: PLC0415
+    from app.core.api_keys import register_validator as _api_keys_register_validator  # noqa: PLC0415
     from app.domain.orgs import register_onboarding_contributor  # noqa: PLC0415
-    from app.plugins.claude_code.byok_validator import validate_anthropic_key  # noqa: PLC0415
+    from app.plugins.claude_code.api_key_validator import validate_anthropic_key  # noqa: PLC0415
 
     register_plugin(_plugin)
     register_onboarding_contributor("anthropic_key_set", _onboarding_anthropic_key_set)
-    # BYOK: the `/api/api-keys/anthropic/validate` endpoint dispatches to this
-    # callable so core/byok stays free of provider-specific HTTP.
-    _byok_register_validator("anthropic", validate_anthropic_key)
+    # The `/api/api-keys/anthropic/validate` endpoint dispatches to this
+    # callable so core/api_keys stays free of provider-specific HTTP.
+    _api_keys_register_validator("anthropic", validate_anthropic_key)
 
 
 def get_plugin() -> ClaudeCodePlugin:

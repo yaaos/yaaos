@@ -205,7 +205,7 @@ OnActivitySubscriberHeartbeat = Callable[[UUID, str], Awaitable[None]]
 OnActivitySubscriberDetach = Callable[[UUID, str], Awaitable[None]]
 
 # Registered once, at `core/agent_gateway` import time. Re-registering
-# overwrites (mirrors `core/byok.register_validator`'s reload tolerance).
+# overwrites (mirrors `core/api_keys.register_validator`'s reload tolerance).
 _on_activity_subscriber_attach: OnActivitySubscriberAttach | None = None
 _on_activity_subscriber_heartbeat: OnActivitySubscriberHeartbeat | None = None
 _on_activity_subscriber_detach: OnActivitySubscriberDetach | None = None

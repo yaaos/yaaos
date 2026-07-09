@@ -58,13 +58,13 @@ class Action(StrEnum):
     GITHUB_APP_LINK = "github.app_link"
     REVIEW_TRIGGER = "review.trigger"
 
-    # Settings — VCS / coding-agents / BYOK / top-level org. Owner+Admin only.
+    # Settings — VCS / coding-agents / api-keys / top-level org. Owner+Admin only.
     VCS_READ = "vcs.read"
     VCS_WRITE = "vcs.write"
     CODING_AGENT_READ = "coding_agent.read"
     CODING_AGENT_WRITE = "coding_agent.write"
-    BYOK_READ = "byok.read"
-    BYOK_WRITE = "byok.write"
+    API_KEY_READ = "api_key.read"
+    API_KEY_WRITE = "api_key.write"
     ORG_SETTINGS_WRITE = "org_settings.write"
     # Owner/Admin can read the workspace-agent connection status.
     ORG_SETTINGS_READ = "org_settings.read"

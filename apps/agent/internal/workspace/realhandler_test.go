@@ -722,7 +722,7 @@ func (e *recordingEmitter) Progress(outputs map[string]any) bool {
 
 func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 	// Happy path: fake RunFunc returns multi-line stdout with ExitCode 0.
-	// Asserts: env layering (BYOK key reaches RunFunc via ByokSecrets getter,
+	// Asserts: env layering (API key reaches RunFunc via ApiKeys getter,
 	// not via the invocation env), emitter forwarding (each line becomes a
 	// progress event), stdout accumulation (RunClaude replaces RunStreaming's
 	// empty Stdout with the accumulated bytes).
@@ -733,15 +733,15 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		nil,
 		func(opts RunStreamingOptions) { capturedOpts = opts },
 	)
-	// Wire the BYOK key via the ByokSecrets getter — the invocation env is
+	// Wire the API key via the ApiKeys getter — the invocation env is
 	// intentionally empty (backend no longer ships ANTHROPIC_API_KEY there).
-	byokKey := secret.New("sk-test-byok")
+	apiKey := secret.New("sk-test-api-key")
 	h := NewRealHandler(RealHandlerConfig{
 		Root:      t.TempDir(),
 		CloneFunc: noopClone,
 		RunFunc:   fake,
-		ByokSecrets: func() map[string]secret.Secret {
-			return map[string]secret.Secret{"anthropic": byokKey}
+		ApiKeys: func() map[string]secret.Secret {
+			return map[string]secret.Secret{"anthropic": apiKey}
 		},
 	})
 	cr, _ := h.ProvisionWorkspace(context.Background(), newProvision("ws-1"))
@@ -755,7 +755,7 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		Invocation: rawInvocation(t,
 			[]string{"claude", "--print"},
 			"prompt text",
-			map[string]string{}, // intentionally empty — BYOK comes from the getter
+			map[string]string{}, // intentionally empty — API key comes from the getter
 		),
 		SkillPath: testSkillPath,
 	})
@@ -763,15 +763,15 @@ func TestRealHandler_RunClaude_FakeRunFunc_HappyPath(t *testing.T) {
 		t.Fatalf("RunClaude: %v", err)
 	}
 
-	// env layering: BYOK key must reach RunFunc via the ByokSecrets getter.
-	foundBYOK := false
+	// env layering: API key must reach RunFunc via the ApiKeys getter.
+	foundAPIKey := false
 	for _, kv := range capturedOpts.Env {
-		if kv == "ANTHROPIC_API_KEY=sk-test-byok" {
-			foundBYOK = true
+		if kv == "ANTHROPIC_API_KEY=sk-test-api-key" {
+			foundAPIKey = true
 		}
 	}
-	if !foundBYOK {
-		t.Errorf("BYOK key not found in RunFunc env (expected ANTHROPIC_API_KEY=sk-test-byok): %v", capturedOpts.Env)
+	if !foundAPIKey {
+		t.Errorf("API key not found in RunFunc env (expected ANTHROPIC_API_KEY=sk-test-api-key): %v", capturedOpts.Env)
 	}
 
 	// emitter forwarding: two lines → two progress events.

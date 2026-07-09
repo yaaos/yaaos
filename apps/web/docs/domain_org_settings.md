@@ -31,14 +31,14 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 `ClaudeCodeSettings.tsx` composition (top → bottom):
 1. **`BrokenIntegrationsNotice`** — amber banner when any MCP credential has `last_refresh_status="failed"` (from `/api/auth/me`).
 2. **`BuilderReadOnlyBanner`** — info banner; UI only. Server enforces `require(Action.CODING_AGENT_WRITE)`.
-3. **`AnthropicKeyCard`** — BYOK Anthropic key. Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
+3. **`AnthropicKeyCard`** — Anthropic API key. Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
 4. **`DangerZone`** — `ConfirmModal` → `useUninstallCodingAgent`.
 
 Skill selection never appears here — a pipeline stage's `skill_name` picks the skill (see [domain_pipeline_settings.md](domain_pipeline_settings.md)).
 
 ## Forms
 
-All input forms across the settings pages use `react-hook-form` + Zod (`zodResolver`). shadcn `form.tsx` primitives (`Form`, `FormField`, `FormItem`, `FormControl`, `FormMessage`) carry validation messages automatically. Affected pages: `AuthSettingsPage` (session-timeout), `WorkspacesSettingsPage` (ARN + region), `BYOKSettingsPage` (API key per provider card), `ClaudeCodeSettings` (Anthropic key card + agent-config Save), `IntegrationsSettingsPage` (allowlist add). Simple action buttons (toggle enabled, disconnect) are not wrapped in RHF forms.
+All input forms across the settings pages use `react-hook-form` + Zod (`zodResolver`). shadcn `form.tsx` primitives (`Form`, `FormField`, `FormItem`, `FormControl`, `FormMessage`) carry validation messages automatically. Affected pages: `AuthSettingsPage` (session-timeout), `WorkspacesSettingsPage` (ARN + region), `ApiKeysSettingsPage` (API key per provider card), `ClaudeCodeSettings` (Anthropic key card + agent-config Save), `IntegrationsSettingsPage` (allowlist add). Simple action buttons (toggle enabled, disconnect) are not wrapped in RHF forms.
 
 ## Workspaces page
 
@@ -56,7 +56,7 @@ Router imports each page directly by path; no barrel.
 - `public/AuthSettingsPage.tsx` — `AuthSettingsPage`
 - `public/MembersSettingsPage.tsx` — `MembersSettingsPage`
 - `public/WorkspacesSettingsPage.tsx` — `WorkspacesSettingsPage`
-- `public/byok/BYOKSettingsPage.tsx` — `BYOKSettingsPage`
+- `public/api_keys/ApiKeysSettingsPage.tsx` — `ApiKeysSettingsPage`
 - `public/coding_agents/CodingAgentSettingsPage.tsx` — `CodingAgentSettingsPage` (per-plugin dispatch)
 - `public/coding_agents/CodingAgentsSettingsPage.tsx` — `CodingAgentsSettingsPage` (list)
 - `public/integrations/IntegrationsSettingsPage.tsx` — `IntegrationsSettingsPage`
@@ -73,7 +73,7 @@ All settings tests use MSW to intercept HTTP rather than `vi.mock("../queries")`
 - `coding_agents/test/coding_agents.test.tsx` — component/MSW: empty state, Add card with claude_code disabled when already installed, install flow, Remove confirmation, settings link.
 - `coding_agents/test/plugin_registry.test.tsx` — unit: dispatch to registered vs. unknown plugin.
 - `coding_agents/plugins/claude_code/test/claude_code_settings.test.tsx` — component/MSW: renders one input per repo, Save fires PUT with `encodeURIComponent`-encoded path (regression guard for the `%2F`-before-routing bug), empty state when no repos connected.
-- `byok/test/byok.test.tsx` — component/MSW: not_set / configured / rotate states; save / test / clear flows.
+- `api_keys/test/api-keys.test.tsx` — component/MSW: not_set / configured / rotate states; save / test / clear flows.
 - `integrations/test/integrations.test.tsx` — component/MSW: connect flow, allowlist, enabled toggle, disconnect.
 - `vcs/test/vcs.test.tsx` — component/MSW: Connect GitHub card, connected, needs-setup, unprovisioned states; remove confirmation.
 - `test/layout.test.tsx` — tab visibility per role.

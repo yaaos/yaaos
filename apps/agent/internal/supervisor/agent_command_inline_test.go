@@ -38,7 +38,7 @@ func mustMarshalConfigUpdate(commandID string, maxWorkspaces int) []byte {
 			"otlp_token":     "",
 			"otlp_dataset":   "",
 			"environment":    "test",
-			"byok_secrets":   map[string]string{},
+			"api_keys":       map[string]string{},
 		},
 	}
 	b, err := json.Marshal(payload)

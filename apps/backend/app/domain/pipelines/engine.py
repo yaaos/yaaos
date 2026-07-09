@@ -191,7 +191,7 @@ _comment_finding_ids_provider: _CommentFindingIdsProvider | None = None
 
 def register_comment_findings_provider(fn: _CommentFindingIdsProvider) -> None:
     """Registered once, at `domain/pr_review` import time. Re-registering
-    overwrites (mirrors `core/byok.register_validator`'s reload tolerance)."""
+    overwrites (mirrors `core/api_keys.register_validator`'s reload tolerance)."""
     global _comment_finding_ids_provider
     _comment_finding_ids_provider = fn
 

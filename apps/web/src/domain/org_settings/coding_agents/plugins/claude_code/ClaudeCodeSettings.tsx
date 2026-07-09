@@ -14,17 +14,17 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { type CodingAgentInstall, useCodingAgents, useUninstallCodingAgent } from "../../queries";
 import {
-  useByokAnthropicStatus,
-  useClearByokAnthropic,
-  useSetByokAnthropic,
-  useValidateByokAnthropic,
+  useApiKeyAnthropicStatus,
+  useClearApiKeyAnthropic,
+  useSetApiKeyAnthropic,
+  useValidateApiKeyAnthropic,
 } from "./queries";
 
 /**
  * Bespoke settings UI for the `claude_code` coding-agent plugin.
  *
  * Renders:
- *  - Anthropic API key card (BYOK provider=anthropic — test/save/rotate/clear).
+ *  - Anthropic API key card (provider=anthropic — test/save/rotate/clear).
  *  - Danger zone (uninstall).
  */
 export function ClaudeCodeSettings({ pluginId }: { pluginId: string }) {
@@ -83,10 +83,10 @@ const anthropicKeySchema = z.object({
 type AnthropicKeyValues = z.infer<typeof anthropicKeySchema>;
 
 function AnthropicKeyCard() {
-  const status = useByokAnthropicStatus();
-  const setKey = useSetByokAnthropic();
-  const validate = useValidateByokAnthropic();
-  const clear = useClearByokAnthropic();
+  const status = useApiKeyAnthropicStatus();
+  const setKey = useSetApiKeyAnthropic();
+  const validate = useValidateApiKeyAnthropic();
+  const clear = useClearApiKeyAnthropic();
   const configured = status.data?.status === "configured";
   const [editing, setEditing] = useState(!configured);
 

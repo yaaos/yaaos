@@ -14,7 +14,7 @@ the Repos-page protected-code + auto-approve config.
 directly (`pipelines` already depends on `repos` for
 `pipeline_referenced_by_binding`; the reverse edge would cycle). Instead
 `domain/pipelines` registers a lookup callable at import time via
-`register_pipeline_lookup`, mirroring `core/byok.register_validator`.
+`register_pipeline_lookup`, mirroring `core/api_keys.register_validator`.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ _pipeline_lookup: _PipelineLookup | None = None
 
 def register_pipeline_lookup(fn: _PipelineLookup) -> None:
     """Registered once, at `domain/pipelines` import time. Re-registering
-    overwrites (mirrors `core/byok.register_validator`'s reload tolerance)."""
+    overwrites (mirrors `core/api_keys.register_validator`'s reload tolerance)."""
     global _pipeline_lookup
     _pipeline_lookup = fn
 

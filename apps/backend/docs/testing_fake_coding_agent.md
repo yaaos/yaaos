@@ -15,7 +15,7 @@
 
 Implements the full `CodingAgentPlugin` Protocol surface: `compile_invocation`, `parse_result`, and `validate_settings`. `compile_invocation` returns a canned `InvokeCodingAgent`. `parse_result` returns a `RunResult` with configurable `output` content — `output` should be the structured JSON response string (e.g. `'{"findings": []}'`) that `CodingAgentCommand.handle_response` will validate against `ExpectedResponse`. `validate_settings` is a no-op pass-through — always returns `dict(settings)` unchanged.
 
-No telemetry, no byok lookup, no DB reads.
+No telemetry, no API key lookup, no DB reads.
 
 ## Why it exists separately from `stub_coding_agent`
 

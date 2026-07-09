@@ -296,7 +296,7 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 	}
 	s.localLifecycle.Store(ptrStr("unconfigured"))
 	if needsDefaultSpawn {
-		// ExecSpawn's byok getter is a closure over s.config — it reads the
+		// ExecSpawn's apiKeyGetter is a closure over s.config — it reads the
 		// most recent AgentConfig atomically so keys reflect the latest
 		// ConfigUpdate at workspace spawn time. nil config (unconfigured) →
 		// getter returns nil → ExecSpawn skips injection.
@@ -305,7 +305,7 @@ func New(cfg Config, client *protocol.Client, log Logger, prov identity.Provider
 			if cfg == nil {
 				return nil
 			}
-			return cfg.ByokSecrets
+			return cfg.ApiKeys
 		})
 	}
 	s.pool = NewPool(s.cfg.Spawn, log)

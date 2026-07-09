@@ -19,7 +19,7 @@
 //                            deterministically with "skill not found:
 //                            <path>"); reads `invocation.exec` from the
 //                            wire ({argv, stdin, env}), merges env on top
-//                            of `os.Environ()`, injects BYOK secrets from
+//                            of `os.Environ()`, injects API key secrets from
 //                            the last ConfigUpdate (e.g.
 //                            ANTHROPIC_API_KEY), sets a workspace-local
 //                            TMPDIR, adds TRACEPARENT for span linkage,
@@ -76,12 +76,12 @@ import (
 // at package init since redaction runs on every git failure path.
 var tokenRedactRe = regexp.MustCompile(`x-access-token:[^@]*@`)
 
-// byokProviderEnvVars maps provider_id → environment variable name. When the
-// control plane delivers a BYOK secret for a known provider, RunClaude injects
+// apiKeyProviderEnvVars maps provider_id → environment variable name. When the
+// control plane delivers an API key secret for a known provider, RunClaude injects
 // it into the subprocess env under this variable. Unknown providers are ignored.
 //
 // Adding a new provider here requires no other change in the agent.
-var byokProviderEnvVars = map[string]string{
+var apiKeyProviderEnvVars = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",
 }
 
@@ -163,12 +163,12 @@ type RealHandlerConfig struct {
 	// inject a fake so they don't spawn a real Claude binary.
 	RunFunc RunFunc
 
-	// ByokSecrets returns the current per-org BYOK secret map
+	// ApiKeys returns the current per-org API key secret map
 	// (provider_id → secret.Secret) as last delivered by the control
 	// plane via ConfigUpdateCommand. Nil return means no keys available.
 	// Production wires this to a closure over the supervisor's atomic
 	// config pointer. Tests inject a fixed map.
-	ByokSecrets func() map[string]secret.Secret
+	ApiKeys func() map[string]secret.Secret
 }
 
 // CloneFunc clones `repo` into `dest`. `auth` carries the credential
@@ -418,8 +418,8 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	// Env layering, low-to-high priority:
 	//   1. Parent process env (PATH, HOME, …) so claude can find its
 	//      binary + write to $HOME/.claude state.
-	//   2. BYOK secrets from the last ConfigUpdate (e.g. ANTHROPIC_API_KEY
-	//      from byok_secrets["anthropic"]). These override anything inherited
+	//   2. API key secrets from the last ConfigUpdate (e.g. ANTHROPIC_API_KEY
+	//      from api_keys["anthropic"]). These override anything inherited
 	//      from the parent — the control-plane key is authoritative.
 	//   3. exec.env from the wire. Reserved for non-secret overrides; in
 	//      practice the backend sends an empty map now that ANTHROPIC_API_KEY
@@ -429,10 +429,10 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	//      supervisor → workspace hop links the same way; this hop
 	//      extends it one more step to the Claude Code grand-child).
 	env := os.Environ()
-	if h.cfg.ByokSecrets != nil {
-		if byok := h.cfg.ByokSecrets(); byok != nil {
-			for providerID, envVar := range byokProviderEnvVars {
-				if sec, ok := byok[providerID]; ok && !sec.IsZero() {
+	if h.cfg.ApiKeys != nil {
+		if apiKeys := h.cfg.ApiKeys(); apiKeys != nil {
+			for providerID, envVar := range apiKeyProviderEnvVars {
+				if sec, ok := apiKeys[providerID]; ok && !sec.IsZero() {
 					env = append(env, envVar+"="+sec.Value())
 				}
 			}

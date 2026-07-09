@@ -19,16 +19,16 @@ Provides:
 """
 
 from app.core.agent_gateway import bearers, web  # noqa: F401 — registers /v1/* routes
+from app.core.agent_gateway.api_key_provider import (
+    clear_api_key_secrets_provider,
+    get_api_key_secrets_provider,
+    register_api_key_secrets_provider,
+)
 from app.core.agent_gateway.bearers import (
     revoke_all_for_agent,
     revoke_all_for_arn,
     revoke_all_for_org,
     set_bearer_verify_for_tests,
-)
-from app.core.agent_gateway.byok_provider import (
-    clear_byok_secrets_provider,
-    get_byok_secrets_provider,
-    register_byok_secrets_provider,
 )
 from app.core.agent_gateway.org_arn_lookup import (
     OrgArnRef,
@@ -174,7 +174,7 @@ __all__ = [
     "acknowledge_command_received",
     "cancel_shutdown_agents",
     "claim_next",
-    "clear_byok_secrets_provider",
+    "clear_api_key_secrets_provider",
     "clear_run_sink",
     "compute_agent_liveness_transitions",
     "connection_status_for_org",
@@ -185,7 +185,7 @@ __all__ = [
     "enqueue_config_update_for_all_org_agents",
     "ensure_agent_row",
     "get_agent_info",
-    "get_byok_secrets_provider",
+    "get_api_key_secrets_provider",
     "get_command_org_and_payload",
     "get_command_run_id",
     "get_command_status",
@@ -203,7 +203,7 @@ __all__ = [
     "record_heartbeat",
     "record_workspace_event",
     "register_agent_event_consumer",
-    "register_byok_secrets_provider",
+    "register_api_key_secrets_provider",
     "register_org_arn_lookup",
     "register_report_sink",
     "register_run_sink",
@@ -229,7 +229,7 @@ __all__ = [
 # sse to publish activity frames), so the registration flows in this direction:
 # agent_gateway imports sse and registers three callables that sse/web.py
 # calls on every workspace-activity SSE stream attach, heartbeat, and detach.
-# Pattern mirrors domain/repos.register_pipeline_lookup and core/byok.register_validator.
+# Pattern mirrors domain/repos.register_pipeline_lookup and core/api_keys.register_validator.
 from app.core.agent_gateway.lifecycle_hooks import (
     on_attach,
     on_detach,

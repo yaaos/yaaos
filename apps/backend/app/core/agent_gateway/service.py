@@ -412,13 +412,13 @@ async def _build_agent_config(
     *,
     session: AsyncSession,
 ) -> AgentConfig:
-    """Build the per-org `AgentConfig` body from current Settings + per-org BYOK secrets.
+    """Build the per-org `AgentConfig` body from current Settings + per-org API key secrets.
 
     Invariant per `(org_id, session)` within one transaction — the org fetch
-    and BYOK provider read are both deterministic — so the fan-out path can
+    and API key provider read are both deterministic — so the fan-out path can
     safely call this once and reuse the result across N agents.
     """
-    from app.core.agent_gateway.byok_provider import get_byok_secrets_provider  # noqa: PLC0415
+    from app.core.agent_gateway.api_key_provider import get_api_key_secrets_provider  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
     from app.core.tenancy import get_org_full  # noqa: PLC0415
 
@@ -426,17 +426,17 @@ async def _build_agent_config(
     org_full = await get_org_full(session, org_id)
     if org_full is None:
         raise LookupError(f"org {org_id} not found")
-    byok_secrets: dict = {}
-    provider = get_byok_secrets_provider()
+    api_keys: dict = {}
+    provider = get_api_key_secrets_provider()
     if provider is not None:
-        byok_secrets = await provider(org_id, session=session)
+        api_keys = await provider(org_id, session=session)
     return AgentConfig(
         max_workspaces=org_full.workspace_max_count,
         otlp_endpoint=settings.yaaos_dash0_endpoint,
         otlp_token=settings.yaaos_agent_dash0_bearer_token,
         otlp_dataset=settings.yaaos_dash0_dataset,
         environment=settings.environment,
-        byok_secrets=byok_secrets,
+        api_keys=api_keys,
     )
 
 
@@ -445,9 +445,9 @@ async def _build_config_update_dto(
     *,
     session: AsyncSession,
 ) -> ConfigUpdateCommand:
-    """Construct a ConfigUpdateCommand DTO from current Settings + per-org BYOK secrets.
+    """Construct a ConfigUpdateCommand DTO from current Settings + per-org API key secrets.
 
-    No DB side effect of its own — the byok provider may read from the DB via the
+    No DB side effect of its own — the API key provider may read from the DB via the
     supplied session. Used by `enqueue_config_update_for_agent` and by tests
     that need to inspect the settings → AgentConfig mapping without going
     through the claim channel.
@@ -523,7 +523,7 @@ async def enqueue_config_update_for_all_org_agents(
 ) -> None:
     """Insert a ConfigUpdate command row for every reachable agent in the org.
 
-    Used to fan-out a BYOK key change (set or clear) or a `workspace_max_count`
+    Used to fan-out an API key change (set or clear) or a `workspace_max_count`
     update to all currently-registered agents so each agent's next claim picks
     up the new config. Agents that are not yet configured (no prior
     ConfigUpdate) are also notified.
@@ -581,7 +581,7 @@ async def claim_next(
     - `configured` → one `FOR UPDATE SKIP LOCKED LIMIT 1` pick across the
       eligible set, evaluated in priority order (FIFO by UUIDv7 id within each):
         * A pending ConfigUpdate pinned to this agent — runs FIRST so credential
-          and endpoint rotations (BYOK keys, OTLP token) land before any
+          and endpoint rotations (API keys, OTLP token) land before any
           ProvisionWorkspace injects per-workspace env that lives for the
           workspace's whole life.
         * A pending unassigned ProvisionWorkspace (status=pending, agent_id NULL,
@@ -656,7 +656,7 @@ async def claim_next(
     else:
         # Agent-scoped priority bucket first: ConfigUpdate, Shutdown, and
         # CancelShutdown are pre-stamped with agent_id and carry no workspace_id.
-        # ConfigUpdate carries credential / endpoint rotations (BYOK keys, OTLP
+        # ConfigUpdate carries credential / endpoint rotations (API keys, OTLP
         # token) that must land before the next ProvisionWorkspace. Shutdown /
         # CancelShutdown are agent lifecycle signals that must land regardless of
         # workspace capacity.

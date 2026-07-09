@@ -1,7 +1,7 @@
 import { apiFetch } from "@core/api/public/client";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 
-export interface ByokProviderStatus {
+export interface ApiKeyProviderStatus {
   provider: string;
   status: "configured" | "not_set";
   last_validated_at: string | null;
@@ -9,18 +9,18 @@ export interface ByokProviderStatus {
   updated_at: string | null;
 }
 
-export function useByokAnthropicStatus() {
-  return useSuspenseQuery<ByokProviderStatus | null>({
-    queryKey: ["byok", "anthropic"],
+export function useApiKeyAnthropicStatus() {
+  return useSuspenseQuery<ApiKeyProviderStatus | null>({
+    queryKey: ["api-keys", "anthropic"],
     queryFn: async () => {
-      const rows = await apiFetch<ByokProviderStatus[]>("/api/api-keys");
+      const rows = await apiFetch<ApiKeyProviderStatus[]>("/api/api-keys");
       return rows.find((r) => r.provider === "anthropic") ?? null;
     },
     staleTime: 10_000,
   });
 }
 
-export function useSetByokAnthropic() {
+export function useSetApiKeyAnthropic() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (value: string) =>
@@ -28,22 +28,22 @@ export function useSetByokAnthropic() {
         method: "POST",
         body: JSON.stringify({ value }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["byok"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
   });
 }
 
-export function useValidateByokAnthropic() {
+export function useValidateApiKeyAnthropic() {
   return useMutation({
     mutationFn: () =>
       apiFetch<{ valid: boolean }>("/api/api-keys/anthropic/validate", { method: "POST" }),
   });
 }
 
-export function useClearByokAnthropic() {
+export function useClearApiKeyAnthropic() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
       apiFetch<{ removed: boolean }>("/api/api-keys/anthropic", { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["byok"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
   });
 }

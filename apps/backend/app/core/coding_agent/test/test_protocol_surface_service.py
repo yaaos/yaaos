@@ -37,8 +37,8 @@ EXPECTED_ALL = frozenset(
         "get_stage_activity",
         # Test isolation seam
         "set_coding_agents_for_tests",
-        # BYOK secrets provider
-        "build_byok_secrets_for_org",
+        # API key secrets provider
+        "build_api_key_secrets_for_org",
     ]
 )
 
@@ -97,7 +97,7 @@ def test_protocol_has_expected_methods() -> None:
     }
     assert proto_methods == {
         "compile_invocation",
-        "byok_requirement",
+        "api_key_requirement",
         "parse_result",
         "parse_activity_line",
         "validate_settings",

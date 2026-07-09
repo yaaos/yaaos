@@ -1,7 +1,7 @@
 // Package secret holds the agent's secret-redaction wrapper type.
 //
 // Secrets flow through the agent's command-handling path: the
-// ANTHROPIC_API_KEY delivered via ConfigUpdateCommand.byok_secrets,
+// ANTHROPIC_API_KEY delivered via ConfigUpdateCommand.api_keys,
 // the github-installation token in `ProvisionWorkspace.auth.token`, and
 // any other per-org credentials. A wrong `log.Printf("%v", cmd)` or
 // `json.Marshal` would leak those into stderr / structured logs / audit events.
@@ -79,7 +79,7 @@ func (s Secret) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON reads a JSON string into the Secret without exposing the
 // value through any intermediary. This is the only inbound path for secrets
-// arriving on the wire (e.g. byok_secrets in ConfigUpdateCommand). The raw
+// arriving on the wire (e.g. api_keys in ConfigUpdateCommand). The raw
 // string is captured directly; no redacted placeholder is ever stored.
 func (s *Secret) UnmarshalJSON(b []byte) error {
 	var raw string

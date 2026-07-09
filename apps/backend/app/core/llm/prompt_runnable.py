@@ -63,7 +63,7 @@ class PromptRunnable[OutputT: BaseModel]:
     """Single-shot, structured LLM call. Stateless after construction.
 
     `api_key`, when given, is forwarded to `init_chat_model` so a caller can
-    run the call under a per-org BYOK key (`core/byok.get`) instead of the
+    run the call under a per-org API key (`core/api_keys.get`) instead of the
     process-wide provider key LangChain would otherwise resolve from env.
     Ignored when the Braintrust gateway is configured — the gateway holds
     its own provider credentials server-side, so a caller-supplied key has
