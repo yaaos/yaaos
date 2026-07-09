@@ -4,12 +4,16 @@ on:
       init:
         commit-sha: ${{ event.git.sha }}
         branch: ${{ event.git.branch }}
+        e2e: "false"
+        source: "push"
       status-checks:
         name: CI
   cli:
     init:
       commit-sha: ${{ event.git.sha }}
       branch: ${{ event.git.branch }}
+      e2e: "false"
+      source: "cli"
 
 base:
   image: ubuntu:24.04
@@ -20,7 +24,7 @@ base:
 # same branch that's still waiting in the queue. In-flight runs keep going —
 # we don't want `cancel-running` interrupting `deploy-production` mid-flytcl.
 concurrency-pools:
-  - id: yaaos/yaaos:${{ init.branch }}
+  - id: yaaos/yaaos:${{ init.branch }}:${{ init.source }}
     capacity: 1
     on-overflow: cancel-waiting
 
@@ -192,7 +196,7 @@ tasks:
   # ─── e2e ────────────────────────────────────────────────────────────
 
   - key: ci-e2e
-    if: ${{ init.branch == 'main' }}
+    if: ${{ init.branch == 'main' || init.e2e == 'true' }}
     use: [code, nodejs]
     tool-cache: ci-e2e-pnpm
     # Broad filter: e2e exercises the integrated test compose stack —
