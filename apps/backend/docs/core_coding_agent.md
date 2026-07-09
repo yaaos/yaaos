@@ -1,10 +1,10 @@
 # core/coding_agent
 
-> Vendor-neutral abstraction over coding-agent CLIs — Protocol, registry, dispatch, and run lifecycle.
+> Vendor-neutral abstraction over coding-agent CLIs — Protocol, registry, dispatch, run lifecycle, and per-org install state.
 
 ## Scope
 
-Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `api_key_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), API key aggregator (`build_api_key_secrets_for_org`), and the `coding_agent_runs` + `coding_agent_activity` tables.
+Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `api_key_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), API key aggregator (`build_api_key_secrets_for_org`), per-org install state (`org_coding_agents` table, `CodingAgentInstall` VO, install/update/uninstall/list service functions, `/api/coding-agents` routes), and the `coding_agent_runs` + `coding_agent_activity` tables.
 
 Does NOT own: prompt assembly, skill resolution, output-format choice, or workspace mechanics — those are plugin- or caller-owned (`plugins/claude_code`, `domain/pipelines`).
 
@@ -110,15 +110,58 @@ Partitioned RANGE on `created_at` (weekly child partitions, ~4-week TTL). One ro
 | `org_id` | Soft FK. |
 | `payload` | JSONB `ActivityLog` blob (`{"events": [...]}`). |
 
+## Install state
+
+`app/core/coding_agent/installs.py` owns per-org coding-agent installs and the `/api/coding-agents` HTTP routes (in `installs_web.py`).
+
+### Value objects
+
+- `CodingAgentInstall{org_id, plugin_id, settings, created_at, updated_at, created_by}` — one row per org-plugin pair.
+- `CodingAgentAlreadyInstalledError` — raised by `install_coding_agent` when the row already exists.
+- `CodingAgentNotInstalledError` — raised by `update_coding_agent_settings` when no row exists.
+
+### Service functions
+
+All take `session: AsyncSession` as the first positional argument; they flush but do not commit. Callers commit.
+
+- `list_coding_agents(session, org_id) -> list[CodingAgentInstall]` — all installs for the org.
+- `install_coding_agent(session, *, org_id, plugin_id, settings, actor, created_by=None) -> CodingAgentInstall` — inserts row, audits `coding_agent.installed`. Raises `CodingAgentAlreadyInstalledError` on conflict.
+- `update_coding_agent_settings(session, *, org_id, plugin_id, settings, actor) -> CodingAgentInstall` — replaces `settings` + stamps `updated_at`, audits `coding_agent.settings_updated`. Raises `CodingAgentNotInstalledError` when no row exists.
+- `uninstall_coding_agent(session, *, org_id, plugin_id, actor) -> bool` — deletes row, audits `coding_agent.uninstalled`. Returns `True` if deleted, `False` if not found (no audit on no-op).
+
+### Table — `org_coding_agents`
+
+Composite PK `(org_id, plugin_id)`. One row per installed plugin per org.
+
+| Column | Purpose |
+|---|---|
+| `org_id` | FK → `orgs.id` (CASCADE delete). |
+| `plugin_id` | Plugin registry key (`"claude_code"`, etc.). |
+| `settings` | JSONB blob; plugin-shaped (validated by `plugin.validate_settings` before write). |
+| `created_at` / `updated_at` | Server-default `now()`. |
+| `created_by` | Nullable FK → `users.id` (SET NULL). |
+
+### HTTP routes — `/api/coding-agents`
+
+`installs_web.py` registers under `module_name="coding_agent"` with `url_prefix="/api/coding-agents"`. All routes are `RouteSecurity.ORG_SCOPED`.
+
+| Method | Path | Action | Notes |
+|---|---|---|---|
+| `GET` | `/api/coding-agents` | `CODING_AGENT_READ` | Returns list of installs. |
+| `POST` | `/api/coding-agents` | `CODING_AGENT_WRITE` | Installs a plugin; calls `plugin.validate_settings` before write; 409 on duplicate. |
+| `PATCH` | `/api/coding-agents/{plugin_id}` | `CODING_AGENT_WRITE` | Replaces settings; calls `plugin.validate_settings`; 404 when not installed. |
+| `DELETE` | `/api/coding-agents/{plugin_id}` | `CODING_AGENT_WRITE` | Uninstalls; 404 when not installed. |
+
 ## Data owned
 
 - In-memory: plugin registry (`CodingAgentRegistry` in `ContextVar`).
-- Persistent: `coding_agent_runs`, `coding_agent_activity` (partitioned).
+- Persistent: `org_coding_agents`, `coding_agent_runs`, `coding_agent_activity` (partitioned).
 
 ## How it's tested
 
 - `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `set_coding_agents_for_tests` isolation.
-- `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set, Protocol has exactly `compile_invocation` + `api_key_requirement` + `parse_result` + `validate_settings`, retired names not importable.
+- `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set (including install-state symbols), Protocol has exactly `compile_invocation` + `api_key_requirement` + `parse_result` + `validate_settings`, retired names not importable.
+- `app/core/coding_agent/test/test_coding_agents.py` — install service + `/api/coding-agents` endpoint tests: install/list, audit emission, duplicate → 409, settings update + audit, uninstall + audit, role enforcement (member → 403, unauthenticated → 401), `validate_settings` rejection → 422.
 - `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns exactly the caller-supplied `command_id` (a UUIDv7), inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` on the enqueued command from the `.claude/skills/<skill_name>/SKILL.md` convention.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service: create/finalize round-trip, activity blob, `get_step_activity`.
 - `app/core/coding_agent/test/test_sink_uses_parse_result_service.py` — service: `CodingAgentRunSinkImpl.handle_terminal_event` calls `plugin.parse_result`, writes run row, returns `output` + `error_message`; non-`InvokeClaudeCode` kinds return `None`.

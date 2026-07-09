@@ -1,8 +1,8 @@
 """Per-org installed coding-agent plugins.
 
 Many coding-agent plugins per org. Each install lives in `org_coding_agents`
-(`(org_id, plugin_id) PK`, `settings jsonb`, ...). Every mutation emits an
-audit-log entry.
+(`(org_id, plugin_id)` composite PK, `settings jsonb`, ...). Every mutation
+emits an audit-log entry.
 """
 
 from __future__ import annotations
@@ -16,9 +16,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor, audit
-from app.domain.orgs.models import OrgCodingAgentRow
+from app.core.coding_agent.models import OrgCodingAgentRow
 
-log = structlog.get_logger("orgs.coding_agents")
+log = structlog.get_logger("coding_agent.installs")
 
 
 class CodingAgentInstall(BaseModel):

@@ -104,8 +104,8 @@ async def test_seed_github_install_creates_expected_rows(db_session) -> None:
     audit_rows = await list_for_org(org_id=org.id, actions=["coding_agent.installed"])
     assert len(audit_rows) >= 1
 
-    # Verify Claude Code install via orgs.list_coding_agents.
-    from app.domain.orgs import list_coding_agents  # noqa: PLC0415
+    # Verify Claude Code install via coding_agent.list_coding_agents.
+    from app.core.coding_agent import list_coding_agents  # noqa: PLC0415
 
     agents = await list_coding_agents(db_session, org.id)
     claude_code_installs = [a for a in agents if a.plugin_id == "claude_code"]

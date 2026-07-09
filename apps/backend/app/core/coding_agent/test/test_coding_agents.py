@@ -1,4 +1,4 @@
-"""Coverage for `domain/orgs.coding_agents` service + `/api/coding-agents` endpoints."""
+"""Coverage for `core/coding_agent` install service + `/api/coding-agents` endpoints."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from fastapi import FastAPI
 import app.core.sessions  # noqa: F401  -- triggers auth route registration
 from app.core.audit_log import Actor, list_for_org
 from app.core.auth import AuthMiddleware, Role
-from app.core.identity import create_user, mint_session
-from app.domain.orgs import (
+from app.core.coding_agent import (
     CodingAgentAlreadyInstalledError,
     CodingAgentNotInstalledError,
     install_coding_agent,
@@ -19,11 +18,10 @@ from app.domain.orgs import (
     uninstall_coding_agent,
     update_coding_agent_settings,
 )
+from app.core.identity import create_user, mint_session
 
-# coding_agents_web is loaded by domain.orgs.__init__ — no explicit import needed
-from app.domain.orgs import (
-    repository as orgs_repo,
-)
+# installs_web is loaded by core.coding_agent.__init__ — no explicit import needed
+from app.domain.orgs import insert_membership, insert_org
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +41,7 @@ def _app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     from app.core.webserver import mount_specs  # noqa: PLC0415
 
-    mount_specs(app, only={"coding_agents"})
+    mount_specs(app, only={"coding_agent"})
     return app
 
 
@@ -56,16 +54,10 @@ async def seeded(db_session):
     owner = await create_user(db_session, display_name="O")
     admin = await create_user(db_session, display_name="A")
     member = await create_user(db_session, display_name="M")
-    org = await orgs_repo.insert_org(db_session, slug="ca-org")
-    await orgs_repo.insert_membership(
-        db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm"
-    )
-    await orgs_repo.insert_membership(
-        db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem"
-    )
+    org = await insert_org(db_session, slug="ca-org")
+    await insert_membership(db_session, user_id=owner.id, org_id=org.org_id, role=Role.OWNER, handle="own")
+    await insert_membership(db_session, user_id=admin.id, org_id=org.org_id, role=Role.ADMIN, handle="adm")
+    await insert_membership(db_session, user_id=member.id, org_id=org.org_id, role=Role.BUILDER, handle="mem")
     admin_sess = await mint_session(db_session, user_id=admin.id, workspace_id=None)
     member_sess = await mint_session(db_session, user_id=member.id, workspace_id=None)
     await db_session.commit()

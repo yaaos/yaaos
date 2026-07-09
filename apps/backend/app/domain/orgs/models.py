@@ -1,8 +1,10 @@
-"""SQLAlchemy models for `domain/orgs` — invitations, SSO config, coding agents.
+"""SQLAlchemy models for `domain/orgs` — invitations, SSO config.
 
 `OrgRow` and `MembershipRow` have moved to `core/tenancy/models.py`.
-`InvitationRow`, `SsoConfigRow`, and `OrgCodingAgentRow` remain here as
-domain feature rows that reference the core tables by FK.
+`InvitationRow` and `SsoConfigRow` remain here as domain feature rows that
+reference the core tables by FK. `OrgCodingAgentRow` has moved to
+`core/coding_agent/models.py` — coding-agent install state is owned by that
+module.
 """
 
 from __future__ import annotations
@@ -90,28 +92,4 @@ class SsoConfigRow(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
-    )
-
-
-class OrgCodingAgentRow(Base):
-    """Per-org installed coding-agent plugins. `settings` JSONB is plugin-shaped."""
-
-    __tablename__ = "org_coding_agents"
-
-    org_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True
-    )
-    plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-    created_by: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

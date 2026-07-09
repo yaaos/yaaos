@@ -5159,7 +5159,7 @@
         },
         "summary": "List Endpoint",
         "tags": [
-          "coding_agents"
+          "coding_agent"
         ]
       },
       "post": {
@@ -5232,7 +5232,7 @@
         },
         "summary": "Install Endpoint",
         "tags": [
-          "coding_agents"
+          "coding_agent"
         ]
       }
     },
@@ -5310,7 +5310,7 @@
         },
         "summary": "Uninstall Endpoint",
         "tags": [
-          "coding_agents"
+          "coding_agent"
         ]
       },
       "patch": {
@@ -5392,7 +5392,7 @@
         },
         "summary": "Update Settings Endpoint",
         "tags": [
-          "coding_agents"
+          "coding_agent"
         ]
       }
     },

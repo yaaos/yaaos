@@ -1,5 +1,7 @@
-"""SQLAlchemy models for coding-agent run lifecycle.
+"""SQLAlchemy models for coding-agent run lifecycle and per-org installs.
 
+- `OrgCodingAgentRow` (`org_coding_agents`) — per-org installed coding-agent
+  plugins. `settings` JSONB is plugin-shaped; every mutation emits an audit row.
 - `CodingAgentRunRow` (`coding_agent_runs`) — one row per `InvokeClaudeCode`
   execution. Created at dispatch (status=running) and finalized at terminal
   event (status=success|failure). Token usage + duration land on the row
@@ -26,6 +28,30 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+
+
+class OrgCodingAgentRow(Base):
+    """Per-org installed coding-agent plugins. `settings` JSONB is plugin-shaped."""
+
+    __tablename__ = "org_coding_agents"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True
+    )
+    plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class CodingAgentRunRow(Base):

@@ -70,12 +70,13 @@ async def seed_github_install(
 
     Deliberate side-effect: this seed path calls public service functions
     (``github.record_app_install``, ``api_keys.set``,
-    ``orgs.install_coding_agent``) so it emits the same audit rows and events
-    that production writes would produce.
+    ``coding_agent.install_coding_agent``) so it emits the same audit rows and
+    events that production writes would produce.
     """
     import app.core.api_keys as api_keys_service  # noqa: PLC0415
     from app.core.audit_log import Actor  # noqa: PLC0415
-    from app.domain.orgs import get_org_by_slug, install_coding_agent  # noqa: PLC0415
+    from app.core.coding_agent import install_coding_agent  # noqa: PLC0415
+    from app.domain.orgs import get_org_by_slug  # noqa: PLC0415
     from app.plugins.github import record_app_install  # noqa: PLC0415
 
     if target_org_slug is not None:

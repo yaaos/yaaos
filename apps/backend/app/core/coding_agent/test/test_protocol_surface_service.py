@@ -39,6 +39,14 @@ EXPECTED_ALL = frozenset(
         "set_coding_agents_for_tests",
         # API key secrets provider
         "build_api_key_secrets_for_org",
+        # Per-org install state
+        "CodingAgentAlreadyInstalledError",
+        "CodingAgentInstall",
+        "CodingAgentNotInstalledError",
+        "install_coding_agent",
+        "list_coding_agents",
+        "uninstall_coding_agent",
+        "update_coding_agent_settings",
     ]
 )
 
