@@ -1,20 +1,22 @@
 **Yet Another Agent Orchestration Service** 
 
-# Why yaaos?
+# yaaos is a software factory
 
-There are a few products in adjacent spaces. Baz, CodeRabbit, and Qodo do AI-powered code reviews. Devin and OpenHands are autonomous coding-agent platforms. Competing head-on with frontier coding agents like Claude Code or Codex is a losing game, so yaaos doesn't. It's a coding-agent-agnostic orchestration platform — roughly what Devin and OpenHands do, but you bring your own coding agent. Pick whichever one your company is most comfortable with.
+> *A software factory is an agentic system that receives work — a PR, a ticket, a spec — and autonomously produces reviewed, tested, shipped software. Humans supervise at the level of intent and review, not keystrokes, and a learning loop makes the factory better with every run.*
 
-That choice matters more than it sounds. AI adoption inside a company usually starts with individual devs, then teams converge on prompts and conventions around a specific agent — Claude Code, Codex, etc. Devin and OpenHands ask you to throw that away and learn a new agent with new behavior. yaaos doesn't. It drives the agent your devs already use, with the prompts your team already wrote. The orchestration is new; the agent isn't.
+Software factories are the emerging shape of AI-native engineering, and everyone is building one — Factory.ai, Augment Code, Devin, OpenHands. They all ask you to adopt *their* coding agent. yaaos doesn't. You bring the agent your team already uses — Claude Code today, with Codex, Aider, and others as plugins — and yaaos wraps it in a fully configurable, skill-based pipeline: intake, workspaces, review, posting, lessons. The factory is new; the agent isn't.
+
+That choice matters more than it sounds. AI adoption inside a company usually starts with individual devs, then teams converge on prompts, skills, and conventions around a specific agent. Other factories ask you to throw that away and learn a new agent with new behavior. yaaos drives the agent your devs already use, with the prompts your team already wrote.
 
 # The product
 
-yaaos aims to be a full SDLC workflow solution — code review, feature work, ops troubleshooting. Today it does code reviews on GitHub PRs; the rest comes next. The shape is the same regardless of workflow: a PR is opened, yaaos spins up a workspace, hands the work to a coding agent, and posts the result back where your team already looks.
+yaaos is a full SDLC software factory — code review, feature work, ops troubleshooting. The shape is the same regardless of workflow: work arrives (a PR opens, a ticket is filed), yaaos spins up a workspace, hands the work to a coding agent, and posts the result back where your team already looks.
 
 A few principles drive the design.
 
 **Product principles**
 
-- **Orchestrator, not an agent.** Reviews, refactors, and code writing are delegated to a CLI agent — Claude Code today, with Codex, Aider, and others available as plugins. yaaos owns the workflow around the agent, not the intelligence inside it.
+- **A factory, not an agent.** Reviews, refactors, and code writing are delegated to a CLI agent — Claude Code today, with Codex, Aider, and others available as plugins. yaaos owns the factory around the agent, not the intelligence inside it.
 - **Bring your favorite coding agent and your own account.** You bring the API key, and your prompts go straight to the agent — yaaos doesn't sit in the middle.
 - **Integrates into your stack.** GitHub is wired up today. Notion, Linear, and other tools your team already lives in will land as plugins over time.
 - **Workspaces in your cloud.** Workspaces run on infrastructure you own and configure, so your code never leaves your VPC.
