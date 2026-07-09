@@ -9,8 +9,8 @@ import { RepoSettingsPage } from "../public/RepoSettingsPage";
 
 /**
  * Component tests for the Repos settings page: the protected-code
- * mode-switch confirm flow, and the trigger form's schedule-field
- * visibility + validation.
+ * mode-switch confirm flow, the trigger form's schedule-field visibility +
+ * validation, and the path-set row list + Sheet editor + Delete confirm.
  */
 
 const REPO = {
@@ -49,6 +49,15 @@ const EMPTY_CONFIG = {
   auto_approve_enabled: false,
   auto_approve_conditions: {},
   bindings: [],
+};
+
+const PATH_SET_ID = "00000000-0000-0000-0000-000000000001";
+
+const CONFIG_WITH_PATH_SET = {
+  ...EMPTY_CONFIG,
+  protected_path_sets: [
+    { id: PATH_SET_ID, name: "Infra paths", globs: ["infra/**"], owner_user_ids: [] },
+  ],
 };
 
 function wrap(node: React.ReactNode) {
@@ -138,5 +147,80 @@ describe("RepoSettingsPage (MSW)", () => {
     await user.click(within(form).getByTestId("repo-trigger-schedule-notify"));
     await user.click(await screen.findByTestId("repo-trigger-schedule-notify-option-u1"));
     expect(within(form).getByTestId("repo-trigger-save")).toBeEnabled();
+  });
+
+  it("path-set rows render the set name and expose Edit and Delete buttons", async () => {
+    server.use(http.get("/api/repos/config", () => HttpResponse.json(CONFIG_WITH_PATH_SET)));
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await expandRepoRow(user);
+
+    const row = screen.getByTestId(`repo-path-set-row-${PATH_SET_ID}`);
+    expect(within(row).getByText("Infra paths")).toBeInTheDocument();
+    expect(row.querySelector(`[data-testid="repo-path-set-edit-${PATH_SET_ID}"]`)).not.toBeNull();
+    expect(row.querySelector(`[data-testid="repo-path-set-delete-${PATH_SET_ID}"]`)).not.toBeNull();
+  });
+
+  it("Edit opens a Sheet; saving updates the row name in the draft", async () => {
+    server.use(
+      http.get("/api/repos/config", () => HttpResponse.json(CONFIG_WITH_PATH_SET)),
+      http.put("/api/repos/settings", () => new HttpResponse(null, { status: 200 })),
+    );
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await expandRepoRow(user);
+
+    await user.click(screen.getByTestId(`repo-path-set-edit-${PATH_SET_ID}`));
+    const editor = await screen.findByTestId("repo-path-set-editor");
+    expect(editor).toBeInTheDocument();
+
+    const nameInput = within(editor).getByTestId("repo-path-set-name");
+    expect(nameInput).toHaveValue("Infra paths");
+
+    await user.clear(nameInput);
+    await user.type(nameInput, "Renamed set");
+
+    await user.click(within(editor).getByTestId("repo-path-set-editor-save"));
+
+    // The sheet should close and the new name appear in the row list.
+    expect(screen.queryByTestId("repo-path-set-editor")).not.toBeInTheDocument();
+    const row = screen.getByTestId(`repo-path-set-row-${PATH_SET_ID}`);
+    expect(within(row).getByText("Renamed set")).toBeInTheDocument();
+  });
+
+  it("empty name disables the Sheet save button", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await expandRepoRow(user);
+
+    // Open Add — starts with empty name.
+    await user.click(screen.getByTestId("repo-add-path-set"));
+    const editor = await screen.findByTestId("repo-path-set-editor");
+    expect(within(editor).getByTestId("repo-path-set-editor-save")).toBeDisabled();
+
+    // Typing a name enables save.
+    await user.type(within(editor).getByTestId("repo-path-set-name"), "New set");
+    expect(within(editor).getByTestId("repo-path-set-editor-save")).toBeEnabled();
+  });
+
+  it("Delete shows the confirm dialog; cancel leaves the row; confirm removes it", async () => {
+    server.use(http.get("/api/repos/config", () => HttpResponse.json(CONFIG_WITH_PATH_SET)));
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await expandRepoRow(user);
+
+    // Open delete confirm.
+    await user.click(screen.getByTestId(`repo-path-set-delete-${PATH_SET_ID}`));
+    const dialog = await screen.findByTestId("repo-path-set-delete-confirm");
+    expect(within(dialog).getByRole("heading")).toHaveTextContent(/Delete/);
+    expect(within(dialog).getByText("This can't be undone.")).toBeInTheDocument();
+
+    // Cancel: row still there.
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("repo-path-set-delete-confirm")).not.toBeInTheDocument();
+    expect(screen.getByTestId(`repo-path-set-row-${PATH_SET_ID}`)).toBeInTheDocument();
+
+    // Confirm: row gone.
+    await user.click(screen.getByTestId(`repo-path-set-delete-${PATH_SET_ID}`));
+    const dialog2 = await screen.findByTestId("repo-path-set-delete-confirm");
+    await user.click(within(dialog2).getByTestId("repo-path-set-delete-confirm-action"));
+    expect(screen.queryByTestId("repo-path-set-delete-confirm")).not.toBeInTheDocument();
+    expect(screen.queryByTestId(`repo-path-set-row-${PATH_SET_ID}`)).not.toBeInTheDocument();
   });
 });

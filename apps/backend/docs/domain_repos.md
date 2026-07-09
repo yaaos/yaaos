@@ -19,7 +19,7 @@ Owns the `repo_settings` and `repo_trigger_bindings` tables. There is no `repos`
 
 ### Key value objects
 
-- **ProtectedPathSet** — a gitignore-style glob set + owner user ids, validated compilable (via `pathspec.GitIgnoreSpec`) at write.
+- **ProtectedPathSet** — a gitignore-style glob set + owner user ids, validated compilable (via `pathspec.GitIgnoreSpec`) at write. Carries a `name` (≤100 chars, empty-string default — preserved across the JSONB round-trip so legacy rows without the key parse to `""`).
 - **ProtectedMatch** — the boundary's protected-code answer: `matched` + the owning user ids (deny mode: matched iff any set hits; allow mode: matched iff no set hits).
 - **Schedule** — a per-repo cron trigger: name, UTC cron, notify user ids, optional kickoff input.
 - **PipelineRef** — `{org_id, name}`, the minimal pipeline identity `add_binding`/`find_bindings` resolve via the registered pipeline lookup (below) — this module can't import `domain/pipelines` directly.
@@ -51,6 +51,7 @@ None.
 ## How it's tested
 
 - `test/test_match_protected.py` (unit) — the deny/allow matrices: no-paths never matches, hit vs miss, owner unions across matched (deny) or all (allow) sets, zero-sets deny never matches, zero-sets allow protects everything with no owners.
+- `test/test_path_set_name_service.py` (`@pytest.mark.service`) — `name` round-trips through save/load (`PUT /api/repos/settings` then `GET /api/repos/config`); legacy JSONB without a `name` key parses to `""`; `name` longer than 100 chars is rejected 422.
 - `test/test_repo_bindings_service.py` (`@pytest.mark.service`) — binding CRUD over `/api/repos/triggers` via `httpx.ASGITransport`: success, unknown intake point, unknown/unowned pipeline, duplicate binding, invalid cron, empty `notify_user_ids`, a `schedule` payload on a non-schedule point, remove-then-404, and `domain/pipelines.delete_pipeline` returning 409 once a binding references the pipeline.
 - `domain/pipelines/test/test_boundary_pause_service.py` (`@pytest.mark.service`) — `evaluate_protected` driven end-to-end through the boundary evaluator: a `put_settings`-configured protected set trips `on_protected_code` and folds the set's owner into the resulting pause's escalation set.
 - `domain/pipelines/test/test_schema_service.py` seeds minimal `repo_settings` and `repo_trigger_bindings` rows via raw SQL and asserts the `repo_settings` defaults (`protected_mode='deny'`, `auto_approve_enabled=false`).

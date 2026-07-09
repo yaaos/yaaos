@@ -2899,6 +2899,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
             /** Owner User Ids */
             owner_user_ids: string[];
         };

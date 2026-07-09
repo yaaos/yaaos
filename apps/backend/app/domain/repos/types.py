@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.domain.repos.models import RepoSettingsRow
 
@@ -17,6 +17,7 @@ class ProtectedPathSet(BaseModel):
     """Gitignore-style glob set + owners, validated compilable at write."""
 
     id: UUID
+    name: str = Field(default="", max_length=100)
     globs: tuple[str, ...]
     owner_user_ids: tuple[UUID, ...]
 

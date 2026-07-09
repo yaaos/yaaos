@@ -26,6 +26,7 @@ export interface PathSetDraft {
    *  (`crypto.randomUUID()`) for a not-yet-saved row — `ProtectedPathSet.id`
    *  is required on the wire, so a new row must mint one before Save. */
   id: string;
+  name: string;
   globsText: string;
   owner_user_ids: string[];
 }
@@ -47,6 +48,7 @@ export interface RepoSettingsDraft {
 function pathSetToDraft(pathSet: ProtectedPathSetView): PathSetDraft {
   return {
     id: pathSet.id,
+    name: pathSet.name,
     globsText: pathSet.globs.join("\n"),
     owner_user_ids: pathSet.owner_user_ids,
   };
@@ -72,6 +74,7 @@ export function draftToSpec(draft: RepoSettingsDraft): RepoSettingsSpecBody {
     protected_mode: draft.protected_mode,
     protected_path_sets: draft.path_sets.map((p) => ({
       id: p.id,
+      name: p.name,
       globs: p.globsText
         .split("\n")
         .map((g) => g.trim())
@@ -86,5 +89,5 @@ export function draftToSpec(draft: RepoSettingsDraft): RepoSettingsSpecBody {
 }
 
 export function newPathSetDraft(): PathSetDraft {
-  return { id: crypto.randomUUID(), globsText: "", owner_user_ids: [] };
+  return { id: crypto.randomUUID(), name: "", globsText: "", owner_user_ids: [] };
 }
