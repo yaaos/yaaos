@@ -1,7 +1,7 @@
 """rename byok_keys to org_api_keys
 
 Revision ID: e1f2a3b4c5d6
-Revises: 9c1a2b3d4e5f
+Revises: 71e9f0d26017
 Create Date: 2026-07-09 00:00:00.000000
 
 """

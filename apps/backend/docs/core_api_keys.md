@@ -4,8 +4,8 @@
 
 ## Scope
 
-- Owns: `org_api_keys` table; `get`, `set`, `clear`, `validate`, `list_keys_for_org`, `register_on_change`.
-- Plaintext crosses the boundary in only two directions: into `set()` and out of `get()`/`validate()`.
+- Owns: `org_api_keys` table; `get`, `get_all_for_org`, `set`, `clear`, `validate`, `list_keys_for_org`, `register_on_change`; the `/api/api-keys` HTTP routes (`web.py`, side-effect-registered).
+- Plaintext crosses the boundary in only two directions: into `set()` and out of `get()`/`get_all_for_org()` (as `SecretStr`)/`validate()`.
 
 ## Why / invariants
 

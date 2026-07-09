@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -221,6 +221,28 @@ async def validate(
         session=session,
     )
     return ok
+
+
+async def get_all_for_org(
+    org_id: UUID,
+    *,
+    session: AsyncSession,
+) -> dict[str, SecretStr]:
+    """Return provider → decrypted key for every key stored for `org_id`, in one query.
+
+    Plaintext is wrapped in `SecretStr` on emergence so it never crosses the
+    boundary as a bare string. Raises `ApiKeyDecryptError` if any row's
+    ciphertext is unreadable.
+    """
+    rows = (await session.execute(select(ApiKeyRow).where(ApiKeyRow.org_id == org_id))).scalars().all()
+    result: dict[str, SecretStr] = {}
+    for row in rows:
+        try:
+            result[row.provider] = SecretStr(decrypt(row.encrypted_value.encode()).decode())
+        except SecretsDecryptError as exc:
+            log.error("api_key.decrypt_failed", org_id=str(org_id), provider=row.provider)
+            raise ApiKeyDecryptError("api_key ciphertext unreadable") from exc
+    return result
 
 
 async def list_keys_for_org(

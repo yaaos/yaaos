@@ -31,7 +31,7 @@ HTTP routes (prefix `/api/testing`):
 | Seed | Service calls |
 |---|---|
 | `seed_bootstrap_owner` | `identity_svc.create_user`, `create_email`, `create_oauth_identity`, `orgs.create_org`, `orgs.create_membership` |
-| `seed_github_install` | `github.record_app_install`, `api_keys.set`, `orgs.install_coding_agent` |
+| `seed_github_install` | `github.record_app_install`, `api_keys.set`, `coding_agent.install_coding_agent` |
 | `seed_lesson` | `lessons.create` |
 | `seed_pipeline` | `pipelines.create_pipeline` |
 | `seed_trigger_binding` | `repos.add_binding` |

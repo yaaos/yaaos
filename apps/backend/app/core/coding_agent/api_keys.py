@@ -28,21 +28,16 @@ async def build_api_key_secrets_for_org(
     """Return a dict of provider_id → SecretStr for every key stored for the org.
 
     Forwards all stored org keys — the agent-side env maps act as the allowlist;
-    unknown providers are ignored there by design. Wraps each plaintext in
-    SecretStr immediately so it never crosses module boundaries as a bare string.
+    unknown providers are ignored there by design. `get_all_for_org` fetches and
+    decrypts every row in one query, wrapping each plaintext in SecretStr on
+    emergence so it never crosses module boundaries as a bare string.
 
     Called by `core/agent_gateway._build_config_update_dto` via the registered
     api-key-secrets-provider IoC seam.
     """
     import app.core.api_keys as _api_keys  # noqa: PLC0415
 
-    stored_keys = await _api_keys.list_keys_for_org(org_id, session=session)
-    result: dict[str, SecretStr] = {}
-    for api_key in stored_keys:
-        plaintext = await _api_keys.get(org_id, api_key.provider, session=session)
-        if plaintext is not None:
-            result[api_key.provider] = SecretStr(plaintext)
-    return result
+    return await _api_keys.get_all_for_org(org_id, session=session)
 
 
 def _register_api_key_on_change() -> None:

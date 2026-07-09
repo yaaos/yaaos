@@ -299,6 +299,7 @@ expose = [
   "ApiKeyDecryptError",
   "clear",
   "get",
+  "get_all_for_org",
   "get_validator",
   "known_providers",
   "list_keys_for_org",

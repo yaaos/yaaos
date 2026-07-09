@@ -13,6 +13,7 @@ validator-independent).
 
 from __future__ import annotations
 
+import httpx
 import structlog
 
 log = structlog.get_logger("plugins.rwx.service")
@@ -28,8 +29,6 @@ async def validate_rwx_token(key: str) -> bool:
     reported as "key invalid" rather than 5xx'ing the validate endpoint, matching
     the UX of "Test failed; check the key and try again".
     """
-    import httpx  # noqa: PLC0415
-
     headers = {"Authorization": f"Bearer {key}"}
     try:
         async with httpx.AsyncClient(timeout=_VALIDATE_TIMEOUT_SECONDS) as http:

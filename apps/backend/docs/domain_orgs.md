@@ -45,10 +45,6 @@ Both audit with `from_role` + `to_role` payload.
 - `clear_vcs` calls every hook registered via `register_vcs_clear_hook` (see `vcs.py`) before clearing the org row. VCS plugins (e.g. `plugins/github`) register a hook at boot to delete their per-org install rows — no direct model import needed in `domain/orgs`.
 - Coding-agent installs are owned by [`core/coding_agent`](core_coding_agent.md) — see that doc for `org_coding_agents`, install service functions, and `/api/coding-agents` routes.
 
-## API key routes
-
-HTTP surface for [`core/api_keys`](core_api_keys.md) lives in `api_keys_routes.py` here (keys are per-org; routes need `core/sessions` deps). `GET` returns `configured` / `not_set` only — plaintext never leaves. Provider list sourced from `core/api_keys`'s validator registry.
-
 ## Session-timeout override
 
 `orgs.session_timeout_override` (nullable integer, minutes) tightens the idle-session window per org. Checked in [`core/sessions`](core_sessions.md) `require()` dep on every org-scoped request. Null = global default. Non-positive values rejected with 422.
