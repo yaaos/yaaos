@@ -36,6 +36,7 @@ class BoundaryControl(BaseModel, frozen=True):
     mode: Literal["always_hitl", "always_proceed", "conditional"] = "always_hitl"
     on_blocker_residuals: bool = False
     on_should_fix_residuals: bool = False
+    on_nit_residuals: bool = False
     on_protected_code: bool = False
     on_confidence_below: Literal["medium", "high"] | None = None
 

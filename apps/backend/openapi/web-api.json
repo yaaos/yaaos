@@ -691,6 +691,11 @@
             ],
             "title": "On Confidence Below"
           },
+          "on_nit_residuals": {
+            "default": false,
+            "title": "On Nit Residuals",
+            "type": "boolean"
+          },
           "on_protected_code": {
             "default": false,
             "title": "On Protected Code",

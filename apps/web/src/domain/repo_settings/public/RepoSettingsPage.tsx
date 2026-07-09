@@ -33,7 +33,7 @@ export function RepoSettingsPage() {
       >
         <Suspense
           fallback={
-            <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
+            <div className="mx-auto flex max-w-[1350px] flex-col gap-4 p-6">
               <Skeleton className="h-8 w-48" />
               <Skeleton className="h-24" />
             </div>
@@ -53,7 +53,7 @@ function RepoSettingsContent() {
   const [openRepo, setOpenRepo] = useState<string | null>(null);
 
   return (
-    <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
+    <div className="mx-auto flex max-w-[1350px] flex-col gap-4 p-6">
       <PageHeader
         title="Repos"
         subtitle="Configure triggers, protected code, and auto-approval per repo."

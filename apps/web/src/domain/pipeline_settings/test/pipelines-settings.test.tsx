@@ -33,6 +33,7 @@ const BOUNDARY_ALWAYS_HITL = {
   mode: "always_hitl",
   on_blocker_residuals: false,
   on_should_fix_residuals: false,
+  on_nit_residuals: false,
   on_protected_code: false,
   on_confidence_below: null,
 };
@@ -190,6 +191,7 @@ describe("PipelinesSettingsPage (MSW)", () => {
 
     expect(within(sheet).getByTestId("stage-boundary-on-blocker")).toBeInTheDocument();
     expect(within(sheet).getByTestId("stage-boundary-on-should-fix")).toBeInTheDocument();
+    expect(within(sheet).getByTestId("stage-boundary-on-nit")).toBeInTheDocument();
     expect(within(sheet).getByTestId("stage-boundary-on-protected")).toBeInTheDocument();
     expect(within(sheet).getByTestId("stage-boundary-confidence")).toBeInTheDocument();
 

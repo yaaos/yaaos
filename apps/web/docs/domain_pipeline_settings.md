@@ -14,7 +14,7 @@
 - **Stage list** — each stage is a row (`pipeline-stage-row-${key}`, `key` is a client-only React key, not sent to the backend) showing a kind icon, a kind `Badge`, and a one-line summary (stage name for `skill`/`review`, the action's label for `action`, the target pipeline's name for `call`). A `DropdownMenu` (`pipeline-stage-menu-${key}`) offers Move up / Move down / Remove; "Edit" (`pipeline-stage-edit-${key}`) opens the per-kind editor.
 - **"Add stage"** — a `DropdownMenu` (`pipeline-add-stage`) offering the four kinds; picking one appends a blank draft and opens its editor immediately.
 - **Per-kind editor** — a `Sheet` (`stage-editor`, one at a time). Fields vary by kind:
-  - `skill` — name (slug), skill name, coding agent `Select`, model/effort `Select`s, a review-loop `Switch` (skill name + max iterations 1–3 when on), context-stages checkboxes (defaults to "all upstream"), wallclock-seconds inside a `Collapsible` "Advanced settings" section, and the boundary `RadioGroup` + conditional checkboxes + confidence `Select`.
+  - `skill` — name (slug), skill name, coding agent `Select`, model/effort `Select`s, a review-loop `Switch` (skill name + max iterations 1–3 when on), context-stages checkboxes (defaults to "all upstream"), wallclock-seconds inside a `Collapsible` "Advanced settings" section, and the boundary section ("What happens after this stage completes") with a `RadioGroup` (Always pause / Always proceed automatically / Conditional) + conditional checkboxes (blocker / should-fix / nit residuals + protected-code) + confidence `Select`.
   - `review` — same as `skill` minus the review loop (a review stage *is* the loop). Finding display prefixes come from the review skill's per-finding `category`, not from stage config.
   - `action` — an action `Select` (`GET /api/actions`).
   - `call` — a `Select` of the org's other pipelines (self excluded).
@@ -39,5 +39,5 @@ Private (not in `public/`): `PipelineEditor.tsx` (`ExistingPipelineEditor`, `New
 
 ## Tests
 
-- `test/pipelines-settings.test.tsx` — component/MSW: empty state, list rendering (name/stage-count/referenced badge), expand-to-edit lazy fetch, stage-editor per-kind field rendering, boundary-condition visibility (`conditional` mode reveals the checkboxes + confidence picker; other modes don't), "New from template" flow, 400/409 error banners.
+- `test/pipelines-settings.test.tsx` — component/MSW: empty state, list rendering (name/stage-count/referenced badge), expand-to-edit lazy fetch, stage-editor per-kind field rendering, boundary-condition visibility (`conditional` mode reveals the blocker/should-fix/nit/protected checkboxes + confidence picker; other modes don't; `stage-boundary-on-nit` is the nit testid), "New from template" flow, 400/409 error banners.
 - `apps/e2e/tests/pipeline-settings-crud.spec.ts` — Playwright: create a pipeline from the `dev` template, edit a stage's boundary to `always_proceed` and save, introduce a call cycle and see the `invalid_definition` banner, and delete a referenced pipeline to see the "In use…" message. A second test asserts a builder role sees no "Pipelines" sidebar link.

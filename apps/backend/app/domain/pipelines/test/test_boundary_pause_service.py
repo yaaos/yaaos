@@ -37,6 +37,7 @@ from app.domain.pipelines import (
     NotEscalationTargetError,
     PauseResolution,
     PipelineDefinition,
+    ReviewConfig,
     SkillStage,
     create_pipeline,
     request_cancel,
@@ -442,3 +443,148 @@ async def test_protected_code_trip_adds_owner_to_escalation_service(db_session) 
         pause = await _open_pause(db_session, run_id)
         assert pause.tripped == {"protected_code": True}
         assert set(pause.escalation_user_ids) == {requester_id, owner.id}
+
+
+def _nit_review_stage_definition(*, on_nit_residuals: bool) -> PipelineDefinition:
+    """One skill stage with max_iterations=1 review so the nit finding becomes
+    an open residual at boundary time. `on_nit_residuals` controls whether the
+    condition is checked."""
+    return PipelineDefinition(
+        name=f"pipe-{uuid4().hex[:8]}",
+        stages=(
+            SkillStage(
+                name=_STAGE_NAME,
+                skill_name=_STAGE_NAME,
+                coding_agent_plugin_id="claude_code",
+                model="sonnet",
+                effort="medium",
+                review=ReviewConfig(skill_name="review-nit", max_iterations=1),
+                boundary=BoundaryControl(mode="conditional", on_nit_residuals=on_nit_residuals),
+            ),
+        ),
+    )
+
+
+async def _advance_through_nit_review(db_session, *, on_nit_residuals: bool) -> tuple[UUID, UUID, UUID]:
+    """Drive provision + main dispatch + review (which reports one nit finding).
+
+    Returns `(org_id, run_id, requester_id)`. After `drain`, the run is either
+    `paused` (when `on_nit_residuals=True`) or `paused`-for-cleanup-then-
+    `completed` (when `False`). The caller asserts the final state.
+    """
+    if not is_workspace_provider_registered("remote_agent"):
+        register_workspace_providers()
+
+    with register_stub_vcs(plugin_id="github"):
+        org_id, ticket_id, requester_id, _stranger_id = await _seed_org_ticket_and_users(db_session)
+        agent_row = await seed_agent(org_id=org_id)
+
+        pipeline_id = await create_pipeline(
+            org_id=org_id,
+            definition=_nit_review_stage_definition(on_nit_residuals=on_nit_residuals),
+            actor=Actor.system(),
+            session=db_session,
+        )
+        await db_session.flush()
+
+        kickoff = Kickoff(
+            intake_point_id="test", actor=Actor.user(user_id=requester_id), input_text="spec please"
+        )
+        run_id = await start_run(
+            org_id=org_id, ticket_id=ticket_id, pipeline_id=pipeline_id, kickoff=kickoff, session=db_session
+        )
+        await db_session.commit()
+        await drain(db_session)
+
+        run = await db_session.get(PipelineRunRow, run_id)
+        assert run is not None
+        provision_command_id = run.pending_agent_command_id
+        assert provision_command_id is not None
+        await _record(
+            org_id,
+            _success_event(provision_command_id, outputs={}),
+            agent_id=agent_row["id"],
+            db_session=db_session,
+        )
+        await drain(db_session)
+
+        run = await db_session.get(PipelineRunRow, run_id)
+        assert run is not None
+        main_command_id = run.pending_agent_command_id
+        assert main_command_id is not None
+
+        main_output = json.dumps(
+            {"outcome": "completed", "confidence": 90, "paths_affected": [], "summary": "spec done"}
+        )
+        await _record(
+            org_id,
+            _success_event(
+                main_command_id,
+                outputs={"stdout": main_output, "exit_code": 0},
+                artifact_body="# Spec",
+            ),
+            agent_id=None,
+            db_session=db_session,
+        )
+        await drain(db_session)
+
+        run = await db_session.get(PipelineRunRow, run_id)
+        assert run is not None
+        review_command_id = run.pending_agent_command_id
+        assert review_command_id is not None
+
+        # Review reports one nit finding; max_iterations=1 so it becomes an
+        # open residual with no further fix pass.
+        review_output = json.dumps(
+            {
+                "new_findings": [{"category": "style", "severity": "nit", "body": "minor naming nit"}],
+                "prior_finding_verdicts": [],
+                "confidence": 90,
+                "summary": "minor nit found",
+            }
+        )
+        await _record(
+            org_id,
+            _success_event(review_command_id, outputs={"stdout": review_output, "exit_code": 0}),
+            agent_id=None,
+            db_session=db_session,
+        )
+        await drain(db_session)
+
+        return org_id, run_id, requester_id
+
+
+@pytest.mark.asyncio
+async def test_nit_residuals_condition_trips_pause_service(db_session) -> None:
+    _org_id, run_id, _requester_id = await _advance_through_nit_review(db_session, on_nit_residuals=True)
+
+    run = await db_session.get(PipelineRunRow, run_id)
+    assert run is not None
+    assert run.state == "paused"
+
+    pause = await _open_pause(db_session, run_id)
+    assert pause.tripped == {"nit_residuals": True}
+
+
+@pytest.mark.asyncio
+async def test_nit_residuals_off_proceeds_with_nit_service(db_session) -> None:
+    """An open nit residual does not pause when `on_nit_residuals` is False."""
+    _org_id, run_id, _requester_id = await _advance_through_nit_review(db_session, on_nit_residuals=False)
+
+    # With no condition tripped and mode=conditional the run proceeds through
+    # cleanup to completion.
+    run = await db_session.get(PipelineRunRow, run_id)
+    assert run is not None
+    assert run.phase == "cleanup"
+
+    cleanup_command_id = run.pending_agent_command_id
+    assert cleanup_command_id is not None
+    org_id = run.org_id
+    await _record(
+        org_id, _success_event(cleanup_command_id, outputs={}), agent_id=None, db_session=db_session
+    )
+    await drain(db_session)
+
+    run = await db_session.get(PipelineRunRow, run_id)
+    assert run is not None
+    assert run.state == "completed"

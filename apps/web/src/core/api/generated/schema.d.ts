@@ -2161,6 +2161,11 @@ export interface components {
             /** On Confidence Below */
             on_confidence_below?: ("medium" | "high") | null;
             /**
+             * On Nit Residuals
+             * @default false
+             */
+            on_nit_residuals: boolean;
+            /**
              * On Protected Code
              * @default false
              */

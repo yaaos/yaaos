@@ -20,6 +20,7 @@ export type BoundaryDraft = {
   mode: "always_hitl" | "always_proceed" | "conditional";
   on_blocker_residuals: boolean;
   on_should_fix_residuals: boolean;
+  on_nit_residuals: boolean;
   on_protected_code: boolean;
   on_confidence_below: "medium" | "high" | null;
 };
@@ -93,6 +94,7 @@ export function emptyBoundary(): BoundaryDraft {
     mode: "always_hitl",
     on_blocker_residuals: false,
     on_should_fix_residuals: false,
+    on_nit_residuals: false,
     on_protected_code: false,
     on_confidence_below: null,
   };
@@ -148,6 +150,7 @@ function boundaryToDraft(b: {
   mode: "always_hitl" | "always_proceed" | "conditional";
   on_blocker_residuals: boolean;
   on_should_fix_residuals: boolean;
+  on_nit_residuals: boolean;
   on_protected_code: boolean;
   on_confidence_below?: ("medium" | "high") | null;
 }): BoundaryDraft {
@@ -155,6 +158,7 @@ function boundaryToDraft(b: {
     mode: b.mode,
     on_blocker_residuals: b.on_blocker_residuals,
     on_should_fix_residuals: b.on_should_fix_residuals,
+    on_nit_residuals: b.on_nit_residuals,
     on_protected_code: b.on_protected_code,
     on_confidence_below: b.on_confidence_below ?? null,
   };

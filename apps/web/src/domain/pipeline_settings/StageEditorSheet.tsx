@@ -388,7 +388,7 @@ function BoundaryFields<T extends StageDraft & { kind: "skill" | "review" }>({
   const boundary = draft.boundary;
   return (
     <div className="flex flex-col gap-3 rounded-md border border-border p-3">
-      <Label>Boundary — what happens after this stage settles</Label>
+      <Label>What happens after this stage completes</Label>
       <RadioGroup
         data-testid="stage-boundary-mode"
         value={boundary.mode}
@@ -404,7 +404,7 @@ function BoundaryFields<T extends StageDraft & { kind: "skill" | "review" }>({
       >
         <div className="flex items-center gap-2">
           <RadioGroupItem value="always_hitl" id="boundary-always-hitl" />
-          <Label htmlFor="boundary-always-hitl">Always ask a human</Label>
+          <Label htmlFor="boundary-always-hitl">Always pause</Label>
         </div>
         <div className="flex items-center gap-2">
           <RadioGroupItem value="always_proceed" id="boundary-always-proceed" />
@@ -444,6 +444,20 @@ function BoundaryFields<T extends StageDraft & { kind: "skill" | "review" }>({
               }
             />
             <Label htmlFor="boundary-should-fix">Pause on open should-fix findings</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="boundary-nit"
+              data-testid="stage-boundary-on-nit"
+              checked={boundary.on_nit_residuals}
+              onCheckedChange={(checked) =>
+                setDraft({
+                  ...draft,
+                  boundary: { ...boundary, on_nit_residuals: checked === true },
+                })
+              }
+            />
+            <Label htmlFor="boundary-nit">Pause on open nit findings</Label>
           </div>
           <div className="flex items-center gap-2">
             <Checkbox
