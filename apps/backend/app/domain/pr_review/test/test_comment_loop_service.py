@@ -146,7 +146,6 @@ def _update_pr_pipeline() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                finding_prefix="SPEC",
                 boundary=BoundaryControl(mode="always_proceed"),
             ),
             ActionStage(description="post findings", action_id="github:update_pr"),
@@ -473,8 +472,14 @@ async def test_classification_batching_and_reply_acceptance(
         agent_id,
         review_output={
             "new_findings": [
-                {"severity": "blocker", "body": "SQL injection risk", "code_file": "app.py", "code_line": 10},
-                {"severity": "nit", "body": "naming nit"},
+                {
+                    "category": "sec",
+                    "severity": "blocker",
+                    "body": "SQL injection risk",
+                    "code_file": "app.py",
+                    "code_line": 10,
+                },
+                {"category": "code", "severity": "nit", "body": "naming nit"},
             ],
             "prior_finding_verdicts": [],
             "confidence": 80,

@@ -70,6 +70,33 @@ def test_dev_flattens_to_requirements_architecture_plan_then_implementation() ->
     ]
 
 
+def test_all_default_skill_names_carry_pipeline_prefix() -> None:
+    # Pipeline skills are run-engine consumables, namespaced away from human
+    # slash commands and the local review tooling.
+    for template in defaults.ALL_DEFAULTS:
+        for stage in template.stages:
+            skill_name = getattr(stage, "skill_name", None)
+            if skill_name is not None:
+                assert skill_name.startswith("pipeline-"), (template.name, skill_name)
+            review = getattr(stage, "review", None)
+            if review is not None:
+                assert review.skill_name.startswith("pipeline-"), (template.name, review.skill_name)
+
+
+def test_dev_planning_stages_carry_attached_reviews() -> None:
+    stages_by_name = {getattr(s, "name", None): s for s in defaults.DEV.stages}
+    requirements = stages_by_name["requirements"]
+    architecture = stages_by_name["architecture"]
+    plan = stages_by_name["plan"]
+    assert requirements.review is not None
+    assert requirements.review.skill_name == "pipeline-requirements-review"
+    assert requirements.review.max_iterations == 2
+    assert architecture.review is not None
+    assert architecture.review.skill_name == "pipeline-architecture-review"
+    assert architecture.review.max_iterations == 2
+    assert plan.review is None
+
+
 def test_troubleshoot_flattens_to_diagnose_fix_plan_then_implementation() -> None:
     by_id = {t.id: t for t in defaults.ALL_DEFAULTS}
     flattened = flatten(defaults.TROUBLESHOOT, org_definitions=by_id)

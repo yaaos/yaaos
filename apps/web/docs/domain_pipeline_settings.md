@@ -14,8 +14,8 @@
 - **Stage list** — each stage is a row (`pipeline-stage-row-${key}`, `key` is a client-only React key, not sent to the backend) showing a kind icon, a kind `Badge`, and a one-line summary (stage name for `skill`/`review`, the action's label for `action`, the target pipeline's name for `call`). A `DropdownMenu` (`pipeline-stage-menu-${key}`) offers Move up / Move down / Remove; "Edit" (`pipeline-stage-edit-${key}`) opens the per-kind editor.
 - **"Add stage"** — a `DropdownMenu` (`pipeline-add-stage`) offering the four kinds; picking one appends a blank draft and opens its editor immediately.
 - **Per-kind editor** — a `Sheet` (`stage-editor`, one at a time). Fields vary by kind:
-  - `skill` — name (slug), skill name, coding agent `Select`, model/effort `Select`s, a review-loop `Switch` (skill name + max iterations 1–3 + finding prefix when on), context-stages checkboxes (defaults to "all upstream"), wallclock-seconds inside a `Collapsible` "Advanced settings" section, and the boundary `RadioGroup` + conditional checkboxes + confidence `Select`.
-  - `review` — same as `skill` minus the review loop (a review stage *is* the loop); carries its own finding prefix directly.
+  - `skill` — name (slug), skill name, coding agent `Select`, model/effort `Select`s, a review-loop `Switch` (skill name + max iterations 1–3 when on), context-stages checkboxes (defaults to "all upstream"), wallclock-seconds inside a `Collapsible` "Advanced settings" section, and the boundary `RadioGroup` + conditional checkboxes + confidence `Select`.
+  - `review` — same as `skill` minus the review loop (a review stage *is* the loop). Finding display prefixes come from the review skill's per-finding `category`, not from stage config.
   - `action` — an action `Select` (`GET /api/actions`).
   - `call` — a `Select` of the org's other pipelines (self excluded).
 - **Delete** — a `ConfirmModal` ("Delete `<name>`?" / "This can't be undone.", destructive tone — same primitive `WorkspacesSettingsPage` uses for its ARN-change confirm, not a raw `AlertDialog`). A `409 referenced` response surfaces "In use by a repo trigger or another pipeline." below the button.

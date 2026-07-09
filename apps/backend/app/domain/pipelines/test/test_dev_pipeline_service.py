@@ -4,7 +4,8 @@ materialized from the template via `instantiate_template` — proving the
 composition, not a hand-built stand-in definition.
 
 Acceptance: a spec kickoff produces requirements/architecture/plan artifacts
-in order, `implement` runs with its `code-review` review pass, and
+in order (requirements and architecture each clearing their attached review
+pass), `implement` runs with its `pipeline-code-review` review pass, and
 `github:create_pr` opens a pull request on a live `apps/fake-github`
 subprocess carrying the residual finding
 (`test_dev_pipeline_creates_pr_with_residual_finding_service`).
@@ -200,6 +201,25 @@ async def _complete_skill_stage(
     await drain(db_session)
 
 
+async def _complete_clean_review(org_id: UUID, run_id: UUID, db_session) -> None:
+    """Complete whatever review pass the run is currently parked on with a
+    no-findings return, then drain — the loop stops and the stage settles."""
+    run = await db_session.get(PipelineRunRow, run_id)
+    assert run is not None
+    review_command_id = run.pending_agent_command_id
+    assert review_command_id is not None
+    clean_output = json.dumps(
+        {"new_findings": [], "prior_finding_verdicts": [], "confidence": 95, "summary": "clean"}
+    )
+    await _record(
+        org_id,
+        _success_event(review_command_id, outputs={"stdout": clean_output, "exit_code": 0}),
+        agent_id=None,
+        db_session=db_session,
+    )
+    await drain(db_session)
+
+
 @pytest.fixture
 async def github_org(db_session, monkeypatch: pytest.MonkeyPatch, fake_github_base_url: str) -> UUID:
     """An org with an active GitHub App installation pointed at a live
@@ -239,9 +259,11 @@ async def test_dev_pipeline_creates_pr_with_residual_finding_service(github_org:
     await _complete_skill_stage(
         org_id, run_id, db_session, artifact_body="# Requirements\n\nRate limit the API."
     )
+    await _complete_clean_review(org_id, run_id, db_session)
     await _complete_skill_stage(
         org_id, run_id, db_session, artifact_body="# Architecture\n\nToken bucket per-key."
     )
+    await _complete_clean_review(org_id, run_id, db_session)
     await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Plan\n\n1. Add middleware.")
 
     # `implement` main dispatch — the call stage flattened straight in.
@@ -261,6 +283,7 @@ async def test_dev_pipeline_creates_pr_with_residual_finding_service(github_org:
         {
             "new_findings": [
                 {
+                    "category": "test",
                     "severity": "should_fix",
                     "body": "the limiter has no test covering the burst case",
                     "code_file": "app.py",
@@ -389,6 +412,7 @@ async def test_dev_pipeline_pause_approve_then_pause_instruct_service(db_session
         await _complete_skill_stage(
             org_id, run_id, db_session, artifact_body="# Requirements v1", confidence=20
         )
+        await _complete_clean_review(org_id, run_id, db_session)
 
         run = await db_session.get(PipelineRunRow, run_id)
         assert run is not None
@@ -421,6 +445,7 @@ async def test_dev_pipeline_pause_approve_then_pause_instruct_service(db_session
         await _complete_skill_stage(
             org_id, run_id, db_session, artifact_body="# Architecture v1", confidence=15
         )
+        await _complete_clean_review(org_id, run_id, db_session)
         run = await db_session.get(PipelineRunRow, run_id)
         assert run is not None
         assert run.state == "paused"
@@ -473,7 +498,9 @@ async def test_dev_pipeline_main_skill_send_back_to_requirements_service(db_sess
         await _complete_provision(org_id, run_id, agent_row["id"], db_session)
 
         await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Requirements v1")
+        await _complete_clean_review(org_id, run_id, db_session)
         await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Architecture v1")
+        await _complete_clean_review(org_id, run_id, db_session)
         await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Plan v1")
 
         run = await db_session.get(PipelineRunRow, run_id)
@@ -516,7 +543,9 @@ async def test_dev_pipeline_main_skill_send_back_to_requirements_service(db_sess
 
         # Re-runs forward through architecture and plan before implement again.
         await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Requirements v2")
+        await _complete_clean_review(org_id, run_id, db_session)
         await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Architecture v2")
+        await _complete_clean_review(org_id, run_id, db_session)
         await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Plan v2")
 
         stages = await _stage_rows(db_session, run_id)
@@ -552,25 +581,14 @@ async def test_dev_pipeline_rerun_from_plan_on_completed_run_service(github_org:
     _dev_id, run_id = await _start_dev_run(db_session, org_id, ticket_id=ticket_id, requester_id=requester_id)
     await _complete_provision(org_id, run_id, agent_row["id"], db_session)
     await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Requirements v1")
+    await _complete_clean_review(org_id, run_id, db_session)
     await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Architecture v1")
+    await _complete_clean_review(org_id, run_id, db_session)
     await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Plan v1")
     await _complete_skill_stage(
         org_id, run_id, db_session, artifact_body="# Implementation notes", paths_affected=[]
     )
-    run = await db_session.get(PipelineRunRow, run_id)
-    assert run is not None
-    review_command_id = run.pending_agent_command_id
-    assert review_command_id is not None
-    no_findings_review = json.dumps(
-        {"new_findings": [], "prior_finding_verdicts": [], "confidence": 95, "summary": "clean"}
-    )
-    await _record(
-        org_id,
-        _success_event(review_command_id, outputs={"stdout": no_findings_review, "exit_code": 0}),
-        agent_id=None,
-        db_session=db_session,
-    )
-    await drain(db_session)
+    await _complete_clean_review(org_id, run_id, db_session)
     run = await db_session.get(PipelineRunRow, run_id)
     assert run is not None
     assert run.phase == "cleanup", run.failure_reason
@@ -652,6 +670,7 @@ async def test_dev_pipeline_cancel_while_running_defers_to_next_boundary_service
         )
         await _complete_provision(org_id, run_id, agent_row["id"], db_session)
         await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Requirements v1")
+        await _complete_clean_review(org_id, run_id, db_session)
 
         run = await db_session.get(PipelineRunRow, run_id)
         assert run is not None
@@ -666,10 +685,11 @@ async def test_dev_pipeline_cancel_while_running_defers_to_next_boundary_service
         assert run.state == "running"  # still running — cancel defers to the next boundary
         assert run.cancel_requested is True
 
-        # Architecture completes normally; the boundary check now sees
-        # `cancel_requested` and routes to cleanup/cancelled instead of
-        # dispatching `plan`.
+        # Architecture completes normally (main pass + clean review); the
+        # boundary check now sees `cancel_requested` and routes to
+        # cleanup/cancelled instead of dispatching `plan`.
         await _complete_skill_stage(org_id, run_id, db_session, artifact_body="# Architecture v1")
+        await _complete_clean_review(org_id, run_id, db_session)
 
         run = await db_session.get(PipelineRunRow, run_id)
         assert run is not None

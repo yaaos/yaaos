@@ -2,7 +2,8 @@
 
 Acceptance flow: a one-skill-stage pipeline with a review loop drives
 `main -> review -> fix -> review`. Iteration-1 findings materialize `open`
-with handles `<prefix>-001…`; a `fixed` verdict on iteration 2 flips one to
+with handles `<category>-<seq>` (per-finding skill-reported category);
+a `fixed` verdict on iteration 2 flips one to
 `resolved` with a `review_verdict` status event; the fix invocation's
 `revision` is durably recorded on the stage-execution row (`source="fix"`,
 text rendered from the residual findings); the loop stops at
@@ -91,7 +92,7 @@ def _review_loop_definition() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                review=ReviewConfig(skill_name="review-implement", max_iterations=2, finding_prefix="SPEC"),
+                review=ReviewConfig(skill_name="review-implement", max_iterations=2),
                 boundary=BoundaryControl(mode="always_proceed"),
             ),
         ),
@@ -108,7 +109,6 @@ def _review_only_stage_definition() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                finding_prefix="REV",
                 boundary=BoundaryControl(mode="always_proceed"),
             ),
         ),
@@ -252,8 +252,14 @@ async def test_review_fix_loop_acceptance(db_session) -> None:
     review1_output = json.dumps(
         {
             "new_findings": [
-                {"severity": "blocker", "body": "SQL injection risk", "code_file": "app.py", "code_line": 10},
-                {"severity": "nit", "body": "naming nit"},
+                {
+                    "category": "sec",
+                    "severity": "blocker",
+                    "body": "SQL injection risk",
+                    "code_file": "app.py",
+                    "code_line": 10,
+                },
+                {"category": "code", "severity": "nit", "body": "naming nit"},
             ],
             "prior_finding_verdicts": [],
             "confidence": 70,
@@ -269,7 +275,9 @@ async def test_review_fix_loop_acceptance(db_session) -> None:
     await drain(db_session)
 
     findings = await list_for_stage_execution(skill_row.id, session=db_session)
-    assert sorted(f.handle for f in findings) == ["SPEC-001", "SPEC-002"]
+    # Per-ticket global sequence: the sec blocker records first (001), the
+    # code nit second (002) — numbers gap within a category by design.
+    assert sorted(f.handle for f in findings) == ["code-002", "sec-001"]
     assert all(f.status == "open" for f in findings)
     blocker_finding = next(f for f in findings if f.severity == "blocker")
     nit_finding = next(f for f in findings if f.severity == "nit")
@@ -368,7 +376,7 @@ async def test_review_only_stage_produces_findings_no_artifact(db_session) -> No
 
     review_output = json.dumps(
         {
-            "new_findings": [{"severity": "should_fix", "body": "missing null check"}],
+            "new_findings": [{"category": "code", "severity": "should_fix", "body": "missing null check"}],
             "prior_finding_verdicts": [],
             "confidence": 65,
             "summary": "one issue found",
@@ -384,7 +392,7 @@ async def test_review_only_stage_produces_findings_no_artifact(db_session) -> No
 
     findings = await list_for_stage_execution(review_row.id, session=db_session)
     assert len(findings) == 1
-    assert findings[0].handle == "REV-001"
+    assert findings[0].handle == "code-001"
     assert findings[0].status == "open"
 
     run = await _finish_via_cleanup(org_id, run_id, db_session)

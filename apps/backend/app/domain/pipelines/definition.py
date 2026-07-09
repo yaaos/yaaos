@@ -42,11 +42,11 @@ class BoundaryControl(BaseModel, frozen=True):
 
 class ReviewConfig(BaseModel, frozen=True):
     """Review skill name + max iterations; `None` on the owning stage means
-    review is off."""
+    review is off. Finding display prefixes come from the review skill's
+    per-finding `category`, not from config."""
 
     skill_name: str
     max_iterations: int = Field(ge=1, le=3)
-    finding_prefix: str | None = None
 
 
 class SkillStage(BaseModel, frozen=True):
@@ -78,7 +78,6 @@ class ReviewSkillStage(BaseModel, frozen=True):
     coding_agent_plugin_id: str
     model: str
     effort: str
-    finding_prefix: str | None = None
     context_stages: tuple[str, ...] | None = None
     wallclock_seconds: int = 3600
     boundary: BoundaryControl

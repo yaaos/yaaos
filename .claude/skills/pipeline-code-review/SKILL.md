@@ -1,11 +1,11 @@
 ---
-name: code-review
-description: Pipeline review skill — reviews a diff (or a reviewed artifact) for defects, reports findings, and verdicts previously-reported findings shown as prior context. Invoked headlessly by the pipeline run engine as either an attached review loop (paired with `implement`) or a standalone review stage (PR review, incremental review). Speaks the `SkillReviewReturn` contract.
+name: pipeline-code-review
+description: Pipeline review skill — reviews a diff (or a reviewed artifact) for defects, reports findings, and verdicts previously-reported findings shown as prior context. Invoked headlessly by the pipeline run engine as either an attached review loop (paired with `pipeline-implement`) or a standalone review stage (PR review, incremental review). Speaks the `SkillReviewReturn` contract.
 model: claude-sonnet-5
 effort: high
 ---
 
-# code-review
+# pipeline-code-review
 
 > Review the diff for real defects. Report new findings as facts, never as fixed/residual labels. Verdict every prior finding you were shown. The engine — not this skill — decides what happens next.
 
@@ -69,9 +69,15 @@ One overall confidence (0–100) for this review pass, not per finding — full 
 
 ## Output contract
 
-Structured JSON per the engine-injected `SkillReviewReturn` schema (not restated here — the engine supplies the exact JSON Schema in the prompt):
+Structured JSON per the `SkillReviewReturn` schema. The engine supplies the exact JSON Schema in the prompt; running standalone (no engine prompt), read the committed copy at `.claude/skills/pipeline-schemas/skill-review-return.schema.json` — if the two ever differ, the engine-injected copy wins.
 
-- `new_findings` — facts only. Each: `severity` (`blocker`/`should_fix`/`nit`), `body` (the finding, in your own words — no separate rationale/suggested-fix fields, put both in `body`), `code_file`/`code_line` for code (use `artifact_section` instead when reviewing a prose artifact with no file:line), `defect_in_artifact` when applicable (see above).
+- `new_findings` — facts only. Each: `category` (see below), `severity` (`blocker`/`should_fix`/`nit`), `body` (the finding, in your own words — no separate rationale/suggested-fix fields, put both in `body`), `code_file`/`code_line` for code (use `artifact_section` instead when reviewing a prose artifact with no file:line), `defect_in_artifact` when applicable (see above).
+- `category` — one lowercase word classifying the finding's function; it becomes the finding's display prefix (`sec-001`). Canonical vocabulary for this skill — prefer these, coin a new lowercase word (2-12 letters) only when none fits:
+  - `sec` — security (auth/authz, injection, secrets, data exposure)
+  - `arch` — layer boundaries, cross-service contracts, blast radius, pattern divergence
+  - `code` — correctness, idempotency, transactions, migrations, cleanliness, naming
+  - `perf` — performance
+  - `test` — test fidelity and coverage gaps
 - `prior_finding_verdicts` — one entry per finding you were shown (see § Verdicting).
 - `confidence` (0–100, see above).
 - `summary` — one line.

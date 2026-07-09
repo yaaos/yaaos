@@ -1,11 +1,11 @@
 ---
-name: comment-response
+name: pipeline-comment-response
 description: Pipeline review skill — answers a batch of already-classified PR comments (question / dispute / claims-fixed) against the ticket's findings and replies. Invoked headlessly by the pipeline run engine as the shipped `comment-response` pipeline's sole stage. Speaks the `SkillReviewReturn` contract.
 model: claude-sonnet-5
 effort: medium
 ---
 
-# comment-response
+# pipeline-comment-response
 
 > Answer a batch of PR comments about existing findings — questions, disputes, and fix claims. Judge disputes honestly. Never mark anything "fixed" yourself; that's commit-driven, not comment-driven.
 
@@ -33,11 +33,11 @@ One overall confidence (0–100) for this batch — full confidence only when ev
 
 ## New findings
 
-Rare, but not disallowed: if answering a comment surfaces a genuinely new defect (not what was originally reported, not a restatement of the disputed finding), you may report it in `new_findings` the same way the `code-review` skill does — facts only, no fixed/residual labeling. Leave this empty in the common case where you're purely answering about existing findings.
+Rare, but not disallowed: if answering a comment surfaces a genuinely new defect (not what was originally reported, not a restatement of the disputed finding), you may report it in `new_findings` the same way the `pipeline-code-review` skill does — facts only, no fixed/residual labeling; use its category vocabulary (`sec`/`arch`/`code`/`perf`/`test`). Leave this empty in the common case where you're purely answering about existing findings.
 
 ## Output contract
 
-Structured JSON per the engine-injected `SkillReviewReturn` schema (not restated here — the engine supplies the exact JSON Schema in the prompt):
+Structured JSON per the `SkillReviewReturn` schema. The engine supplies the exact JSON Schema in the prompt; running standalone (no engine prompt), read the committed copy at `.claude/skills/pipeline-schemas/skill-review-return.schema.json` — if the two ever differ, the engine-injected copy wins.
 
 - `new_findings` — empty in the common case (see above).
 - `prior_finding_verdicts` — one entry per finding referenced by the batch, per the per-comment guidance above. If a batch's comments reference the SAME finding more than once, one consolidated verdict/reply covering all of them is enough — don't emit duplicate entries for the same finding id.

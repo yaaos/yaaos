@@ -1,11 +1,11 @@
 ---
-name: plan
+name: pipeline-plan
 description: Pipeline skill for a `plan` (or equivalently-purposed) stage — turns an architecture or diagnosis artifact into an ordered implementation plan artifact. Invoked headlessly by the pipeline run engine; no interactive Q&A. Stage name and skill name are independent — `troubleshoot`'s `fix-plan` stage runs this same skill.
 model: claude-sonnet-5
 effort: high
 ---
 
-# plan
+# pipeline-plan
 
 > Read the upstream design (architecture, or a diagnosis for a bug fix). Slice the work into an ordered sequence a single implementation pass can execute. Write the plan artifact.
 
@@ -36,7 +36,7 @@ No one to ask mid-run. Resolve ambiguity in the upstream document by making the 
 
 ## Output contract
 
-Structured JSON per the engine-injected `SkillReturn` schema (not restated here):
+Structured JSON per the `SkillReturn` schema. The engine supplies the exact JSON Schema in the prompt; running standalone (no engine prompt), read the committed copy at `.claude/skills/pipeline-schemas/skill-return.schema.json` — if the two ever differ, the engine-injected copy wins.
 
 - `outcome: "completed"` — write the plan document.
 - `outcome: "cannot_complete"` with `outcome_reason` — the upstream document can't be sequenced as given.

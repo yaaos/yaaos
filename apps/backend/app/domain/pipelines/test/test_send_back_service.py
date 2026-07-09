@@ -100,7 +100,7 @@ def _two_stage_definition() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                review=ReviewConfig(skill_name="review-implement", max_iterations=1, finding_prefix="SPEC"),
+                review=ReviewConfig(skill_name="review-implement", max_iterations=1),
                 boundary=BoundaryControl(mode="always_proceed"),
             ),
         ),
@@ -256,6 +256,7 @@ async def test_residual_defect_in_artifact_sends_back_and_reruns_forward_service
         {
             "new_findings": [
                 {
+                    "category": "arch",
                     "severity": "blocker",
                     "body": "the spec is missing the auth requirement",
                     "defect_in_artifact": _REQUIREMENTS,

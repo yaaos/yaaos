@@ -222,7 +222,7 @@ async def test_dispatch_invocation_sets_skill_path_from_convention(db_session) -
     ws_id = await _seed_active_workspace(org_id)
     invocation = Invocation(
         workspace_id=ws_id,
-        skill="requirements",
+        skill="pipeline-requirements",
         model="opus",
         effort="medium",
         context={"repo": "test-repo"},
@@ -240,7 +240,7 @@ async def test_dispatch_invocation_sets_skill_path_from_convention(db_session) -
     result = await get_command_org_and_payload(command_id, session=db_session)
     assert result is not None
     _, payload = result
-    assert payload["skill_path"] == ".claude/skills/requirements/SKILL.md"
+    assert payload["skill_path"] == ".claude/skills/pipeline-requirements/SKILL.md"
 
 
 @pytest.mark.asyncio

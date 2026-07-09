@@ -40,7 +40,6 @@ export interface SkillStageDraft extends StageDraftBase {
   reviewEnabled: boolean;
   review_skill_name: string;
   review_max_iterations: number;
-  review_finding_prefix: string;
   contextAllUpstream: boolean;
   context_stages: string[];
   wallclock_seconds: number;
@@ -54,7 +53,6 @@ export interface ReviewSkillStageDraft extends StageDraftBase {
   coding_agent_plugin_id: string;
   model: string;
   effort: string;
-  finding_prefix: string;
   contextAllUpstream: boolean;
   context_stages: string[];
   wallclock_seconds: number;
@@ -115,7 +113,6 @@ export function newStageDraft(kind: StageDraft["kind"]): StageDraft {
         reviewEnabled: false,
         review_skill_name: "",
         review_max_iterations: 1,
-        review_finding_prefix: "",
         contextAllUpstream: true,
         context_stages: [],
         wallclock_seconds: DEFAULT_WALLCLOCK_SECONDS,
@@ -131,7 +128,6 @@ export function newStageDraft(kind: StageDraft["kind"]): StageDraft {
         coding_agent_plugin_id: "",
         model: "",
         effort: "",
-        finding_prefix: "",
         contextAllUpstream: true,
         context_stages: [],
         wallclock_seconds: DEFAULT_WALLCLOCK_SECONDS,
@@ -179,7 +175,6 @@ function stageToDraft(stage: StageView): StageDraft {
       reviewEnabled: stage.review != null,
       review_skill_name: stage.review?.skill_name ?? "",
       review_max_iterations: stage.review?.max_iterations ?? 1,
-      review_finding_prefix: stage.review?.finding_prefix ?? "",
       contextAllUpstream: stage.context_stages == null,
       context_stages: stage.context_stages ?? [],
       wallclock_seconds: stage.wallclock_seconds,
@@ -197,7 +192,6 @@ function stageToDraft(stage: StageView): StageDraft {
       coding_agent_plugin_id: stage.coding_agent_plugin_id,
       model: stage.model,
       effort: stage.effort,
-      finding_prefix: stage.finding_prefix ?? "",
       contextAllUpstream: stage.context_stages == null,
       context_stages: stage.context_stages ?? [],
       wallclock_seconds: stage.wallclock_seconds,
@@ -247,7 +241,6 @@ function stageToWire(stage: StageDraft): PipelineDefinitionBody["stages"][number
         ? {
             skill_name: stage.review_skill_name,
             max_iterations: stage.review_max_iterations,
-            finding_prefix: stage.review_finding_prefix || null,
           }
         : null,
       context_stages: stage.contextAllUpstream ? null : stage.context_stages,
@@ -265,7 +258,6 @@ function stageToWire(stage: StageDraft): PipelineDefinitionBody["stages"][number
       coding_agent_plugin_id: stage.coding_agent_plugin_id,
       model: stage.model,
       effort: stage.effort,
-      finding_prefix: stage.finding_prefix || null,
       context_stages: stage.contextAllUpstream ? null : stage.context_stages,
       wallclock_seconds: stage.wallclock_seconds,
       boundary: stage.boundary,

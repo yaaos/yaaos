@@ -12,12 +12,15 @@ rewired); the run engine only ever sees org rows, never these constants
 directly (`start_run`/`flatten` read from `pipelines`, not from here).
 
 Skill names referenced below are pinned repo files under
-`.claude/skills/<name>/SKILL.md`: `requirements`, `architecture`, `plan`,
-`implement`, `code-review`, `diagnose`, `comment-response`. Stage names are
-independent of skill names — `troubleshoot`'s `fix-plan` stage runs the
-`plan` skill under a stage identity distinct from `dev`'s own `plan` stage,
-so the two pipelines never collide on a flattened stage name if ever
-composed together.
+`.claude/skills/<name>/SKILL.md`, all carrying the `pipeline-` prefix
+(run-engine consumption, not human invocation): `pipeline-requirements`,
+`pipeline-requirements-review`, `pipeline-architecture`,
+`pipeline-architecture-review`, `pipeline-plan`, `pipeline-implement`,
+`pipeline-code-review`, `pipeline-diagnose`, `pipeline-comment-response`.
+Stage names are independent of skill names — `troubleshoot`'s `fix-plan`
+stage runs the `pipeline-plan` skill under a stage identity distinct from
+`dev`'s own `plan` stage, so the two pipelines never collide on a flattened
+stage name if ever composed together.
 """
 
 from __future__ import annotations
@@ -69,11 +72,11 @@ IMPLEMENTATION = PipelineDefinition(
     stages=(
         SkillStage(
             name="implement",
-            skill_name="implement",
+            skill_name="pipeline-implement",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="high",
-            review=ReviewConfig(skill_name="code-review", max_iterations=3),
+            review=ReviewConfig(skill_name="pipeline-code-review", max_iterations=3),
             boundary=_CODE_BOUNDARY,
         ),
         ActionStage(description="Open pull request", action_id="github:create_pr"),
@@ -90,23 +93,25 @@ DEV = PipelineDefinition(
     stages=(
         SkillStage(
             name="requirements",
-            skill_name="requirements",
+            skill_name="pipeline-requirements",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="medium",
+            review=ReviewConfig(skill_name="pipeline-requirements-review", max_iterations=2),
             boundary=_PLANNING_BOUNDARY,
         ),
         SkillStage(
             name="architecture",
-            skill_name="architecture",
+            skill_name="pipeline-architecture",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="medium",
+            review=ReviewConfig(skill_name="pipeline-architecture-review", max_iterations=2),
             boundary=_PLANNING_BOUNDARY,
         ),
         SkillStage(
             name="plan",
-            skill_name="plan",
+            skill_name="pipeline-plan",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="medium",
@@ -126,7 +131,7 @@ TROUBLESHOOT = PipelineDefinition(
     stages=(
         SkillStage(
             name="diagnose",
-            skill_name="diagnose",
+            skill_name="pipeline-diagnose",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="medium",
@@ -134,7 +139,7 @@ TROUBLESHOOT = PipelineDefinition(
         ),
         SkillStage(
             name="fix-plan",
-            skill_name="plan",
+            skill_name="pipeline-plan",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="medium",
@@ -151,7 +156,7 @@ PR_REVIEW = PipelineDefinition(
     stages=(
         ReviewSkillStage(
             name="code-review",
-            skill_name="code-review",
+            skill_name="pipeline-code-review",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="high",
@@ -171,7 +176,7 @@ INCREMENTAL_REVIEW = PipelineDefinition(
     stages=(
         ReviewSkillStage(
             name="code-review",
-            skill_name="code-review",
+            skill_name="pipeline-code-review",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="high",
@@ -188,7 +193,7 @@ COMMENT_RESPONSE = PipelineDefinition(
     stages=(
         ReviewSkillStage(
             name="comment-response",
-            skill_name="comment-response",
+            skill_name="pipeline-comment-response",
             coding_agent_plugin_id="claude_code",
             model="sonnet",
             effort="medium",

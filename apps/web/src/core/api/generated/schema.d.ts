@@ -2998,11 +2998,10 @@ export interface components {
         /**
          * ReviewConfig
          * @description Review skill name + max iterations; `None` on the owning stage means
-         *     review is off.
+         *     review is off. Finding display prefixes come from the review skill's
+         *     per-finding `category`, not from config.
          */
         ReviewConfig: {
-            /** Finding Prefix */
-            finding_prefix?: string | null;
             /** Max Iterations */
             max_iterations: number;
             /** Skill Name */
@@ -3026,8 +3025,6 @@ export interface components {
             description: string;
             /** Effort */
             effort: string;
-            /** Finding Prefix */
-            finding_prefix?: string | null;
             /**
              * Id
              * Format: uuid

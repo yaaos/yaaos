@@ -104,7 +104,6 @@ def _update_pr_pipeline() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                finding_prefix="SPEC",
                 boundary=BoundaryControl(mode="always_proceed"),
             ),
             ActionStage(description="post findings", action_id="github:update_pr"),
@@ -229,7 +228,9 @@ async def test_defend_once_then_insist_forces_dismiss(db_session, monkeypatch: p
             org_id,
             agent_id,
             review_output={
-                "new_findings": [{"severity": "should_fix", "body": "missing null check"}],
+                "new_findings": [
+                    {"category": "code", "severity": "should_fix", "body": "missing null check"}
+                ],
                 "prior_finding_verdicts": [],
                 "confidence": 80,
                 "summary": "found one issue",

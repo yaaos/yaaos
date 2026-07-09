@@ -1,11 +1,11 @@
 ---
-name: implement
-description: Pipeline skill for an `implement` stage — writes the actual code change against the nearest upstream plan (or directly against the kickoff input for a small ask), runs the repo's own checks, and commits. Invoked headlessly by the pipeline run engine; no interactive Q&A. Paired with the `code-review` review skill in the shipped `implementation` pipeline.
+name: pipeline-implement
+description: Pipeline skill for an `implement` stage — writes the actual code change against the nearest upstream plan (or directly against the kickoff input for a small ask), runs the repo's own checks, and commits. Invoked headlessly by the pipeline run engine; no interactive Q&A. Paired with the `pipeline-code-review` review skill in the shipped `implementation` pipeline.
 model: claude-sonnet-5
 effort: high
 ---
 
-# implement
+# pipeline-implement
 
 > Read the plan (or the input directly). Write the code. Run the repo's own checks yourself — there is no separate CI gate in this pipeline. Commit.
 
@@ -32,11 +32,11 @@ No one to ask mid-run. When the plan under-specifies something, make the smalles
 
 ## The review loop (when configured)
 
-A stage using this skill commonly pairs it with the `code-review` review skill in a loop: this skill writes, `code-review` reports findings, and — while residuals remain and iterations remain — this skill runs again with the residual findings rendered as its revision input. On a fix pass: address every named residual directly (don't silently drop one), re-run the checks, and don't reintroduce a finding a prior pass already fixed.
+A stage using this skill commonly pairs it with the `pipeline-code-review` review skill in a loop: this skill writes, `pipeline-code-review` reports findings, and — while residuals remain and iterations remain — this skill runs again with the residual findings rendered as its revision input. On a fix pass: address every named residual directly (don't silently drop one), re-run the checks, and don't reintroduce a finding a prior pass already fixed.
 
 ## Output contract
 
-Structured JSON per the engine-injected `SkillReturn` schema (not restated here):
+Structured JSON per the `SkillReturn` schema. The engine supplies the exact JSON Schema in the prompt; running standalone (no engine prompt), read the committed copy at `.claude/skills/pipeline-schemas/skill-return.schema.json` — if the two ever differ, the engine-injected copy wins.
 
 - `outcome: "completed"` — code written, checks green, changes committed.
 - `outcome: "cannot_complete"` with `outcome_reason` — a plan step is impossible against the actual repo, or the repo's own checks fail in a way this stage cannot resolve (e.g. a pre-existing failure unrelated to this change — name it explicitly rather than papering over it).

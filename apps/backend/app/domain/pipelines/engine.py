@@ -1179,13 +1179,13 @@ async def _record_and_apply_review(
     stage_exec: StageExecutionRow,
     review_return: SkillReviewReturn,
     *,
-    display_prefix: str,
     iteration: int,
     session: AsyncSession,
 ) -> list[Finding]:
     """Materialize every reported finding, then apply the verdict matrix to
     the findings the skill asserted a status for. Shared by the SkillStage
-    review-loop pass and the standalone ReviewSkillStage."""
+    review-loop pass and the standalone ReviewSkillStage. Each finding's
+    skill-reported `category` is its display prefix."""
     specs = [
         FindingSpec(
             id=uuid7(),
@@ -1195,7 +1195,7 @@ async def _record_and_apply_review(
             code_line=f.code_line,
             artifact_section=f.artifact_section,
             defect_in_artifact=f.defect_in_artifact,
-            display_prefix=display_prefix,
+            display_prefix=f.category,
         )
         for f in review_return.new_findings
     ]
@@ -2064,7 +2064,6 @@ async def _handle_review_return(
         run,
         stage_exec,
         review_return,
-        display_prefix=stage.review.finding_prefix or stage.name,
         iteration=stage_exec.iteration,
         session=session,
     )
@@ -2156,7 +2155,6 @@ async def _handle_review_stage_event(
         run,
         stage_exec,
         review_return,
-        display_prefix=stage.finding_prefix or stage.name,
         iteration=1,
         session=session,
     )

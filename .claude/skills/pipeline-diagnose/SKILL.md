@@ -1,11 +1,11 @@
 ---
-name: diagnose
+name: pipeline-diagnose
 description: Pipeline skill for a `diagnose` stage — investigates a bug report against the actual repo and writes a diagnosis artifact (root cause, evidence, blast radius). Invoked headlessly by the pipeline run engine as the first stage of the shipped `troubleshoot` pipeline; no interactive Q&A.
 model: claude-sonnet-5
 effort: high
 ---
 
-# diagnose
+# pipeline-diagnose
 
 > Read the bug report. Find the actual root cause in the actual code — not a plausible-sounding guess. Write the diagnosis artifact; `plan` turns it into a fix plan next.
 
@@ -37,7 +37,7 @@ No one to ask mid-run. When the report is thin (no repro steps, no error text), 
 
 ## Output contract
 
-Structured JSON per the engine-injected `SkillReturn` schema (not restated here — the engine supplies the exact JSON Schema in the prompt):
+Structured JSON per the `SkillReturn` schema. The engine supplies the exact JSON Schema in the prompt; running standalone (no engine prompt), read the committed copy at `.claude/skills/pipeline-schemas/skill-return.schema.json` — if the two ever differ, the engine-injected copy wins.
 
 - `outcome: "completed"` — write the diagnosis document.
 - `outcome: "cannot_complete"` with `outcome_reason` — the report gives nothing investigable.

@@ -55,6 +55,11 @@ LAYERS = ("core", "domain", "plugins", "testing")
 COMPOSITION_ROOTS: tuple[Path, ...] = (
     APP / "web.py",
     APP / "worker.py",
+    # Alembic's env is a migration-time composition root: it rglob-imports
+    # every models.py so Base.metadata is complete for upgrade/autogenerate.
+    # That sweep is the first import of any Row module with no production
+    # importer — by design, not a cross-module reach.
+    BACKEND / "alembic" / "env.py",
 )
 
 

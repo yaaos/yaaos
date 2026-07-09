@@ -92,7 +92,6 @@ def _review_pipeline() -> PipelineDefinition:
                 coding_agent_plugin_id="claude_code",
                 model="sonnet",
                 effort="medium",
-                finding_prefix="SPEC",
                 boundary=BoundaryControl(mode="always_proceed"),
             ),
             ActionStage(description="post findings", action_id="github:update_pr"),
@@ -265,12 +264,13 @@ async def test_acceptance_residuals_posted_and_incremental_review_resolves(
         review_output={
             "new_findings": [
                 {
+                    "category": "sec",
                     "severity": "blocker",
                     "body": "SQL injection risk",
                     "code_file": "app.py",
                     "code_line": 10,
                 },
-                {"severity": "nit", "body": "naming nit"},
+                {"category": "code", "severity": "nit", "body": "naming nit"},
             ],
             "prior_finding_verdicts": [],
             "confidence": 80,
@@ -280,7 +280,7 @@ async def test_acceptance_residuals_posted_and_incremental_review_resolves(
     )
 
     findings = await list_open_for_ticket(org_id, ticket_id, session=db_session)
-    assert sorted(f.handle for f in findings) == ["SPEC-001", "SPEC-002"]
+    assert sorted(f.handle for f in findings) == ["code-002", "sec-001"]
     assert all(f.external_comment_id is not None for f in findings)
     blocker = next(f for f in findings if f.severity == "blocker")
 

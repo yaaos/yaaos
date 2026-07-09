@@ -10,6 +10,12 @@ fixed/residual itself — `prior_finding_verdicts` carries the skill's
 per-finding assertion, and the engine applies the mechanical verdict matrix
 (`domain/findings.resolve`/`reflag`/`reopen`/`dismiss`).
 
+Committed JSON Schema copies of both contracts live at
+`.claude/skills/pipeline-schemas/*.schema.json` for local skill runs and
+human wrappers; `test_schema_files.py` keeps them byte-equivalent to
+`model_json_schema()`. The engine-injected schema remains authoritative at
+runtime.
+
 Confidence is a rubric-anchored integer (0-100) the skill reports; the engine
 buckets it into `low | medium | high` for everything user-facing while the
 raw int is retained on `stage_executions.loop_state` for insight mining.
@@ -66,8 +72,15 @@ class SkillReviewFinding(BaseModel, frozen=True, extra="forbid"):
     is exceptional: the stage-name key of the INPUT artifact the skill was
     shown that contains the root cause. An unknown name (not one of the
     stage's `upstream_stages`) degrades to a plain residual — logged, not a
-    contract violation."""
+    contract violation.
 
+    `category` is the skill-reported functional classification (`sec`,
+    `arch`, `code`, …) — one lowercase word. It becomes the finding's
+    `display_prefix` (handle `<category>-<seq>`), so review type is
+    queryable per finding; each review skill's SKILL.md owns its canonical
+    vocabulary."""
+
+    category: str = Field(pattern=r"^[a-z]{2,12}$")
     severity: Literal["blocker", "should_fix", "nit"]
     body: str
     code_file: str | None = None

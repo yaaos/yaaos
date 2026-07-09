@@ -1,11 +1,11 @@
 ---
-name: architecture
+name: pipeline-architecture
 description: Pipeline skill for an `architecture` stage — turns a requirements artifact into a target-architecture artifact (current state + delta). Invoked headlessly by the pipeline run engine; no interactive Q&A.
 model: claude-sonnet-5
 effort: high
 ---
 
-# architecture
+# pipeline-architecture
 
 > Read the requirements artifact. Map the current code. Decide the target design and the delta to get there. Write the architecture artifact.
 
@@ -39,7 +39,7 @@ No one to ask mid-run. When the requirements leave a design choice open, make th
 
 ## Output contract
 
-Structured JSON per the engine-injected `SkillReturn` schema (not restated here — the engine supplies the exact JSON Schema in the prompt):
+Structured JSON per the `SkillReturn` schema. The engine supplies the exact JSON Schema in the prompt; running standalone (no engine prompt), read the committed copy at `.claude/skills/pipeline-schemas/skill-return.schema.json` — if the two ever differ, the engine-injected copy wins.
 
 - `outcome: "completed"` — write the architecture document.
 - `outcome: "cannot_complete"` with `outcome_reason` — requirements are contradictory or reference something unresolvable by inspection.

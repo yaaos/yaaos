@@ -1,0 +1,63 @@
+{
+  "additionalProperties": false,
+  "description": "Main-skill structured output \u2014 the only stage `ExpectedResponse`.\n\n`send_back`/`cannot_complete` are handled as run-failure placeholders\nuntil the boundary/send-back machinery exists \u2014 a stage returning either\noutcome fails the run with `outcome_reason` as the failure reason rather\nthan being silently accepted.",
+  "properties": {
+    "outcome": {
+      "enum": [
+        "completed",
+        "cannot_complete",
+        "send_back"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "outcome_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Outcome Reason"
+    },
+    "send_back_to_stage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Send Back To Stage"
+    },
+    "confidence": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "integer"
+    },
+    "paths_affected": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Paths Affected",
+      "type": "array"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "outcome",
+    "confidence",
+    "summary"
+  ],
+  "title": "SkillReturn",
+  "type": "object"
+}

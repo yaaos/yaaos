@@ -1,11 +1,11 @@
 ---
-name: requirements
+name: pipeline-requirements
 description: Pipeline skill for a `requirements` stage — turns a spec/kickoff input into a requirements artifact. Invoked headlessly by the pipeline run engine; no interactive Q&A. Also runnable standalone by a developer against a spec in a working checkout.
 model: claude-sonnet-5
 effort: high
 ---
 
-# requirements
+# pipeline-requirements
 
 > Read the input, elicit nothing (there is no one to ask), and write the requirements artifact: problem, desired outcome, use cases, in/out of scope.
 
@@ -39,7 +39,7 @@ Unlike an interactive requirements conversation, this stage cannot pause to ask.
 
 ## Output contract
 
-Structured JSON per the engine-injected schema (`SkillReturn`) — not restated here; the engine supplies the exact JSON Schema in the prompt. In prose terms:
+Structured JSON per the `SkillReturn` schema. The engine supplies the exact JSON Schema in the prompt; running standalone (no engine prompt), read the committed copy at `.claude/skills/pipeline-schemas/skill-return.schema.json` — if the two ever differ, the engine-injected copy wins. In prose terms:
 
 - `outcome: "completed"` — the normal path; write the requirements document to the path the engine gives you.
 - `outcome: "cannot_complete"` with `outcome_reason` — genuinely insufficient input; explain what's missing.

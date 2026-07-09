@@ -114,19 +114,6 @@ export function StageEditorSheet({
 
           {(draft.kind === "skill" || draft.kind === "review") && (
             <>
-              {draft.kind === "review" && (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="stage-finding-prefix">Finding prefix</Label>
-                  <Input
-                    id="stage-finding-prefix"
-                    data-testid="stage-finding-prefix"
-                    value={draft.finding_prefix}
-                    onChange={(e) => setDraft({ ...draft, finding_prefix: e.target.value })}
-                    placeholder="Defaults to the stage name"
-                  />
-                </div>
-              )}
-
               <ContextStagesFields
                 draft={draft}
                 setDraft={setDraft}
@@ -319,31 +306,19 @@ function ReviewLoopFields({
               placeholder="e.g. code-review"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="stage-review-iterations">Max iterations</Label>
-              <Input
-                id="stage-review-iterations"
-                data-testid="stage-review-iterations"
-                type="number"
-                min={1}
-                max={3}
-                value={draft.review_max_iterations}
-                onChange={(e) =>
-                  setDraft({ ...draft, review_max_iterations: e.target.valueAsNumber || 1 })
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="stage-review-prefix">Finding prefix</Label>
-              <Input
-                id="stage-review-prefix"
-                data-testid="stage-review-prefix"
-                value={draft.review_finding_prefix}
-                onChange={(e) => setDraft({ ...draft, review_finding_prefix: e.target.value })}
-                placeholder="Defaults to the stage name"
-              />
-            </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="stage-review-iterations">Max iterations</Label>
+            <Input
+              id="stage-review-iterations"
+              data-testid="stage-review-iterations"
+              type="number"
+              min={1}
+              max={3}
+              value={draft.review_max_iterations}
+              onChange={(e) =>
+                setDraft({ ...draft, review_max_iterations: e.target.valueAsNumber || 1 })
+              }
+            />
           </div>
         </div>
       )}

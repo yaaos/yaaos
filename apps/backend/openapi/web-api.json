@@ -2636,19 +2636,8 @@
         "type": "object"
       },
       "ReviewConfig": {
-        "description": "Review skill name + max iterations; `None` on the owning stage means\nreview is off.",
+        "description": "Review skill name + max iterations; `None` on the owning stage means\nreview is off. Finding display prefixes come from the review skill's\nper-finding `category`, not from config.",
         "properties": {
-          "finding_prefix": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Finding Prefix"
-          },
           "max_iterations": {
             "maximum": 3.0,
             "minimum": 1.0,
@@ -2699,17 +2688,6 @@
           "effort": {
             "title": "Effort",
             "type": "string"
-          },
-          "finding_prefix": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Finding Prefix"
           },
           "id": {
             "format": "uuid",
