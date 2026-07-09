@@ -91,6 +91,10 @@ tasks:
     use: [code, system-packages-backend, python]
     filter:
       - apps/backend/**
+      # The committed skill-contract schemas — apps/backend's drift test
+      # (domain/pipelines/test/test_schema_files.py) reads them, so edits
+      # must re-run backend CI.
+      - .claude/skills/pipeline-schemas/**
       - pyproject.toml
       - uv.lock
       - docker/docker-compose.test.yml
