@@ -2819,6 +2819,11 @@
             ],
             "title": "Pr Url"
           },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
           "state": {
             "enum": [
               "queued",
@@ -2834,6 +2839,7 @@
           }
         },
         "required": [
+          "run_id",
           "state",
           "pr_url",
           "failure_reason"
@@ -8649,6 +8655,82 @@
           }
         },
         "summary": "Cancel Run Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/{run_id}/rerun": {
+      "post": {
+        "description": "A NEW run on the SAME ticket, starting at stage index 0 — distinct\nfrom `POST /runs/rerun` above (`start_rerun_from_stage`, a 2-segment\npath; this 3-segment path can never collide with it in FastAPI's\nrouter).",
+        "operationId": "rerun_run_endpoint_api_pipelines_runs__run_id__rerun_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerun Run Endpoint",
         "tags": [
           "pipelines"
         ]
