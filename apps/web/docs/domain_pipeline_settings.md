@@ -8,6 +8,7 @@
 
 ## Layout
 
+- **"Download skills"** (`pipelines-download-skills`) — a plain `<a href="/yaaos-pipeline-skills.zip" download>` next to the "New pipeline" actions, with a one-line caption ("Unzip at the repo root. Adds .claude/skills and .claude/agents."). The zip is a static asset served unauthenticated alongside the SPA — no backend route; the SPA catch-all in `core/webserver/app_factory.py` serves it straight off `dist/`. Built at web-build time by `apps/web/bin/build-skills-bundle.mjs`, which bundles every `.claude/skills/pipeline-*/**` directory and `.claude/agents/pipeline-*.md` file (prefix-selected — `dev-*`/`yaaos-*`/`rwx` skills are yaaos-internal and never ship) with repo-root-relative entry paths, so unzipping at a user's repo root installs the pipeline skills/agents directly.
 - **Accordion** (`pipelines-list`) — one row per org pipeline (`pipeline-row-${id}`), collapsed by default. The trigger shows name, stage count, a "referenced" badge (delete-block hint), and `updated <ago> by <login>`. A row's full definition is fetched lazily (`usePipelineDetail`, `enabled: true` inside the Accordion's content, which Radix only mounts while the row is open) — expanding a row is the fetch trigger.
 - **"New pipeline"** — an inline card above the Accordion (`pipeline-new-card`), not an Accordion row (nothing exists server-side until Save fires the `POST`).
 - **"New from template"** — a Dialog (`pipeline-template-dialog`) listing the shipped, code-defined templates; picking one calls `POST /api/pipelines/from-template`.
@@ -39,5 +40,5 @@ Private (not in `public/`): `PipelineEditor.tsx` (`ExistingPipelineEditor`, `New
 
 ## Tests
 
-- `test/pipelines-settings.test.tsx` — component/MSW: empty state, list rendering (name/stage-count/referenced badge), expand-to-edit lazy fetch, stage-editor per-kind field rendering, boundary-condition visibility (`conditional` mode reveals the blocker/should-fix/nit/protected checkboxes + confidence picker; other modes don't; `stage-boundary-on-nit` is the nit testid), "New from template" flow, 400/409 error banners.
+- `test/pipelines-settings.test.tsx` — component/MSW: empty state, list rendering (name/stage-count/referenced badge), the skills-download anchor's `href`/`download` attributes, expand-to-edit lazy fetch, stage-editor per-kind field rendering, boundary-condition visibility (`conditional` mode reveals the blocker/should-fix/nit/protected checkboxes + confidence picker; other modes don't; `stage-boundary-on-nit` is the nit testid), "New from template" flow, 400/409 error banners.
 - `apps/e2e/tests/pipeline-settings-crud.spec.ts` — Playwright: create a pipeline from the `dev` template, edit a stage's boundary to `always_proceed` and save, introduce a call cycle and see the `invalid_definition` banner, and delete a referenced pipeline to see the "In use…" message. A second test asserts a builder role sees no "Pipelines" sidebar link.

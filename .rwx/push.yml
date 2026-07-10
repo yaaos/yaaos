@@ -95,10 +95,12 @@ tasks:
     use: [code, system-packages-backend, python]
     filter:
       - apps/backend/**
-      # The committed skill-contract schemas — apps/backend's drift test
-      # (domain/pipelines/test/test_schema_files.py) reads them, so edits
-      # must re-run backend CI.
-      - .claude/skills/pipeline-schemas/**
+      # The pipeline-* skill files — apps/backend's drift tests read them
+      # (domain/pipelines/test/test_schema_files.py against pipeline-schemas'
+      # committed JSON Schema copies; test_template_skill_files.py against
+      # every shipped skill's SKILL.md, checking the shipped templates'
+      # skill_name references resolve), so edits must re-run backend CI.
+      - .claude/skills/pipeline-*/**
       - pyproject.toml
       - uv.lock
       - docker/docker-compose.test.yml
@@ -142,6 +144,10 @@ tasks:
       - apps/web/**
       # bin/ci runs gen-api-types --check against the committed spec.
       - apps/backend/openapi/web-api.json
+      # bin/build-skills-bundle.mjs reads these during the web build (bundled
+      # into apps/web/public/yaaos-pipeline-skills.zip).
+      - .claude/skills/pipeline-*/**
+      - .claude/agents/pipeline-*.md
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
@@ -220,6 +226,10 @@ tasks:
       - apps/fake-notion/**
       - docker/docker-compose.test.yml
       - docker/mock-aws/**
+      # apps/backend/Dockerfile's web-builder stage COPYs these into the
+      # build context (bundled into apps/web/public/yaaos-pipeline-skills.zip).
+      - .claude/skills/pipeline-*/**
+      - .claude/agents/pipeline-*.md
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
@@ -272,6 +282,10 @@ tasks:
     filter:
       - apps/backend/**
       - apps/web/**
+      # apps/backend/Dockerfile's web-builder stage COPYs these into the
+      # build context (bundled into apps/web/public/yaaos-pipeline-skills.zip).
+      - .claude/skills/pipeline-*/**
+      - .claude/agents/pipeline-*.md
       - pyproject.toml
       - uv.lock
       - package.json

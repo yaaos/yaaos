@@ -231,6 +231,10 @@ apps/e2e/test-results/
 apps/e2e/playwright-report/
 .pnpm-store/
 
+# Build-time artifact — apps/web/bin/build-skills-bundle regenerates this
+# from .claude/skills/pipeline-*/** + .claude/agents/pipeline-*.md.
+apps/web/public/yaaos-pipeline-skills.zip
+
 # Generated OpenAPI types are committed (drift-checked by bin/gen-api-types --check)
 # apps/web/src/core/api/generated/ — intentionally tracked
 

@@ -36,6 +36,16 @@ ENV VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
 
 # Source + build
 COPY apps/web ./apps/web
+
+# Pipeline skills + agent bundled into the SPA's static download
+# (apps/web/public/yaaos-pipeline-skills.zip, built by
+# apps/web/bin/build-skills-bundle.mjs as the package's `prebuild` step).
+# Copied at the repo-relative layout so the script's walk-up root
+# resolution (looks for a `.claude/skills` directory) finds them from
+# /build, matching the repo root's shape.
+COPY .claude/skills ./.claude/skills
+COPY .claude/agents ./.claude/agents
+
 RUN pnpm --filter ./apps/web build --mode production
 
 # ────────────────────────────────────────────────────────────────────────
