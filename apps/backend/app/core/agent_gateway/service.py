@@ -1182,6 +1182,15 @@ async def record_agent_event(
     if sink_extras is not None:
         outputs = {**outputs, **sink_extras}
 
+    # The agent's terminal failure detail rides `AgentEvent.failure_reason`
+    # (e.g. the pre-spawn skill check's "skill not found: <path>"). Forward it
+    # as `error_message` — the key the run engine persists as the stage/run
+    # failure_reason. Fill-only-when-absent: a plugin-parsed `error_message`
+    # from the sink enrichment is richer and wins; claude_code's parse_result
+    # always leaves it None, so the agent's reason survives the merge above.
+    if event.failure_reason and not outputs.get("error_message"):
+        outputs["error_message"] = event.failure_reason
+
     # Artifact fields ride the terminal event's forwarded `outputs` payload —
     # the outbox row that carries this dict is durable Postgres, so this is
     # where the artifact rides until an engine reads it. Not yet consumed by
