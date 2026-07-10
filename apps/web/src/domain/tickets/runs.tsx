@@ -42,6 +42,7 @@ import {
 import { Textarea } from "@shared/components/ui/textarea";
 import { ago } from "@shared/utils/public/ago";
 import { cn } from "@shared/utils/public/cn";
+import { duration } from "@shared/utils/public/duration";
 import { GitBranch, ListChecks, Play, Wrench } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
@@ -104,7 +105,9 @@ function RunCard({
           {run.state}
         </Badge>
         <span className="text-muted-foreground">by {run.kickoff.actor_login ?? "yaaos"}</span>
-        <span className="ml-auto text-xs text-muted-foreground mono">{ago(run.created_at)}</span>
+        <span className="ml-auto text-xs text-muted-foreground mono">
+          {ago(run.created_at)} · {duration(run.created_at, run.completed_at)}
+        </span>
         {canRerunRun && (
           <Button
             variant="outline"
@@ -134,6 +137,7 @@ function RunCard({
           <TableRow>
             <TableHead>Stage</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Timing</TableHead>
             <TableHead>Confidence</TableHead>
             <TableHead>Iterations</TableHead>
             <TableHead>Boundary</TableHead>
@@ -187,6 +191,9 @@ function StageRow({
           {stage.stage_name}
         </TableCell>
         <TableCell className="capitalize">{stage.status}</TableCell>
+        <TableCell className="text-xs text-muted-foreground mono">
+          {ago(stage.started_at)} · {duration(stage.started_at, stage.completed_at)}
+        </TableCell>
         <TableCell>
           {stage.confidence && (
             <Badge variant="outline" className="capitalize">
@@ -239,7 +246,7 @@ function StageRow({
       </TableRow>
       {activityOpen && (
         <TableRow>
-          <TableCell colSpan={7} className="p-0">
+          <TableCell colSpan={8} className="p-0">
             <ErrorBoundary
               fallbackRender={({ resetErrorBoundary }) => (
                 <ErrorBanner message="Couldn't load activity." onRetry={resetErrorBoundary} />

@@ -86,4 +86,32 @@ describe("RunsTab re-run action (MSW)", () => {
     await userEvent.click(screen.getByTestId("rerun-run"));
     expect(card).toHaveAttribute("open");
   });
+
+  it("renders total run duration in the summary and per-stage timing in the table", async () => {
+    const run = baseRun({
+      stages: [
+        {
+          id: "se-1",
+          stage_index: 0,
+          kind: "skill",
+          stage_name: "implement",
+          status: "completed",
+          confidence: "high",
+          review_iterations: 0,
+          boundary_outcome: "proceeded",
+          artifact_ids: [],
+          action_result: null,
+          decisions: [],
+          failure_reason: null,
+          started_at: "2026-05-23T00:00:00Z",
+          completed_at: "2026-05-23T00:00:42Z",
+        },
+      ],
+    });
+    server.use(http.get("/api/pipelines/runs", () => HttpResponse.json({ runs: [run] })));
+    render(wrap(<RunsTab ticketId="t1" />));
+    await screen.findByTestId("run-card-run-1");
+    expect(screen.getByText(/1m 00s/)).toBeInTheDocument();
+    expect(screen.getByText(/42s/)).toBeInTheDocument();
+  });
 });
