@@ -66,6 +66,16 @@ class RunAlreadyTerminalError(ValueError):
     """`request_cancel` called on a run already in a terminal state."""
 
 
+class RunNotRerunnableError(ValueError):
+    """`start_rerun` called on a run that isn't the ticket's current run, or
+    whose state isn't one of `failed`/`cancelled`/`killed`."""
+
+    def __init__(self, run_id: UUID, state: str) -> None:
+        super().__init__(f"run {run_id} is not rerunnable (state={state})")
+        self.run_id = run_id
+        self.state = state
+
+
 class PauseNotFoundError(LookupError):
     """No run_pauses row for the given id."""
 
@@ -365,6 +375,50 @@ async def start_run(
     await session.flush()
     await engine.attempt_promotion(row, session=session)
     return row.id
+
+
+_RERUNNABLE_RUN_STATES = frozenset({"failed", "cancelled", "killed"})
+
+
+async def start_rerun(*, org_id: UUID, run_id: UUID, actor: Actor, session: AsyncSession) -> UUID:
+    """A NEW run on the SAME ticket: clones the prior run's `Kickoff`,
+    re-flattens the CURRENT definition, starts at stage index 0. Everything
+    regenerates — continuity comes from durable state (branch commits,
+    ticket findings, bound PR), not from inherited artifacts. Distinct from
+    `start_rerun_from_stage`, which continues from an arbitrary stage and
+    reads earlier artifacts through.
+
+    Raises `RunNotFoundError` for an unknown `run_id`; `RunNotRerunnableError`
+    when `run_id` isn't the ticket's current run (superseded) or its state
+    isn't one of `failed`/`cancelled`/`killed`; `PipelineNotFoundError` when
+    the run's pipeline has since been deleted.
+    """
+    run = (
+        await session.execute(
+            select(PipelineRunRow).where(PipelineRunRow.id == run_id, PipelineRunRow.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        raise RunNotFoundError(run_id)
+
+    ticket = await get_ticket(run.ticket_id, org_id=org_id)
+    if ticket.current_run_id != run_id:
+        raise RunNotRerunnableError(run_id, run.state)
+    if run.state not in _RERUNNABLE_RUN_STATES:
+        raise RunNotRerunnableError(run_id, run.state)
+    if run.pipeline_id is None:
+        raise PipelineNotFoundError(run.pipeline_id)
+
+    cloned_kickoff = Kickoff.model_validate(run.kickoff).model_copy(
+        update={"actor": actor, "intake_point_id": "rerun", "revision": None}
+    )
+    return await start_run(
+        org_id=org_id,
+        ticket_id=run.ticket_id,
+        pipeline_id=run.pipeline_id,
+        kickoff=cloned_kickoff,
+        session=session,
+    )
 
 
 async def _nearest_upstream_skill_stage_resolvable(
