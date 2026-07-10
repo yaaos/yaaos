@@ -159,7 +159,12 @@ describe("TicketDetailPage (MSW)", () => {
       http.get("/api/pipelines/runs/overview", () =>
         HttpResponse.json({
           status: "terminal",
-          outcome: { state: "completed", pr_url: "https://x/y/pull/42", failure_reason: null },
+          outcome: {
+            run_id: "run-1",
+            state: "completed",
+            pr_url: "https://x/y/pull/42",
+            failure_reason: null,
+          },
         }),
       ),
     );
@@ -179,6 +184,7 @@ describe("TicketDetailPage (MSW)", () => {
         HttpResponse.json({
           status: "terminal",
           outcome: {
+            run_id: "run-1",
             state: "failed",
             pr_url: null,
             failure_reason: "SkillReturn schema violation",
@@ -189,6 +195,29 @@ describe("TicketDetailPage (MSW)", () => {
     render(wrap(<TicketDetailPage />));
     await screen.findByTestId("attention-block");
     expect(screen.getByText("SkillReturn schema violation")).toBeInTheDocument();
+    expect(screen.getByTestId("rerun-run")).toBeInTheDocument();
+  });
+
+  it("terminal: Re-run confirm fires the rerun POST for a failed run", async () => {
+    withBaseHandlers();
+    let posted = false;
+    server.use(
+      http.get("/api/pipelines/runs/overview", () =>
+        HttpResponse.json({
+          status: "terminal",
+          outcome: { run_id: "run-1", state: "failed", pr_url: null, failure_reason: "boom" },
+        }),
+      ),
+      http.post("/api/pipelines/runs/run-1/rerun", () => {
+        posted = true;
+        return HttpResponse.json({ run_id: "run-2" }, { status: 201 });
+      }),
+    );
+    render(wrap(<TicketDetailPage />));
+    await userEvent.click(await screen.findByTestId("rerun-run"));
+    expect(await screen.findByText("Re-run pipeline?")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Re-run" }));
+    await waitFor(() => expect(posted).toBe(true));
   });
 
   it("switches to the Runs tab and renders a run card", async () => {

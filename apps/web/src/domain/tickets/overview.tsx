@@ -18,6 +18,7 @@ import {
   type RunOutcomeView,
   useArtifactVersion,
   useCancelRun,
+  useRerunRun,
   useRespondPause,
   useRunOverview,
   useRuns,
@@ -86,7 +87,7 @@ export function OverviewTab({
     return <InFlightCard ticketId={ticketId} run={overview.run} onShowRuns={onShowRuns} />;
   }
   if (overview.status === "terminal" && overview.outcome) {
-    return <OutcomeCard outcome={overview.outcome} />;
+    return <OutcomeCard ticketId={ticketId} outcome={overview.outcome} />;
   }
   return null;
 }
@@ -320,30 +321,48 @@ function InFlightCard({
   );
 }
 
-function OutcomeCard({ outcome }: { outcome: RunOutcomeView }) {
+const RERUNNABLE_RUN_STATES = new Set(["failed", "cancelled", "killed"]);
+
+function OutcomeCard({ ticketId, outcome }: { ticketId: string; outcome: RunOutcomeView }) {
   const success = outcome.state === "completed";
   const Icon = success ? CheckCircle2 : XCircle;
+  const rerun = useRerunRun(ticketId);
+  const [rerunOpen, setRerunOpen] = useState(false);
+  const canRerunRun = RERUNNABLE_RUN_STATES.has(outcome.state);
+
   return (
     <div
       className="rounded-md border border-border p-4"
       data-testid="attention-block"
       data-state={outcome.state}
     >
-      <div className="flex items-center gap-2">
-        <Icon
-          className={success ? "w-4 h-4 text-success" : "w-4 h-4 text-destructive"}
-          aria-hidden
-        />
-        <span className="font-medium capitalize">{outcome.state}</span>
-        {outcome.pr_url && (
-          <a
-            href={outcome.pr_url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Icon
+            className={success ? "w-4 h-4 text-success" : "w-4 h-4 text-destructive"}
+            aria-hidden
+          />
+          <span className="font-medium capitalize">{outcome.state}</span>
+          {outcome.pr_url && (
+            <a
+              href={outcome.pr_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+            >
+              View PR <ExternalLink className="w-3 h-3" aria-hidden />
+            </a>
+          )}
+        </div>
+        {canRerunRun && (
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="rerun-run"
+            onClick={() => setRerunOpen(true)}
           >
-            View PR <ExternalLink className="w-3 h-3" aria-hidden />
-          </a>
+            Re-run
+          </Button>
         )}
       </div>
       {outcome.failure_reason && (
@@ -351,6 +370,15 @@ function OutcomeCard({ outcome }: { outcome: RunOutcomeView }) {
           {outcome.failure_reason}
         </pre>
       )}
+      <ConfirmModal
+        open={rerunOpen}
+        onOpenChange={setRerunOpen}
+        title="Re-run pipeline?"
+        body="Starts a new run from the beginning."
+        confirmLabel="Re-run"
+        pending={rerun.isPending}
+        onConfirm={() => rerun.mutate(outcome.run_id, { onSettled: () => setRerunOpen(false) })}
+      />
     </div>
   );
 }

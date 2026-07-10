@@ -1155,6 +1155,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pipelines/runs/{run_id}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rerun Run Endpoint
+         * @description A NEW run on the SAME ticket, starting at stage index 0 — distinct
+         *     from `POST /runs/rerun` above (`start_rerun_from_stage`, a 2-segment
+         *     path; this 3-segment path can never collide with it in FastAPI's
+         *     router).
+         */
+        post: operations["rerun_run_endpoint_api_pipelines_runs__run_id__rerun_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity": {
         parameters: {
             query?: never;
@@ -3090,6 +3113,11 @@ export interface components {
             failure_reason: string | null;
             /** Pr Url */
             pr_url: string | null;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
             /**
              * State
              * @enum {string}
@@ -5846,6 +5874,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rerun_run_endpoint_api_pipelines_runs__run_id__rerun_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RerunResponse"];
                 };
             };
             /** @description Validation Error */
