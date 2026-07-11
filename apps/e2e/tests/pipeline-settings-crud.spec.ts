@@ -3,10 +3,11 @@
  *
  * Creates a pipeline from the `dev` template (which also materializes its
  * called `implementation` pipeline), edits a stage's boundary to
- * always-proceed and saves, introduces a call cycle
- * (`implementation` → `dev` → `implementation`) and sees the
- * `invalid_definition` banner, then deletes the referenced `implementation`
- * pipeline and sees the "In use…" message.
+ * always-proceed — "Save stage" auto-saves the definition immediately
+ * ("Saved." status) and the edit persists across a page reload —
+ * introduces a call cycle (`implementation` → `dev` → `implementation`)
+ * whose auto-save surfaces the `invalid_definition` banner, then deletes
+ * the referenced `implementation` pipeline and sees the "In use…" message.
  *
  * Requires the live Docker stack (`bin/dev-rebuild`).
  */
@@ -17,7 +18,7 @@ import { loginAsOwner, resetStack, YAAOS_URL } from "./_helpers";
 const ORG_SLUG = "acme-pipeline-settings";
 const BUILDER_GITHUB_ID = "9002";
 
-test("admin creates a pipeline from a template, edits a boundary, hits a cycle, and deletes a referenced pipeline", async ({
+test("admin creates a pipeline from a template, auto-saves a boundary edit, hits a cycle, and deletes a referenced pipeline", async ({
   page,
   request,
 }) => {
@@ -49,7 +50,8 @@ test("admin creates a pipeline from a template, edits a boundary, hits a cycle, 
   const implementationRow = pipelineRow("implementation");
   await expect(implementationRow).toBeVisible();
 
-  // Edit a stage's boundary to always-proceed and save.
+  // Edit a stage's boundary to always-proceed — "Save stage" auto-saves the
+  // whole definition immediately.
   await devRow.getByRole("button", { name: "dev" }).click();
   await expect(devRow.getByTestId(/^pipeline-stage-edit-/).first()).toBeVisible();
   await devRow.getByTestId(/^pipeline-stage-edit-/).first().click();
@@ -60,13 +62,29 @@ test("admin creates a pipeline from a template, edits a boundary, hits a cycle, 
   await stageEditor.getByTestId("stage-editor-save").click();
   await expect(stageEditor).toBeHidden();
 
-  await devRow.getByTestId("pipeline-save").click();
-  // Save round-trips (button returns from "Saving…" to "Save") with no error banner.
-  await expect(devRow.getByTestId("pipeline-save")).toHaveText("Save", { timeout: 10_000 });
+  // Auto-save round-trips ("Saving…" → "Saved.") with no error banner.
+  await expect(devRow.getByTestId("pipeline-save-status")).toHaveText("Saved.", {
+    timeout: 10_000,
+  });
   await expect(devRow.getByText(/Couldn't save|Invalid pipeline definition/)).toHaveCount(0);
 
+  // The boundary edit persists across a reload — reopen the stage editor and
+  // the always-proceed radio is still checked.
+  await page.reload();
+  await expect(devRow).toBeVisible({ timeout: 15_000 });
+  await devRow.getByRole("button", { name: "dev" }).click();
+  await expect(devRow.getByTestId(/^pipeline-stage-edit-/).first()).toBeVisible();
+  await devRow.getByTestId(/^pipeline-stage-edit-/).first().click();
+  await expect(stageEditor).toBeVisible();
+  await expect(
+    stageEditor.getByRole("radio", { name: "Always proceed automatically" }),
+  ).toBeChecked();
+  await stageEditor.getByRole("button", { name: "Cancel" }).click();
+  await expect(stageEditor).toBeHidden();
+
   // Introduce a call cycle: implementation → dev (dev already calls
-  // implementation) → 400 invalid_definition on save.
+  // implementation) → the stage save's auto-save PUT returns 400
+  // invalid_definition.
   await implementationRow.getByRole("button", { name: "implementation" }).click();
   await expect(implementationRow.getByTestId("pipeline-add-stage")).toBeVisible();
   await implementationRow.getByTestId("pipeline-add-stage").click();
@@ -79,7 +97,6 @@ test("admin creates a pipeline from a template, edits a boundary, hits a cycle, 
   await callStageEditor.getByTestId("stage-editor-save").click();
   await expect(callStageEditor).toBeHidden();
 
-  await implementationRow.getByTestId("pipeline-save").click();
   await expect(implementationRow.getByText(/Invalid pipeline definition/)).toBeVisible({
     timeout: 10_000,
   });

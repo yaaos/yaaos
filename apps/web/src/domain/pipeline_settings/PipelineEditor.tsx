@@ -1,18 +1,19 @@
 /**
  * Pipeline definition editor — name/description fields, the ordered stage
- * list (edit / move / remove per row via a DropdownMenu), the "Add stage"
- * picker, and Save. Used both for editing an existing org pipeline (inside
- * its Accordion row) and for composing a brand-new one (`NewPipelineCard`).
+ * list (edit / move / remove per row via a DropdownMenu), and the "Add
+ * stage" picker. An existing pipeline (inside its Accordion row) auto-saves
+ * every committed edit; a brand-new one (`NewPipelineCard`) builds a local
+ * draft until "Create pipeline".
  */
 
 import { apiErrorCode } from "@core/api/public/client";
 import {
   type ActionInfoView,
+  type PipelineDetailView,
   type PipelineSummaryView,
   useCreatePipeline,
   useDeletePipeline,
   usePipelineDetail,
-  useUpdatePipeline,
 } from "@core/api/public/queries";
 import { ConfirmModal } from "@shared/components/public/layout/confirm-modal";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
@@ -38,7 +39,7 @@ import {
   Plus,
   Wrench,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StageEditorSheet } from "./StageEditorSheet";
 import type { CodingAgentInstall } from "./queries";
 import {
@@ -51,6 +52,7 @@ import {
   pipelineDraftIsValid,
   upstreamStageNames,
 } from "./types";
+import { useAutoSavePipeline } from "./use-auto-save";
 
 const KIND_ICON: Record<StageDraft["kind"], typeof Play> = {
   skill: Play,
@@ -83,18 +85,22 @@ function stageSummary(
  * The shared stage-list body: name/description fields, ordered stage rows,
  * "Add stage" picker, and the per-stage editor Sheet. Owns no persistence —
  * `draft`/`setDraft` is fully controlled by the caller (`ExistingPipelineEditor`
- * or `NewPipelineCard`), which owns Save/Delete.
+ * or `NewPipelineCard`); `onDraftCommitted` fires with the new draft after
+ * each committed edit (stage save / move / remove, name or description blur)
+ * so a caller can persist it.
  */
 function PipelineDraftFields({
   draft,
   setDraft,
   pipelineOptions,
   picklists,
+  onDraftCommitted,
 }: {
   draft: PipelineDraft;
   setDraft: (d: PipelineDraft) => void;
   pipelineOptions: { id: string; name: string }[];
   picklists: PicklistData;
+  onDraftCommitted?: (next: PipelineDraft) => void;
 }) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   // Sticky last-edited stage: `StageEditorSheet` must stay mounted across
@@ -116,21 +122,35 @@ function PipelineDraftFields({
       ? draft.stages.findIndex((s) => s.key === lastEditingStage.key)
       : -1;
 
+  // A just-added stage's key, until its first "Save stage" — closing its
+  // editor without saving discards the (invalid) blank row. A ref, not
+  // state: the Save-stage click runs `onSave` then `onOpenChange(false)`
+  // synchronously, so the close handler must see the save's effect in the
+  // same batch.
+  const pendingNewKeyRef = useRef<string | null>(null);
+
   function updateStage(next: StageDraft) {
-    setDraft({
+    if (next.key === pendingNewKeyRef.current) pendingNewKeyRef.current = null;
+    const nextDraft = {
       ...draft,
       stages: draft.stages.map((s) => (s.key === next.key ? next : s)),
-    });
+    };
+    setDraft(nextDraft);
+    onDraftCommitted?.(nextDraft);
   }
 
   function addStage(kind: StageDraft["kind"]) {
     const stage = newStageDraft(kind);
+    pendingNewKeyRef.current = stage.key;
     setDraft({ ...draft, stages: [...draft.stages, stage] });
     setEditingKey(stage.key);
   }
 
   function removeStage(key: string) {
-    setDraft({ ...draft, stages: draft.stages.filter((s) => s.key !== key) });
+    if (key === pendingNewKeyRef.current) pendingNewKeyRef.current = null;
+    const nextDraft = { ...draft, stages: draft.stages.filter((s) => s.key !== key) };
+    setDraft(nextDraft);
+    onDraftCommitted?.(nextDraft);
   }
 
   function moveStage(key: string, direction: -1 | 1) {
@@ -141,7 +161,20 @@ function PipelineDraftFields({
     const [moved] = next.splice(idx, 1);
     if (!moved) return;
     next.splice(target, 0, moved);
-    setDraft({ ...draft, stages: next });
+    const nextDraft = { ...draft, stages: next };
+    setDraft(nextDraft);
+    onDraftCommitted?.(nextDraft);
+  }
+
+  function closeEditor() {
+    const pendingKey = pendingNewKeyRef.current;
+    if (editingKey != null && editingKey === pendingKey) {
+      pendingNewKeyRef.current = null;
+      const nextDraft = { ...draft, stages: draft.stages.filter((s) => s.key !== pendingKey) };
+      setDraft(nextDraft);
+      onDraftCommitted?.(nextDraft);
+    }
+    setEditingKey(null);
   }
 
   return (
@@ -153,6 +186,7 @@ function PipelineDraftFields({
           data-testid="pipeline-name"
           value={draft.name}
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+          onBlur={() => onDraftCommitted?.(draft)}
         />
       </div>
       <div className="flex flex-col gap-1.5">
@@ -162,6 +196,7 @@ function PipelineDraftFields({
           data-testid="pipeline-description"
           value={draft.description}
           onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+          onBlur={() => onDraftCommitted?.(draft)}
         />
       </div>
 
@@ -287,7 +322,7 @@ function PipelineDraftFields({
       {lastEditingStage && (
         <StageEditorSheet
           open={editingStage != null}
-          onOpenChange={(open) => !open && setEditingKey(null)}
+          onOpenChange={(open) => !open && closeEditor()}
           stage={editingStage ?? lastEditingStage}
           upstreamNames={upstreamStageNames(draft.stages, editingIndex)}
           pipelineOptions={pipelineOptions}
@@ -311,8 +346,15 @@ function saveErrorMessage(err: unknown): string {
   return "Couldn't save this pipeline.";
 }
 
+const SAVE_STATUS_TEXT = {
+  saving: "Saving…",
+  saved: "Saved.",
+  blocked: "Not saved — needs a name and at least one complete stage.",
+} as const;
+
 /** Editor body for an existing org pipeline — mounted lazily (only while
- *  its Accordion row is expanded), so the detail fetch is on-demand. */
+ *  its Accordion row is expanded), so the detail fetch is on-demand. Every
+ *  committed edit auto-saves via `useAutoSavePipeline`. */
 export function ExistingPipelineEditor({
   pipelineId,
   allPipelines,
@@ -323,21 +365,48 @@ export function ExistingPipelineEditor({
   picklists: PicklistData;
 }) {
   const { data: detail, isLoading, isError } = usePipelineDetail(pipelineId, { enabled: true });
-  const update = useUpdatePipeline();
   const del = useDeletePipeline();
   const [draft, setDraft] = useState<PipelineDraft | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Fold server-minted stage ids back into the draft so re-saves don't
+  // re-mint them. Position-matched; keys and every other field untouched. A
+  // length mismatch means a newer local edit is ahead of this response —
+  // skip, the next save's response will carry the right ids.
+  const handleSaved = useCallback((saved: PipelineDetailView) => {
+    setDraft((prev) => {
+      if (!prev || prev.stages.length !== saved.stages.length) return prev;
+      return {
+        ...prev,
+        stages: prev.stages.map((s, i) => {
+          const serverId = saved.stages[i]?.id;
+          return s.id || serverId == null ? s : { ...s, id: serverId };
+        }),
+      };
+    });
+  }, []);
+
+  const { commit, markSaved, status, error } = useAutoSavePipeline(pipelineId, {
+    onSaved: handleSaved,
+  });
 
   // Seed the local draft from the fetched definition exactly once — never
   // recompute inline from `detail` on every render. `detailToDraft` mints a
   // fresh client-only `key` per stage, so recomputing on each render (e.g.
   // triggered by an unrelated query refetch) would silently swap every
   // stage's key out from under the open `StageEditorSheet`, unmounting and
-  // remounting it mid-interaction.
+  // remounting it mid-interaction. The seeded draft is the auto-save
+  // baseline (`markSaved`) so a no-op blur never PUTs.
   useEffect(() => {
-    if (detail) setDraft((prev) => prev ?? detailToDraft(detail));
-  }, [detail]);
+    if (!detail) return;
+    setDraft((prev) => {
+      if (prev) return prev;
+      const seeded = detailToDraft(detail);
+      markSaved(seeded);
+      return seeded;
+    });
+  }, [detail, markSaved]);
 
   const active = draft;
 
@@ -364,20 +433,9 @@ export function ExistingPipelineEditor({
         setDraft={setDraft}
         pipelineOptions={pipelineOptions}
         picklists={picklists}
+        onDraftCommitted={commit}
       />
       <div className="flex items-center gap-2">
-        <Button
-          data-testid="pipeline-save"
-          disabled={!pipelineDraftIsValid(active) || update.isPending}
-          onClick={() =>
-            update.mutate(
-              { id: pipelineId, definition: draftToWire(active) },
-              { onSuccess: () => setDraft(null) },
-            )
-          }
-        >
-          {update.isPending ? "Saving…" : "Save"}
-        </Button>
         <Button
           variant="destructive"
           data-testid="pipeline-delete"
@@ -388,8 +446,13 @@ export function ExistingPipelineEditor({
         >
           Delete
         </Button>
+        {status !== "idle" && status !== "error" && (
+          <output data-testid="pipeline-save-status" className="text-sm text-muted-foreground">
+            {SAVE_STATUS_TEXT[status]}
+          </output>
+        )}
       </div>
-      {update.isError && <ErrorBanner message={saveErrorMessage(update.error)} />}
+      {status === "error" && <ErrorBanner message={saveErrorMessage(error)} />}
       {deleteError && <ErrorBanner message={deleteError} />}
 
       <ConfirmModal
