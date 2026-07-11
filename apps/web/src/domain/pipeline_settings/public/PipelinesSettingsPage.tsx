@@ -23,7 +23,7 @@ import { Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { ExistingPipelineEditor, NewPipelineCard, type PicklistData } from "../PipelineEditor";
 import { TemplateDialog } from "../TemplateDialog";
-import { useClaudeCodeDefaults, useInstalledCodingAgents } from "../queries";
+import { useInstalledCodingAgents } from "../queries";
 
 export function PipelinesSettingsPage() {
   return (
@@ -51,13 +51,10 @@ export function PipelinesSettingsPage() {
 function PipelinesContent() {
   const { data: pipelines } = usePipelines();
   const { data: agents } = useInstalledCodingAgents();
-  const { data: defaults } = useClaudeCodeDefaults();
   const { data: actions } = useActions();
 
   const picklists: PicklistData = {
     agents,
-    models: defaults.models,
-    efforts: defaults.efforts,
     actions,
   };
 

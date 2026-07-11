@@ -4,7 +4,7 @@
 
 ## Scope
 
-Routes: `auth`, `members`, `audit`, `vcs`, `coding-agents`, `coding-agents/$pluginId`, `api-keys`, `mcp-proxy`, `workspaces` — see `core/routing` for mounts. Consumes endpoints: `/api/coding-agents`, `/api/api-keys`, `/api/mcp-proxy`, `/api/orgs`, `/api/memberships`, `/api/audit`, `/api/github/*`, `/api/vcs`, `/api/sso/*`, `/api/claude_code/*`. Owns no data.
+Routes: `auth`, `members`, `audit`, `vcs`, `coding-agents`, `coding-agents/$pluginId`, `api-keys`, `mcp-proxy`, `workspaces` — see `core/routing` for mounts. Consumes endpoints: `/api/coding-agents`, `/api/coding-agents/available`, `/api/api-keys`, `/api/mcp-proxy`, `/api/orgs`, `/api/memberships`, `/api/audit`, `/api/github/*`, `/api/vcs`, `/api/sso/*`. Owns no data.
 
 Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`test/layout.test.tsx`).
 
@@ -20,7 +20,7 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 ## Coding Agents list
 
-`CodingAgentsSettingsPage` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` (`useSuspenseQuery`). "Add coding agent" opens an install card with a direct "Add Claude Code" button — `claude_code` is the only available plugin and is disabled when already installed.
+`CodingAgentsSettingsPage` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` + `useAvailablePlugins` (both `useSuspenseQuery`). "Add coding agent" opens a picker card that lists all registered plugins (from `GET /api/coding-agents/available`) — each plugin gets its own row with an "Add" button disabled when already installed. Currently the only available plugin is `claude_code`.
 
 ## Coding Agent detail
 

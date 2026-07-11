@@ -20,6 +20,7 @@ EXPECTED_ALL = frozenset(
         "Effort",
         "RunResult",
         "RunStatus",
+        "StageOptions",
         "Usage",
         "CodingAgentError",
         "PluginNotFoundError",
@@ -108,6 +109,8 @@ def test_protocol_has_expected_methods() -> None:
         "parse_result",
         "parse_activity_line",
         "validate_settings",
+        "stage_options",
+        "skill_path",
     }
 
 

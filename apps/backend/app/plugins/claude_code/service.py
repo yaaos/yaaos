@@ -25,9 +25,9 @@ import app.core.api_keys as _api_keys
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
-    CodingAgentError,
     InvokeCodingAgent,
     RunResult,
+    StageOptions,
     Usage,
     register_plugin,
 )
@@ -36,6 +36,8 @@ from app.core.coding_agent import (
 )
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.domain.pipelines import render_stage_prompt
+from app.plugins.claude_code.defaults import EFFORTS, MODELS
 from app.plugins.claude_code.settings_schema import validate_settings as _validate_settings
 
 log = structlog.get_logger("claude_code")
@@ -400,112 +402,45 @@ def _render_activity_log(stdout: str) -> ActivityLog:
     return ActivityLog(events=rendered)
 
 
-# ── Stage-invocation prompt rendering ─────────────────────────────────────────
-#
-# Renders `Invocation.context` (a `domain/pipelines.StageInvocationContext`
-# dump plus the engine-injected `output_schema`) into the headless prompt a
-# pipeline skill stage runs against. The skill file itself
-# (`.claude/skills/<skill>/SKILL.md`) owns every skill-specific instruction —
-# this rendering only supplies the generic stage context every invocation
-# carries, so the plugin stays skill-agnostic.
-
-
-def _render_stage_prompt(skill: str, ctx: Mapping[str, Any]) -> str:
-    lines: list[str] = [
-        f'Use the "{skill}" skill (.claude/skills/{skill}/SKILL.md) to complete this pipeline stage.'
-    ]
-
-    stage_name = ctx.get("stage_name")
-    ticket_id = ctx.get("ticket_id")
-    header = f"\nStage: {stage_name}" if stage_name else ""
-    if header and ticket_id:
-        header += f" (ticket {ticket_id})"
-    if header:
-        lines.append(header)
-
-    lines.append("\n## Input\n")
-    lines.append(str(ctx.get("input") or ""))
-
-    pr = ctx.get("pr")
-    if pr:
-        lines.append("\n## Pull request\n")
-        lines.append(f"- PR: {pr['pr_external_id']}")
-        lines.append(f"- Base SHA: {pr['base_sha']}")
-        lines.append(f"- Head SHA: {pr['head_sha']}")
-        prev = pr.get("prev_reviewed_head_sha")
-        lines.append(f"- Previously reviewed head SHA: {prev or 'none (first review)'}")
-        diff_base = prev or pr["base_sha"]
-        lines.append(f"\nRun `git diff {diff_base}..{pr['head_sha']}` to inspect the change.")
-
-    upstream_stages = ctx.get("upstream_stages") or []
-    if upstream_stages:
-        lines.append("\n## Upstream artifacts\n")
-        for stage in upstream_stages:
-            lines.append(f"### {stage['stage_name']} — {stage['description']}\n")
-            lines.append(stage["artifact_body"])
-
-    revision = ctx.get("revision")
-    if revision:
-        source_label = {
-            "instruction": "Human instruction",
-            "send_back": "Send-back gap",
-            "fix": "Fix request",
-        }.get(revision["source"], revision["source"])
-        lines.append(f"\n## Revision ({source_label})\n")
-        lines.append(revision["text"])
-        lines.append("\n### Prior artifact\n")
-        lines.append(revision["prior_artifact"])
-
-    prior_findings = ctx.get("prior_findings") or []
-    if prior_findings:
-        lines.append("\n## Prior findings\n")
-        for finding in prior_findings:
-            if finding.get("code_file"):
-                loc = f" ({finding['code_file']}:{finding.get('code_line') or '?'})"
-            elif finding.get("artifact_section"):
-                loc = f" ({finding['artifact_section']})"
-            else:
-                loc = ""
-            lines.append(f"- [{finding['finding_id']}] [{finding['severity']}]{loc} {finding['body']}")
-
-    artifact_path = ctx.get("artifact_path")
-    lines.append("\n## Output\n")
-    if artifact_path:
-        lines.append(f"Write your artifact output to `{artifact_path}`.\n")
-
-    schema_str = json.dumps(ctx.get("output_schema", {}), indent=2)
-    lines.append(
-        "Respond with EXACTLY a JSON object matching this schema. No markdown fences. "
-        "No commentary. No preamble. Your response must start with `{` and end with `}`.\n\n"
-        f"{schema_str}"
-    )
-    return "\n".join(lines)
-
-
 # ── Plugin ────────────────────────────────────────────────────────────────────
 
 
 class ClaudeCodePlugin:
     plugin_id = "claude_code"
+    display_name = "Claude Code"
+    command_kind = "InvokeClaudeCode"
+
+    def stage_options(self) -> StageOptions:
+        """Return the Claude Code model and effort enumerations.
+
+        Sourced from `defaults.py` constants. Pure — no IO.
+        """
+        return StageOptions(models=MODELS, efforts=EFFORTS)
+
+    def skill_path(self, skill_name: str) -> str:
+        """Return the checkout-relative Claude skill path for `skill_name`.
+
+        Convention: `.claude/skills/<skill_name>/SKILL.md`.
+        The agent stats this path before spawning claude; absent → failure.
+        """
+        return f".claude/skills/{skill_name}/SKILL.md"
 
     def compile_invocation(self, invocation: _NewInvocation) -> InvokeCodingAgent:
         """Translate a high-level `Invocation` into a concrete exec block.
 
         Generic across every pipeline skill: the backend supplies the full
-        `StageInvocationContext` (rendered into the prompt below) plus the
-        engine-injected `output_schema`; the named skill file
-        (`.claude/skills/<skill>/SKILL.md` in the checkout) owns all
-        skill-specific instructions — this plugin has no per-skill knowledge.
-        Raises `CodingAgentError` when the context is missing the fields
-        every stage invocation carries.
+        `StageInvocationContext` (rendered into the prompt via the shared
+        `render_stage_prompt` helper) plus the engine-injected `output_schema`;
+        the named skill file (`.claude/skills/<skill>/SKILL.md` in the
+        checkout) owns all skill-specific instructions — this plugin has no
+        per-skill knowledge. Raises `CodingAgentError` when the context is
+        missing the fields every stage invocation carries.
         """
-        ctx_dict = invocation.context
-        required = {"stage_name", "input", "artifact_path"}
-        missing = required - set(ctx_dict)
-        if missing:
-            raise CodingAgentError(f"compile_invocation: context missing required keys: {sorted(missing)}")
-
-        prompt = _render_stage_prompt(invocation.skill, ctx_dict)
+        skill_directive = (
+            f'Use the "{invocation.skill}" skill ({self.skill_path(invocation.skill)}) '
+            f"to complete this pipeline stage."
+        )
+        prompt = render_stage_prompt(invocation.context, skill_directive=skill_directive)
 
         argv = [
             "claude",

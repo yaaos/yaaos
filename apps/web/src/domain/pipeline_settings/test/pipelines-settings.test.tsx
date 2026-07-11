@@ -16,15 +16,14 @@ import { PipelinesSettingsPage } from "../public/PipelinesSettingsPage";
 const CODING_AGENTS = [
   {
     plugin_id: "claude_code",
+    display_name: "Claude Code",
+    models: ["claude-sonnet-5", "claude-opus-5"],
+    efforts: ["low", "medium", "high"],
     settings: {},
     created_at: "2026-05-20T00:00:00Z",
     updated_at: "2026-05-20T00:00:00Z",
   },
 ];
-const CLAUDE_DEFAULTS = {
-  models: ["claude-sonnet-5", "claude-opus-5"],
-  efforts: ["low", "medium", "high"],
-};
 const ACTIONS = [
   { action_id: "github:create_pr", label: "Open pull request", plugin_id: "github" },
 ];
@@ -95,7 +94,6 @@ function wrap(node: React.ReactNode) {
 function withBaseHandlers() {
   server.use(
     http.get("/api/coding-agents", () => HttpResponse.json(CODING_AGENTS)),
-    http.get("/api/claude_code/defaults", () => HttpResponse.json(CLAUDE_DEFAULTS)),
     http.get("/api/actions", () => HttpResponse.json({ actions: ACTIONS })),
     http.get("/api/pipelines/templates", () => HttpResponse.json({ templates: [] })),
   );

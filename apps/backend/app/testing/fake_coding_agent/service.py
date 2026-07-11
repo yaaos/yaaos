@@ -19,6 +19,7 @@ from app.core.coding_agent import (
     Invocation,
     InvokeCodingAgent,
     RunResult,
+    StageOptions,
     Usage,
 )
 
@@ -35,8 +36,18 @@ class FakeCodingAgentPlugin:
 
     def __init__(self, plugin_id: str = "claude_code") -> None:
         self.plugin_id = plugin_id
+        self.display_name = "Fake Plugin"
+        self.command_kind = "InvokeClaudeCode"
         # Overridable per-instance return values.
         self.compile_invocation_result: InvokeCodingAgent | None = None
+
+    def stage_options(self) -> StageOptions:
+        """Return empty enumerations — tests that need specific values override this."""
+        return StageOptions(models=(), efforts=())
+
+    def skill_path(self, skill_name: str) -> str:
+        """Conventional skill path — matches `ClaudeCodePlugin.skill_path`."""
+        return f".claude/skills/{skill_name}/SKILL.md"
 
     def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Return a stable canned exec block for the given invocation."""

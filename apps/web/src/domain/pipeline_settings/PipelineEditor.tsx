@@ -63,8 +63,6 @@ const KIND_ICON: Record<StageDraft["kind"], typeof Play> = {
 
 export interface PicklistData {
   agents: CodingAgentInstall[];
-  models: string[];
-  efforts: string[];
   actions: ActionInfoView[];
 }
 
@@ -327,8 +325,6 @@ function PipelineDraftFields({
           upstreamNames={upstreamStageNames(draft.stages, editingIndex)}
           pipelineOptions={pipelineOptions}
           agents={picklists.agents}
-          models={picklists.models}
-          efforts={picklists.efforts}
           actions={picklists.actions}
           onSave={updateStage}
         />

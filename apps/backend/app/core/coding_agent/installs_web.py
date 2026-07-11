@@ -2,7 +2,8 @@
 
 | Method | Path                                  | Action                |
 |--------|---------------------------------------|-----------------------|
-| GET    | `/api/coding-agents`                  | `CODING_AGENT_READ`   — list installs |
+| GET    | `/api/coding-agents`                  | `CODING_AGENT_READ`   — list installs (with per-plugin stage_options) |
+| GET    | `/api/coding-agents/available`        | `CODING_AGENT_READ`   — list registered plugins (for install picker) |
 | POST   | `/api/coding-agents`                  | `CODING_AGENT_WRITE`  — install a plugin |
 | PATCH  | `/api/coding-agents/{plugin_id}`      | `CODING_AGENT_WRITE`  — replace settings |
 | DELETE | `/api/coding-agents/{plugin_id}`      | `CODING_AGENT_WRITE`  — uninstall |
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 import app.core.coding_agent.installs as ca_service
 from app.core.auth import Action, org_id_var, user_id_var
 from app.core.coding_agent.service import get_plugin as get_coding_agent_plugin
+from app.core.coding_agent.service import list_plugins as list_coding_agent_plugins
 from app.core.coding_agent.types import PluginNotFoundError
 from app.core.database import session as db_session
 from app.core.sessions import current_actor, require
@@ -32,10 +34,27 @@ router = APIRouter()
 
 
 class CodingAgentView(BaseModel):
+    """Per-org coding-agent install row, enriched with per-plugin display metadata.
+
+    `display_name`, `models`, and `efforts` are read from the registered plugin
+    instance at request time — they reflect the plugin's current defaults, not
+    persisted values.
+    """
+
     plugin_id: str
     settings: dict
     created_at: datetime
     updated_at: datetime
+    display_name: str
+    models: list[str]
+    efforts: list[str]
+
+
+class AvailablePluginView(BaseModel):
+    """Thin summary of a registered coding-agent plugin for the install picker."""
+
+    plugin_id: str
+    display_name: str
 
 
 class InstallRequest(BaseModel):
@@ -52,11 +71,27 @@ def _err(status: int, code: str) -> HTTPException:
 
 
 def _view(install: ca_service.CodingAgentInstall) -> CodingAgentView:
+    try:
+        plugin = get_coding_agent_plugin(install.plugin_id)
+        opts = plugin.stage_options()
+        display_name = plugin.display_name
+        models: list[str] = list(opts.models)
+        efforts: list[str] = list(opts.efforts)
+    except PluginNotFoundError:
+        # Plugin was unregistered since install — surface empty lists so the
+        # row is still renderable rather than raising a 500 on a list call.
+        display_name = install.plugin_id
+        models = []
+        efforts = []
+
     return CodingAgentView(
         plugin_id=install.plugin_id,
         settings=install.settings,
         created_at=install.created_at,
         updated_at=install.updated_at,
+        display_name=display_name,
+        models=models,
+        efforts=efforts,
     )
 
 
@@ -68,6 +103,19 @@ async def list_endpoint() -> list[CodingAgentView]:
     async with db_session() as s:
         installs = await ca_service.list_coding_agents(s, org_id)
     return [_view(i) for i in installs]
+
+
+@router.get("/available", dependencies=[Depends(require(Action.CODING_AGENT_READ))])
+async def available_endpoint() -> dict[str, list[AvailablePluginView]]:
+    """List all registered coding-agent plugins regardless of org install state.
+
+    Used by the Coding Agents settings page to populate the install picker so
+    admins can add a plugin that isn't yet installed in their org.
+    """
+    plugins = list_coding_agent_plugins()
+    return {
+        "plugins": [AvailablePluginView(plugin_id=p.plugin_id, display_name=p.display_name) for p in plugins]
+    }
 
 
 @router.post("", dependencies=[Depends(require(Action.CODING_AGENT_WRITE))])

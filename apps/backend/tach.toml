@@ -143,7 +143,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.api_keys", "app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.sessions", "app.core.webserver", "app.domain.orgs"]
+depends_on = ["app.core.api_keys", "app.core.coding_agent", "app.core.config", "app.core.database", "app.domain.orgs", "app.domain.pipelines"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -398,6 +398,7 @@ expose = [
   "PluginNotFoundError",
   "RunResult",
   "RunStatus",
+  "StageOptions",
   "Usage",
   "build_api_key_secrets_for_org",
   "create_run",
@@ -1017,6 +1018,7 @@ expose = [
   "pipeline_referenced_by_call",
   "register_comment_findings_provider",
   "register_run_terminal_hook",
+  "render_stage_prompt",
   "request_cancel",
   "resolve_pause",
   "start_rerun",

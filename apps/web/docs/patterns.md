@@ -162,7 +162,8 @@ Module-scoped arrays. Canonical keys:
 - `["pipelines"]`, `["pipelines", id]` — org pipeline-definition list + one full definition (Pipelines settings page)
 - `["pipeline-templates"]` — the shipped, code-defined pipeline templates ("New from template" picker)
 - `["actions"]` — registered control-plane actions (Pipelines settings page's "Add stage" → action picker)
-- `["coding-agents"]`, `["claude-code", "defaults"]` — installed coding agents + `claude_code`'s model/effort dropdown values (Pipelines settings page's stage editor)
+- `["coding-agents"]` — installed coding agents; each row carries `display_name`, `models`, `efforts` from the plugin (Pipelines settings page's stage editor derives model/effort dropdowns from the selected agent's row)
+- `["coding-agents", "available"]` — all registered plugins (`plugin_id`, `display_name`); used by the Coding Agents "Add" picker
 - `["repos"]`, `["repos", repoExternalId]` — installed-repo accordion list + one repo's full config (Repos settings page)
 - `["intake-points"]` — registered intake points (Repos settings page's trigger-binding intake picker)
 - `["org-members"]` — active org members (Repos settings page's notify/owner multi-selects)

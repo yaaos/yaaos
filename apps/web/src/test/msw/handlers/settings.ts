@@ -15,11 +15,18 @@ export const API_KEY_FIXTURE = [
 export const CODING_AGENTS_FIXTURE = [
   {
     plugin_id: "claude_code",
+    display_name: "Claude Code",
+    models: ["claude-sonnet-5", "claude-opus-4-8"],
+    efforts: ["low", "medium", "high", "xhigh", "max"],
     settings: {},
     created_at: "2026-05-20T00:00:00Z",
     updated_at: "2026-05-20T00:00:00Z",
   },
 ];
+
+export const AVAILABLE_PLUGINS_FIXTURE = {
+  plugins: [{ plugin_id: "claude_code", display_name: "Claude Code" }],
+};
 
 // VCS handlers
 export const VCS_STATE_FIXTURE = {
@@ -69,10 +76,14 @@ export const settingsHandlers = [
 
   // Coding agents
   http.get("/api/coding-agents", () => HttpResponse.json(CODING_AGENTS_FIXTURE)),
+  http.get("/api/coding-agents/available", () => HttpResponse.json(AVAILABLE_PLUGINS_FIXTURE)),
   http.post("/api/coding-agents", async ({ request }) => {
     const body = (await request.json()) as { plugin_id: string; settings: Record<string, unknown> };
     return HttpResponse.json({
       plugin_id: body.plugin_id,
+      display_name: "Claude Code",
+      models: ["claude-sonnet-5"],
+      efforts: ["low", "medium", "high"],
       settings: body.settings,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -83,6 +94,9 @@ export const settingsHandlers = [
     const body = (await request.json()) as { settings: Record<string, unknown> };
     return HttpResponse.json({
       plugin_id: params.pluginId,
+      display_name: "Claude Code",
+      models: ["claude-sonnet-5"],
+      efforts: ["low", "medium", "high"],
       settings: body.settings,
       created_at: "2026-05-20T00:00:00Z",
       updated_at: new Date().toISOString(),

@@ -26,6 +26,7 @@ from app.core.coding_agent import (
     Invocation,
     InvokeCodingAgent,
     RunResult,
+    StageOptions,
     Usage,
 )
 
@@ -75,11 +76,26 @@ _STUB_LATENCY_MS = 10
 
 
 class StubCodingAgentPlugin:
-    """Wraps a real `CodingAgentPlugin`; intercepts `compile_invocation` and `parse_result`."""
+    """Wraps a real `CodingAgentPlugin`; intercepts `compile_invocation` and `parse_result`.
+
+    New Protocol members (`display_name`, `command_kind`, `stage_options`,
+    `skill_path`) are delegated to the wrapped plugin so the stub remains
+    transparent for callers that read those attributes.
+    """
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
         self.plugin_id = wrapped.plugin_id
+        self.display_name: str = getattr(wrapped, "display_name", wrapped.plugin_id)
+        self.command_kind: str = getattr(wrapped, "command_kind", "InvokeClaudeCode")
+
+    def stage_options(self) -> StageOptions:
+        """Delegate to the wrapped plugin — transparent for callers."""
+        return self._wrapped.stage_options()
+
+    def skill_path(self, skill_name: str) -> str:
+        """Delegate to the wrapped plugin — transparent for callers."""
+        return self._wrapped.skill_path(skill_name)
 
     def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Return a minimal stub exec block — argv=["stub"], empty env."""

@@ -9,7 +9,9 @@ import { Link } from "@tanstack/react-router";
 import { Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import {
+  type AvailablePlugin,
   type CodingAgentInstall,
+  useAvailablePlugins,
   useCodingAgents,
   useInstallCodingAgent,
   useUninstallCodingAgent,
@@ -44,6 +46,7 @@ export function CodingAgentsSettingsPage() {
 
 function CodingAgentsContent() {
   const { data: installs } = useCodingAgents();
+  const { data: available } = useAvailablePlugins();
   const slug = getCurrentOrgSlug();
   const install = useInstallCodingAgent();
   const uninstall = useUninstallCodingAgent();
@@ -67,7 +70,7 @@ function CodingAgentsContent() {
       {picking && (
         <section className="rounded-lg border border-border bg-card" data-testid="ca-picker-card">
           <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h3 className="text-sm font-semibold">Add Claude Code</h3>
+            <h3 className="text-sm font-semibold">Add coding agent</h3>
             <Button
               variant="ghost"
               size="sm"
@@ -77,24 +80,23 @@ function CodingAgentsContent() {
               Cancel
             </Button>
           </header>
-          <div className="px-4 py-4">
-            <p className="text-muted-foreground mb-3 text-xs">
-              Claude Code runs code reviews and replies using Anthropic's Claude Code CLI.
-            </p>
-            <Button
-              data-testid="ca-picker-add-claude_code"
-              disabled={installedIds.has("claude_code") || install.isPending}
-              onClick={() =>
-                install.mutate(
-                  { plugin_id: "claude_code", settings: {} },
-                  { onSuccess: () => setPicking(false) },
-                )
-              }
-            >
-              {installedIds.has("claude_code") ? "Installed" : "Add"}
-            </Button>
+          <div className="flex flex-col gap-3 px-4 py-4">
+            {available.plugins.map((plugin) => (
+              <PluginPickerRow
+                key={plugin.plugin_id}
+                plugin={plugin}
+                alreadyInstalled={installedIds.has(plugin.plugin_id)}
+                installing={install.isPending}
+                onInstall={() =>
+                  install.mutate(
+                    { plugin_id: plugin.plugin_id, settings: {} },
+                    { onSuccess: () => setPicking(false) },
+                  )
+                }
+              />
+            ))}
             {install.isError && (
-              <p className="mt-3 text-xs text-destructive" data-testid="ca-install-err">
+              <p className="mt-1 text-xs text-destructive" data-testid="ca-install-err">
                 {(install.error as Error)?.message || "Failed"}
               </p>
             )}
@@ -116,6 +118,35 @@ function CodingAgentsContent() {
           />
         ))
       )}
+    </div>
+  );
+}
+
+function PluginPickerRow({
+  plugin,
+  alreadyInstalled,
+  installing,
+  onInstall,
+}: {
+  plugin: AvailablePlugin;
+  alreadyInstalled: boolean;
+  installing: boolean;
+  onInstall: () => void;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between"
+      data-testid={`ca-picker-plugin-${plugin.plugin_id}`}
+    >
+      <span className="text-sm font-medium">{plugin.display_name}</span>
+      <Button
+        size="sm"
+        data-testid={`ca-picker-add-${plugin.plugin_id}`}
+        disabled={alreadyInstalled || installing}
+        onClick={onInstall}
+      >
+        {alreadyInstalled ? "Installed" : "Add"}
+      </Button>
     </div>
   );
 }
@@ -143,7 +174,7 @@ function InstallCard({
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold">{row.plugin_id}</h3>
+            <h3 className="text-sm font-semibold">{row.display_name}</h3>
             <Badge>installed</Badge>
           </div>
           <p className="text-muted-foreground mt-1 text-xs">

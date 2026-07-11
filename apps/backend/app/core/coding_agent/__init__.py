@@ -65,6 +65,7 @@ from app.core.coding_agent.types import (
     PluginNotFoundError,
     RunResult,
     RunStatus,
+    StageOptions,
     Usage,
 )
 
@@ -87,6 +88,7 @@ __all__ = [
     "PluginNotFoundError",
     "RunResult",
     "RunStatus",
+    "StageOptions",
     "Usage",
     "build_api_key_secrets_for_org",
     "create_run",

@@ -25,9 +25,16 @@ vi.mock("@tanstack/react-router", () => ({
 
 const CLAUDE_CODE = {
   plugin_id: "claude_code",
+  display_name: "Claude Code",
+  models: ["claude-sonnet-5"],
+  efforts: ["low", "medium", "high"],
   settings: {},
   created_at: "2026-05-20T00:00:00Z",
   updated_at: "2026-05-20T00:00:00Z",
+};
+
+const AVAILABLE_PLUGINS = {
+  plugins: [{ plugin_id: "claude_code", display_name: "Claude Code" }],
 };
 
 function wrap(node: React.ReactNode) {
@@ -45,6 +52,7 @@ function setupCommon() {
         ],
       }),
     ),
+    http.get("/api/coding-agents/available", () => HttpResponse.json(AVAILABLE_PLUGINS)),
   );
 }
 

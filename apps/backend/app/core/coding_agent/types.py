@@ -18,6 +18,19 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+
+class StageOptions(BaseModel, frozen=True):
+    """Per-plugin model and effort enumerations for the stage editor.
+
+    Carried by `CodingAgentPlugin.stage_options()` and surfaced on the
+    `/api/coding-agents` list row so the stage editor populates dropdowns
+    without a separate round-trip.
+    """
+
+    models: tuple[str, ...]
+    efforts: tuple[str, ...]
+
+
 # Plugin/model-specific effort level string. The plugin validates its
 # own allowed values; `core/coding_agent` treats this as an opaque str.
 Effort = str
@@ -229,6 +242,35 @@ class CodingAgentPlugin(Protocol):
         Pure function — no IO, no session. Raises `ValueError` on invalid
         input (unknown keys, bad types). The returned dict is the canonical
         form that gets persisted to the `org_coding_agents.settings` column.
+        """
+        ...
+
+    display_name: str
+    """Human-readable plugin name, e.g. "Claude Code". Surfaced on install
+    list rows so the SPA can render the display name without storing it."""
+
+    command_kind: str
+    """AgentCommandKind string this plugin dispatches, e.g. "InvokeClaudeCode".
+    Decouples `dispatch_invocation` from knowing which command kind a plugin
+    uses — the plugin declares it; dispatch reads it."""
+
+    def stage_options(self) -> StageOptions:
+        """Return the model and effort enumerations for this plugin.
+
+        Pure function — no IO, no session. Callers (the stage editor via
+        the `/api/coding-agents` list endpoint) use the returned lists to
+        populate model/effort dropdowns without a separate request.
+        """
+        ...
+
+    def skill_path(self, skill_name: str) -> str:
+        """Return the checkout-relative path of the named skill's entry file.
+
+        Pure function — no IO, no session. The agent stats this path before
+        spawning the coding-agent subprocess; an absent file causes
+        `completed_failure` with `failure_reason="skill not found: <path>"`.
+        Vendors differ in their on-disk conventions — this method is the
+        single place the convention is declared.
         """
         ...
 

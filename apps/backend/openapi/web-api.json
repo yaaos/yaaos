@@ -658,6 +658,25 @@
         "title": "AuditEntryView",
         "type": "object"
       },
+      "AvailablePluginView": {
+        "description": "Thin summary of a registered coding-agent plugin for the install picker.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plugin_id",
+          "display_name"
+        ],
+        "title": "AvailablePluginView",
+        "type": "object"
+      },
       "BoundaryControl": {
         "description": "Flat per-stage \"what to do next\" setting; `on_*` evaluated only when\n`mode == \"conditional\"`.",
         "properties": {
@@ -790,11 +809,30 @@
         "type": "object"
       },
       "CodingAgentView": {
+        "description": "Per-org coding-agent install row, enriched with per-plugin display metadata.\n\n`display_name`, `models`, and `efforts` are read from the registered plugin\ninstance at request time — they reflect the plugin's current defaults, not\npersisted values.",
         "properties": {
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "efforts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Efforts",
+            "type": "array"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
           },
           "plugin_id": {
             "title": "Plugin Id",
@@ -815,7 +853,10 @@
           "plugin_id",
           "settings",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "display_name",
+          "models",
+          "efforts"
         ],
         "title": "CodingAgentView",
         "type": "object"
@@ -5043,74 +5084,6 @@
         ]
       }
     },
-    "/api/claude_code/defaults": {
-      "get": {
-        "description": "Model / effort dropdown enums for the Claude Code settings UI.\nImported at request time so a code change surfaces on the next request.",
-        "operationId": "defaults_endpoint_api_claude_code_defaults_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Defaults Endpoint Api Claude Code Defaults Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Defaults Endpoint",
-        "tags": [
-          "claude_code"
-        ]
-      }
-    },
     "/api/coding-agents": {
       "get": {
         "operationId": "list_endpoint_api_coding_agents_get",
@@ -5248,6 +5221,79 @@
           }
         },
         "summary": "Install Endpoint",
+        "tags": [
+          "coding_agent"
+        ]
+      }
+    },
+    "/api/coding-agents/available": {
+      "get": {
+        "description": "List all registered coding-agent plugins regardless of org install state.\n\nUsed by the Coding Agents settings page to populate the install picker so\nadmins can add a plugin that isn't yet installed in their org.",
+        "operationId": "available_endpoint_api_coding_agents_available_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "items": {
+                      "$ref": "#/components/schemas/AvailablePluginView"
+                    },
+                    "type": "array"
+                  },
+                  "title": "Response Available Endpoint Api Coding Agents Available Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Available Endpoint",
         "tags": [
           "coding_agent"
         ]

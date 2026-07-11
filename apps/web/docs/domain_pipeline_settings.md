@@ -4,7 +4,7 @@
 
 ## Scope
 
-`/org/$slug/settings/pipelines`. Admin-only (sidebar link + backend `PIPELINES_MANAGE`, `Role.ADMIN`). Reads/writes `GET/POST /api/pipelines`, `GET/PUT/DELETE /api/pipelines/{id}`, `GET /api/pipelines/templates`, `POST /api/pipelines/from-template`, `GET /api/actions`, `GET /api/coding-agents`, `GET /api/claude_code/defaults`. Owns no data — every field it renders is server state.
+`/org/$slug/settings/pipelines`. Admin-only (sidebar link + backend `PIPELINES_MANAGE`, `Role.ADMIN`). Reads/writes `GET/POST /api/pipelines`, `GET/PUT/DELETE /api/pipelines/{id}`, `GET /api/pipelines/templates`, `POST /api/pipelines/from-template`, `GET /api/actions`, `GET /api/coding-agents`. Owns no data — every field it renders is server state.
 
 ## Layout
 
@@ -26,7 +26,7 @@
 
 ## Picklist data
 
-Installed coding agents (`GET /api/coding-agents`), `claude_code`'s advertised models/efforts (`GET /api/claude_code/defaults`), and registered actions (`GET /api/actions`) are fetched once at the page level (`PipelinesContent`) and threaded down as props through `PipelineEditor` → `StageEditorSheet` — keeps every `useSuspenseQuery` resolved before first paint instead of suspending deep inside a conditionally-mounted Sheet. `claude_code` is the only registered coding-agent plugin today, so the model/effort Selects read its defaults regardless of which plugin the admin picked in the agent Select.
+Installed coding agents (`GET /api/coding-agents`) and registered actions (`GET /api/actions`) are fetched once at the page level (`PipelinesContent`) and threaded down as props through `PipelineEditor` → `StageEditorSheet` — keeps every `useSuspenseQuery` resolved before first paint instead of suspending deep inside a conditionally-mounted Sheet. Each installed-agent row carries `models`/`efforts` from the plugin's `stage_options()`; the `SkillCommonFields` component derives model/effort picker options from whichever agent the admin currently has selected in the agent `Select`, so different plugins can advertise different option sets.
 
 ## Editable draft shape
 
@@ -36,7 +36,7 @@ The wire `PipelineDefinition`/`Stage` union (`core/api/public/queries`) is what 
 
 - `public/PipelinesSettingsPage.tsx` — `PipelinesSettingsPage` (default route component)
 
-Private (not in `public/`): `PipelineEditor.tsx` (`ExistingPipelineEditor`, `NewPipelineCard`, the shared stage-list body), `StageEditorSheet.tsx`, `TemplateDialog.tsx`, `types.ts` (draft shapes + `draftToWire`/`detailToDraft`/validation), `queries.ts` (installed-coding-agents + claude_code-defaults hooks).
+Private (not in `public/`): `PipelineEditor.tsx` (`ExistingPipelineEditor`, `NewPipelineCard`, the shared stage-list body), `StageEditorSheet.tsx`, `TemplateDialog.tsx`, `types.ts` (draft shapes + `draftToWire`/`detailToDraft`/validation), `queries.ts` (installed-coding-agents hook).
 
 `OrgSettingsLayout` (the passthrough Org Settings shell) lives in `shared/components/public/layout/` — this module's second real consumer triggered its graduation out of `domain/org_settings` (rule-of-three, see [components.md](components.md)).
 

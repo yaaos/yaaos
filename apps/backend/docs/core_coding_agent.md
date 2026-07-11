@@ -4,7 +4,7 @@
 
 ## Scope
 
-Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), API key aggregator (`build_api_key_secrets_for_org`), per-org install state (`org_coding_agents` table, `CodingAgentInstall` VO, install/update/uninstall/list service functions, `/api/coding-agents` routes), and the `coding_agent_runs` + `coding_agent_activity` tables.
+Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`, `stage_options`, `skill_path`, plus `display_name`/`command_kind` attributes), `StageOptions` VO (advertised model/effort lists), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), API key aggregator (`build_api_key_secrets_for_org`), per-org install state (`org_coding_agents` table, `CodingAgentInstall` VO, install/update/uninstall/list service functions, `/api/coding-agents` routes), and the `coding_agent_runs` + `coding_agent_activity` tables.
 
 Does NOT own: prompt assembly, skill resolution, output-format choice, or workspace mechanics — those are plugin- or caller-owned (`plugins/claude_code`, `domain/pipelines`).
 
@@ -23,10 +23,14 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 Signatures in `app/core/coding_agent/types.py`.
 
 - `plugin_id: str` — registry key and run-row attribute.
+- `display_name: str` — human-readable plugin name surfaced in the `/api/coding-agents` list (e.g. `"Claude Code"`).
+- `command_kind: str` — the `agent_commands.command_kind` value this plugin produces (e.g. `"InvokeClaudeCode"`). Used by `dispatch_invocation` when building the command row.
 - `compile_invocation(invocation: Invocation) -> InvokeCodingAgent` — pure function: translates skill + model + effort + context + wallclock cap into the exact argv/env/stdin the Go agent runs. Returns `env={}` — credentials are delivered via ConfigUpdate `api_keys`, not the exec env. Raises `CodingAgentError` when required context keys are missing.
 - `parse_result(terminal_event_payload: Mapping[str, Any]) -> RunResult` — pure function: decodes a terminal AgentEvent `outputs` dict into a `RunResult`. Reads `stdout` and `exit_code`; extracts `RunResult.output` from the `result` field of the terminal stream-json event (the agent's structured response JSON — the caller validates it against the invocation's own output schema); populates `usage`, `activity`, `duration_ms`. Never raises on missing keys.
 - `validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]` — pure function: validates a raw settings dict and returns the normalized form. Raises `ValueError` on invalid input (unknown keys, bad types). The `/api/coding-agents` install and update endpoints call this before persisting to `org_coding_agents.settings`; a `ValueError` becomes a 422 with `{"error": "invalid_settings", "message": ...}`.
 - `parse_activity_line(line: str) -> ActivityEvent | None` — pure function: decodes one raw `stream-json` output line into a normalized `ActivityEvent`. Returns `None` for blank lines or lines the plugin does not recognize. Called by `CodingAgentRunSinkImpl.handle_progress_event` on every `progress` AgentEvent's `stream_line` field to produce the `{kind, ts, message, detail}` frame published on the workspace-activity SSE channel.
+- `stage_options() -> StageOptions` — returns the plugin's advertised `{models, efforts}` tuples. The `/api/coding-agents` list endpoint attaches these to each installed-agent row so the SPA's stage editor can populate model/effort dropdowns per agent without a separate fetch.
+- `skill_path(skill_name: str) -> str` — returns the on-disk path of the named skill inside the agent's checkout (e.g. `.claude/skills/<skill_name>/SKILL.md`). `dispatch_invocation` uses this instead of hard-coding the convention so a future plugin can place skills elsewhere.
 
 ### `dispatch_invocation`
 
@@ -35,16 +39,17 @@ Signatures in `app/core/coding_agent/types.py`.
 Layer 3 helper in `service.py`. `ctx: DispatchContext` (`core/agent_gateway`) carries the calling run's correlation fields (`run_id`, `ticket_id`, `stage_execution_id`, `attempt`, `traceparent`). `workspace_id` is read from `invocation.workspace_id`. Flow:
 1. `get_workspace_owner(invocation.workspace_id)` — loads `org_id` + `owning_agent_id` from the workspace row; raises `WorkspaceNotFoundError` if absent.
 2. `plugin.compile_invocation(invocation)` — translates high-level intent to an exec block; raises `CodingAgentError` on a malformed context.
-3. Computes `skill_path = f".claude/skills/{invocation.skill}/SKILL.md"` — the conventional on-disk path of the named skill inside the checkout.
-4. Builds `InvokeClaudeCodeCommand` from the caller-supplied `command_id` with `invocation.exec` wrapped correctly and `skill_path` set.
+3. `skill_path = plugin.skill_path(invocation.skill)` — delegates to the plugin so different plugins can place skills at different checkout-relative paths.
+4. Builds a command from the caller-supplied `command_id` with the exec block, `skill_path`, and `command_kind = plugin.command_kind`.
 5. `dispatch_via_workspace(command, workspace_id, ctx, session, claim_workspace=True)` — Layer 2: enqueues, pins to owning agent, atomically claims via `try_claim`; raises `WorkspaceClaimFailed` when busy or inactive.
 6. `create_run(...)` — inserts `coding_agent_runs` row.
 Returns `command_id`. `org_id` is resolved from the workspace row, not a caller parameter.
 
-The agent stats `skill_path` before spawning claude — absent → `completed_failure` with `failure_reason="skill not found: <path>"`. Zero policy on the agent side; the convention is entirely backend-computed.
+The agent stats `skill_path` before spawning claude — absent → `completed_failure` with `failure_reason="skill not found: <path>"`. Zero policy on the agent side; the path is entirely plugin-computed on the backend.
 
 ### Value objects
 
+- `StageOptions{models: tuple[str, ...], efforts: tuple[str, ...]}` — frozen Pydantic model returned by `plugin.stage_options()`. Carried on `CodingAgentView` so the SPA can populate model/effort dropdowns per installed agent without a separate fetch.
 - `Invocation{skill, model, effort, context, wallclock_seconds}` — high-level intent. Context is an opaque mapping the plugin interprets per skill.
 - `Effort = str` — plugin-specific effort level. Opaque to `core/coding_agent`.
 - `InvokeCodingAgent{argv, env, stdin, wallclock_seconds}` — concrete exec block.
@@ -146,7 +151,8 @@ Composite PK `(org_id, plugin_id)`. One row per installed plugin per org.
 
 | Method | Path | Action | Notes |
 |---|---|---|---|
-| `GET` | `/api/coding-agents` | `CODING_AGENT_READ` | Returns list of installs. |
+| `GET` | `/api/coding-agents` | `CODING_AGENT_READ` | Returns list of installs; each row carries `display_name`, `models`, `efforts` from the plugin. |
+| `GET` | `/api/coding-agents/available` | `CODING_AGENT_READ` | Returns all registered plugins (`plugin_id`, `display_name`); used to populate the "Add coding agent" picker. |
 | `POST` | `/api/coding-agents` | `CODING_AGENT_WRITE` | Installs a plugin; calls `plugin.validate_settings` before write; 409 on duplicate. |
 | `PATCH` | `/api/coding-agents/{plugin_id}` | `CODING_AGENT_WRITE` | Replaces settings; calls `plugin.validate_settings`; 404 when not installed. |
 | `DELETE` | `/api/coding-agents/{plugin_id}` | `CODING_AGENT_WRITE` | Uninstalls; 404 when not installed. |
@@ -159,9 +165,9 @@ Composite PK `(org_id, plugin_id)`. One row per installed plugin per org.
 ## How it's tested
 
 - `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `set_coding_agents_for_tests` isolation.
-- `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set (including install-state symbols), Protocol has exactly `compile_invocation` + `parse_result` + `parse_activity_line` + `validate_settings`, retired names not importable.
+- `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set (including `StageOptions` and install-state symbols), Protocol has exactly `compile_invocation` + `parse_result` + `parse_activity_line` + `validate_settings` + `stage_options` + `skill_path`, retired names not importable.
 - `app/core/coding_agent/test/test_coding_agents.py` — install service + `/api/coding-agents` endpoint tests: install/list, audit emission, duplicate → 409, settings update + audit, uninstall + audit, role enforcement (member → 403, unauthenticated → 401), `validate_settings` rejection → 422.
-- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns exactly the caller-supplied `command_id` (a UUIDv7), inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` on the enqueued command from the `.claude/skills/<skill_name>/SKILL.md` convention.
+- `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns exactly the caller-supplied `command_id` (a UUIDv7), inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` from `plugin.skill_path(invocation.skill)` and `command_kind` from `plugin.command_kind`.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service: create/finalize round-trip, activity blob, `get_step_activity`.
 - `app/core/coding_agent/test/test_sink_uses_parse_result_service.py` — service: `CodingAgentRunSinkImpl.handle_terminal_event` calls `plugin.parse_result`, writes run row, returns `output` + `error_message`; non-`InvokeClaudeCode` kinds return `None`.
 - `app/plugins/claude_code/test/test_stream_parsing.py` — `_parse_usage` + `_render_activity_log` private helpers.

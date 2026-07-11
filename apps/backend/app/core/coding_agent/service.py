@@ -165,11 +165,11 @@ async def dispatch_invocation(
 
     invocation_data = plugin.compile_invocation(invocation)
 
-    # Conventional path of the named skill inside the checkout. The agent
-    # stats this before spawning claude and fails deterministically
-    # (`completed_failure`, reason "skill not found: <path>") when it's
-    # absent — zero agent policy, the convention lives here.
-    skill_path = f".claude/skills/{invocation.skill}/SKILL.md"
+    # Delegate skill-path convention to the plugin — each vendor may have its
+    # own on-disk convention. The agent stats this path before spawning the
+    # coding-agent subprocess and emits `completed_failure` with reason
+    # "skill not found: <path>" when absent — zero agent policy.
+    skill_path = plugin.skill_path(invocation.skill)
 
     # Build the typed command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
     # the `exec` wrapper is required — a flat argv dict leaves `inv.Exec.Argv`
@@ -205,7 +205,7 @@ async def dispatch_invocation(
         run_id=ctx.run_id,
         stage_execution_id=ctx.stage_execution_id,
         agent_command_id=command_id,
-        command_kind="InvokeClaudeCode",
+        command_kind=plugin.command_kind,
         plugin_id=plugin.plugin_id,
         session=session,
     )
