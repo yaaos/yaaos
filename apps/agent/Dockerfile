@@ -76,7 +76,36 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o /out/agent \
     ./cmd/agent
 
-# ── Stage 2: runtime ───────────────────────────────────────────────────
+# ── Stage 2: rwx CLI ───────────────────────────────────────────────────
+# Download the rwx CLI binary and verify its sha256 against the digest pinned
+# below before it is ever executed — the binary later runs with the org's
+# RWX_ACCESS_TOKEN in its env, so integrity matters. Bump RWX_SHA256_* together
+# with RWX_VERSION in the same commit. Using a separate stage keeps curl out of
+# the runtime image — the runtime stage COPY-s only the binary.
+# TARGETARCH is set by Docker buildx; map to the rwx release arch names:
+#   amd64 → x86_64, arm64 → aarch64.
+FROM debian:bookworm-slim AS rwx-downloader
+ARG TARGETARCH
+ARG RWX_VERSION=v3.16.0
+ARG RWX_SHA256_AMD64=9a305df96791ccc1a1ec504b0685e6ec7eee01f127924bcd6fd5553b6667b5e9
+ARG RWX_SHA256_ARM64=3ca1731cc43d0c3804a0a916256f7f776bdb75e1ab52a5c6898f1cb641e46350
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && case "${TARGETARCH}" in \
+      arm64) RWX_ARCH="aarch64"; RWX_SHA256="${RWX_SHA256_ARM64}" ;; \
+      amd64) RWX_ARCH="x86_64";  RWX_SHA256="${RWX_SHA256_AMD64}" ;; \
+      *)     echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && test -n "${RWX_SHA256}" \
+ && curl -fsSL \
+      "https://github.com/rwx-cloud/rwx/releases/download/${RWX_VERSION}/rwx-linux-${RWX_ARCH}" \
+      -o /usr/local/bin/rwx \
+ && echo "${RWX_SHA256}  /usr/local/bin/rwx" | sha256sum -c - \
+ && chmod +x /usr/local/bin/rwx \
+ && /usr/local/bin/rwx --version
+
+# ── Stage 3: runtime ───────────────────────────────────────────────────
 FROM node:24-bookworm-slim
 
 # `git` is required: the agent shells out to it for ProvisionWorkspace
@@ -102,8 +131,11 @@ RUN groupadd --system --gid 65532 nonroot \
 USER 65532:65532
 WORKDIR /home/nonroot
 
-# The binary itself.
+# The agent binary.
 COPY --from=builder --chown=nonroot:nonroot /out/agent /usr/local/bin/agent
+
+# The rwx CLI — available to the nonroot subprocess as a named binary.
+COPY --from=rwx-downloader --chown=nonroot:nonroot /usr/local/bin/rwx /usr/local/bin/rwx
 
 # Default workspace root — overridable via YAAOS_WORKSPACE_ROOT env. The
 # ECS task definition mounts a tmpfs or EBS volume here in production.

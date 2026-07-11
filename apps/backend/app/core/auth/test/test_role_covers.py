@@ -47,7 +47,7 @@ def test_every_action_has_a_required_role() -> None:
         (Action.ORG_READ, Role.BUILDER),
         (Action.MEMBERS_INVITE, Role.ADMIN),
         (Action.SSO_CONFIGURE, Role.OWNER),
-        (Action.BYOK_WRITE, Role.ADMIN),
+        (Action.API_KEY_WRITE, Role.ADMIN),
         (Action.TICKETS_READ, Role.BUILDER),
     ],
 )

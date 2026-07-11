@@ -32,7 +32,7 @@ class IntegrationProvider(Protocol):
 
 
 # Registry — plugins register themselves at bootstrap so domain/integrations
-# stays free of plugin imports. Mirrors the core/byok validator-registry
+# stays free of plugin imports. Mirrors the core/api_keys validator-registry
 # pattern.
 _REGISTRY: dict[str, IntegrationProvider] = {}
 

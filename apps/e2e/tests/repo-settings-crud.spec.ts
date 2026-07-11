@@ -86,21 +86,31 @@ test("admin binds a trigger, flips protected-code mode with confirm, and saves a
   await confirmDialog.getByTestId("repo-protected-mode-confirm-switch").click();
   await expect(page.getByRole("radio", { name: /Allow list/ })).toBeChecked();
 
-  // Add a path set with an owner and save.
+  // Add a path set with a name and an owner via the Sheet editor.
   await page.getByTestId("repo-add-path-set").click();
-  await page
-    .locator('[data-testid^="repo-path-set-globs-"]')
-    .fill("src/migrations/**\ninfra/**");
+  const editor = page.getByTestId("repo-path-set-editor");
+  await expect(editor).toBeVisible();
+  await editor.getByTestId("repo-path-set-name").fill("Infra paths");
+  await page.locator('[data-testid^="repo-path-set-globs-"]').fill("src/migrations/**\ninfra/**");
   await page.locator('[data-testid^="repo-path-set-owners-"]').click();
   await page.locator(`[data-testid$="-option-${ownerId}"]`).click();
+  await page.getByTestId("repo-path-set-editor-save").click();
+  await expect(editor).toBeHidden();
+
+  // The row appears with the set's name.
+  await expect(page.locator('[data-testid^="repo-path-set-row-"]')).toContainText("Infra paths");
+
   await page.getByTestId("repo-settings-save").click();
   await expect(page.getByText("Saved.")).toBeVisible({ timeout: 10_000 });
 
-  // Round-trips through `GET /api/repos/config` — reload, re-expand, re-read.
+  // Round-trips through `GET /api/repos/config` — reload, re-expand, re-read via the Sheet.
   await page.reload();
   await page.getByTestId("repo-row-acme/web").getByText("acme/web").click();
   await expect(page.getByTestId("repo-config-acme/web")).toBeVisible();
   await expect(page.getByRole("radio", { name: /Allow list/ })).toBeChecked();
+  await expect(page.locator('[data-testid^="repo-path-set-row-"]')).toContainText("Infra paths");
+  await page.locator('[data-testid^="repo-path-set-edit-"]').click();
+  await expect(page.getByTestId("repo-path-set-editor")).toBeVisible();
   await expect(page.locator('[data-testid^="repo-path-set-globs-"]')).toHaveValue(
     "src/migrations/**\ninfra/**",
   );

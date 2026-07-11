@@ -15,6 +15,7 @@ engine's HTTP surface.
 | POST   | `/api/pipelines/runs/{run_id}/cancel` | `REVIEWER_WRITE` — cancel a run; running cancels at the next boundary, queued cancels immediately, terminal 409s |
 | POST   | `/api/pipelines/runs/pauses/{pause_id}/respond` | `REVIEWER_WRITE` — resolve a HITL pause; responders = the pause's escalation set union org admins (`403 not_escalation_target` otherwise) |
 | POST   | `/api/pipelines/runs/rerun` | `REVIEWER_WRITE` — instruct & re-run from an earlier stage on a fresh run (queues if one's in flight) |
+| POST   | `/api/pipelines/runs/{run_id}/rerun` | `REVIEWER_WRITE` — re-run a failed/cancelled/killed run from the top on a fresh run; 409 unless `run_id` is the ticket's current run |
 | GET    | `/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity` | `REVIEWER_READ` — persisted coding-agent activity blob for one stage execution |
 
 Request bodies for create/update are the `PipelineDefinition` model itself:
@@ -51,6 +52,7 @@ from app.domain.pipelines.service import (
     PipelineReferencedError,
     RunAlreadyTerminalError,
     RunNotFoundError,
+    RunNotRerunnableError,
     StageNotInDefinitionError,
     TemplateNotFoundError,
 )
@@ -311,6 +313,29 @@ async def rerun_endpoint(body: RerunRequest) -> RerunResponse:
             raise _err(409, "missing_inherited_artifact") from exc
         await s.commit()
     return RerunResponse(run_id=run_id)
+
+
+@router.post("/runs/{run_id}/rerun", status_code=201, dependencies=[Depends(require(Action.REVIEWER_WRITE))])
+async def rerun_run_endpoint(run_id: UUID) -> RerunResponse:
+    """A NEW run on the SAME ticket, starting at stage index 0 — distinct
+    from `POST /runs/rerun` above (`start_rerun_from_stage`, a 2-segment
+    path; this 3-segment path can never collide with it in FastAPI's
+    router)."""
+    org_id = org_id_var.get()
+    if org_id is None:
+        raise _err(400, "no_org_context")
+    actor = current_actor()
+    async with db_session() as s:
+        try:
+            new_run_id = await pipelines.start_rerun(org_id=org_id, run_id=run_id, actor=actor, session=s)
+        except RunNotFoundError as exc:
+            raise _err(404, "not_found") from exc
+        except RunNotRerunnableError as exc:
+            raise _err(409, "run_not_rerunnable") from exc
+        except PipelineNotFoundError as exc:
+            raise _err(404, "pipeline_not_found") from exc
+        await s.commit()
+    return RerunResponse(run_id=new_run_id)
 
 
 class StepActivityResponse(BaseModel):

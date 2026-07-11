@@ -213,6 +213,7 @@ async def get_run_overview(ticket_id: UUID, *, session: AsyncSession) -> RunOver
     return RunOverview(
         status="terminal",
         outcome=RunOutcome(
+            run_id=run.id,
             state=run.state,  # type: ignore[arg-type]
             pr_url=ticket.pr_html_url,
             failure_reason=run.failure_reason,

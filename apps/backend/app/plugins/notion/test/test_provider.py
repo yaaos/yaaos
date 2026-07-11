@@ -62,7 +62,7 @@ async def test_validate_returns_false_on_4xx(monkeypatch, httpx_mock) -> None:
 @pytest.mark.asyncio
 async def test_validate_returns_false_on_transport_error(monkeypatch) -> None:
     """Network failures are treated as 'key invalid', matching the
-    same-shape error UX from the BYOK validator."""
+    same-shape error UX from the api_keys validator."""
     monkeypatch.setenv("NOTION_API_BASE_URL", "http://no-such-host.test")
     get_settings.cache_clear()
     assert await NotionProvider().validate(SecretStr("access-1")) is False

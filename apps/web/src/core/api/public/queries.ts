@@ -471,6 +471,18 @@ export function useRerunFromStage(ticket_id: string) {
   });
 }
 
+/** Re-run a failed/cancelled/killed run from the beginning, on a fresh run. */
+export function useRerunRun(ticket_id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (run_id: string) =>
+      apiFetch<{ run_id: string }>(`/api/pipelines/runs/${run_id}/rerun`, {
+        method: "POST",
+      }),
+    onSuccess: () => _invalidateRun(qc, ticket_id),
+  });
+}
+
 // ── Artifacts (Artifacts tab) ────────────────────────────────────────────────
 
 export type ArtifactGroupView = components["schemas"]["ArtifactGroup"];

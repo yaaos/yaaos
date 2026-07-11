@@ -5,8 +5,8 @@
 ## Scope
 
 - Owns: `encrypt`, `decrypt`, `SecretsDecryptError`.
-- Consumers: `core/identity/totp`, `domain/orgs/sso`, `core/byok`.
-- Persisted ciphertext columns live in the calling modules (`user_totp_secrets.encrypted_secret`, `sso_configs.sp_private_key_encrypted`, `byok_keys.encrypted_value`).
+- Consumers: `core/identity/totp`, `domain/orgs/sso`, `core/api_keys`.
+- Persisted ciphertext columns live in the calling modules (`user_totp_secrets.encrypted_secret`, `sso_configs.sp_private_key_encrypted`, `org_api_keys.encrypted_value`).
 
 ## Why / invariants
 

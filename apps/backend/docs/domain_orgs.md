@@ -1,10 +1,10 @@
 # domain/orgs
 
-> Org feature aggregate — invitations, SSO config, VCS binding, coding agents, onboarding.
+> Org feature aggregate — invitations, SSO config, VCS binding, onboarding.
 
 ## Scope
 
-`domain/orgs` is a feature aggregate over [`core/tenancy`](core_tenancy.md). All org and membership state (read, write, CRUD) is delegated to `core/tenancy` service primitives — `domain/orgs` never queries `orgs` or `memberships` rows directly. Feature work (invitations, SSO config, VCS binding, coding agents, onboarding) lives here; org/membership IAM is tenancy's concern.
+`domain/orgs` is a feature aggregate over [`core/tenancy`](core_tenancy.md). All org and membership state (read, write, CRUD) is delegated to `core/tenancy` service primitives — `domain/orgs` never queries `orgs` or `memberships` rows directly. Feature work (invitations, SSO config, VCS binding, onboarding) lives here; org/membership IAM is tenancy's concern. Coding-agent install state (`org_coding_agents` table, install/uninstall/update/list, `/api/coding-agents` routes) is owned by [`core/coding_agent`](core_coding_agent.md).
 
 Invitations are the sole access gate for new members — no self-signup. SAML SSO config and the onboarding-status aggregator (`register_onboarding_contributor` / `get_onboarding_status`) live here. Every non-user row is `org_id`-scoped.
 
@@ -39,15 +39,11 @@ Invitations are the sole access gate for new members — no self-signup. SAML SS
 
 Both audit with `from_role` + `to_role` payload.
 
-## VCS + coding agents
+## VCS
 
 - One VCS plugin per org. State on the `orgs` row (`vcs_plugin_id` + `vcs_settings`). GitHub install handshake is via `POST /api/github/install/start` (separate endpoint so `X-Yaaos-Org-Slug` + CSRF are available); `set_vcs` records the choice on first-bind. Switching is two-step: clear then set.
 - `clear_vcs` calls every hook registered via `register_vcs_clear_hook` (see `vcs.py`) before clearing the org row. VCS plugins (e.g. `plugins/github`) register a hook at boot to delete their per-org install rows — no direct model import needed in `domain/orgs`.
-- Many coding-agent plugins per org via `org_coding_agents(org_id, plugin_id)` with `settings jsonb`. All mutations audit.
-
-## BYOK routes
-
-HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYOK keys are per-org; routes need `core/sessions` deps). `GET` returns `configured` / `not_set` only — plaintext never leaves. Provider list sourced from `core/byok`'s validator registry.
+- Coding-agent installs are owned by [`core/coding_agent`](core_coding_agent.md) — see that doc for `org_coding_agents`, install service functions, and `/api/coding-agents` routes.
 
 ## Session-timeout override
 
@@ -55,11 +51,11 @@ HTTP surface for [`core/byok`](core_byok.md) lives in `byok_routes.py` here (BYO
 
 ## Workspace cap — `workspace_max_count`
 
-`orgs.workspace_max_count` (NOT NULL int, default 4, CHECK 1..50) caps concurrent active workspaces per WorkspaceAgent. Rides the [`core/agent_gateway`](core_agent_gateway.md) `ConfigUpdate` AgentCommand to the Go agent as `AgentConfig.max_workspaces`. `PATCH /api/orgs` accepts `workspace_max_count`; on any change it calls `enqueue_config_update_for_all_org_agents(org_id)` in the same transaction so the new cap takes effect on the agent's next claim instead of waiting up to ~1 hr for the next bearer re-exchange (same fan-out pattern BYOK key rotations use). A re-send of the existing value is a no-op for fan-out.
+`orgs.workspace_max_count` (NOT NULL int, default 4, CHECK 1..50) caps concurrent active workspaces per WorkspaceAgent. Rides the [`core/agent_gateway`](core_agent_gateway.md) `ConfigUpdate` AgentCommand to the Go agent as `AgentConfig.max_workspaces`. `PATCH /api/orgs` accepts `workspace_max_count`; on any change it calls `enqueue_config_update_for_all_org_agents(org_id)` in the same transaction so the new cap takes effect on the agent's next claim instead of waiting up to ~1 hr for the next bearer re-exchange (same fan-out pattern API key rotations use). A re-send of the existing value is a no-op for fan-out.
 
 ## Data owned
 
-Tables: `invitations`, `sso_configs`, `org_coding_agents`. `orgs` and `memberships` are owned by [`core/tenancy`](core_tenancy.md) — `domain/orgs` delegates all reads and writes on those tables through `core/tenancy` service functions (`create_org`, `create_membership`, `update_org_fields`, etc.). `domain/orgs/repository.py` holds thin shims over tenancy that expose a few targeted reads; these are flat re-exported from `domain/orgs/__init__` as `get_org_full`, `get_org_full_by_slug`, `get_membership`, `list_memberships_for_org`, `insert_org`, `insert_membership`, `insert_invitation`, `get_invitation_by_token_hash`, `hash_token`, `update_role`. Callers import them from `app.domain.orgs` directly — there is no `repository` namespace handle. See `models.py` + [core_database.md](core_database.md) for columns.
+Tables: `invitations`, `sso_configs`. (`org_coding_agents` moved to [`core/coding_agent`](core_coding_agent.md).) `orgs` and `memberships` are owned by [`core/tenancy`](core_tenancy.md) — `domain/orgs` delegates all reads and writes on those tables through `core/tenancy` service functions (`create_org`, `create_membership`, `update_org_fields`, etc.). `domain/orgs/repository.py` holds thin shims over tenancy that expose a few targeted reads; these are flat re-exported from `domain/orgs/__init__` as `get_org_full`, `get_org_full_by_slug`, `get_membership`, `list_memberships_for_org`, `insert_org`, `insert_membership`, `insert_invitation`, `get_invitation_by_token_hash`, `hash_token`, `update_role`. Callers import them from `app.domain.orgs` directly — there is no `repository` namespace handle. See `models.py` + [core_database.md](core_database.md) for columns.
 
 Notable constraints:
 - `UNIQUE(org_id, handle)` on `memberships` — keeps `@mentions` unambiguous.
@@ -76,7 +72,7 @@ Notable constraints:
 
 ## HTTP routes
 
-See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/coding-agents`, `/api/orgs`, `/api/api-keys`). See `sso_web.py` for `/api/sso/*` including `/api/sso/discover`. See `org_settings_web.py` for `GET /api/orgs/{slug}/agents`, `POST /api/orgs/{slug}/agents/shutdown`, and `POST /api/orgs/{slug}/agents/cancel-shutdown` (admin-only lifecycle endpoints; see [core_agent_gateway.md § Admin lifecycle endpoints](core_agent_gateway.md#admin-lifecycle-endpoints----post-apiorgsslugagentsshutdown-and-post-apiorgsslugagentscancel-shutdown)).
+See `web.py` for the full route list (`/api/memberships`, `/api/vcs`, `/api/orgs`, `/api/api-keys`). (`/api/coding-agents` moved to [`core/coding_agent`](core_coding_agent.md).) See `sso_web.py` for `/api/sso/*` including `/api/sso/discover`. See `org_settings_web.py` for `GET /api/orgs/{slug}/agents`, `POST /api/orgs/{slug}/agents/shutdown`, and `POST /api/orgs/{slug}/agents/cancel-shutdown` (admin-only lifecycle endpoints; see [core_agent_gateway.md § Admin lifecycle endpoints](core_agent_gateway.md#admin-lifecycle-endpoints----post-apiorgsslugagentsshutdown-and-post-apiorgsslugagentscancel-shutdown)).
 
 ## How it's tested
 

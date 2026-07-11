@@ -34,9 +34,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.api_keys import get as api_key_get
 from app.core.audit_log import Actor, ActorKind, audit_for_pr
 from app.core.auth import org_context
-from app.core.byok import get as byok_get
 from app.core.database import session as db_session
 from app.core.intake import parse_yaaos_command
 from app.core.tasks import TaskRef, enqueue, task
@@ -177,7 +177,7 @@ async def _stamp_classification(comment_id: UUID) -> _ClassifyResult | None:
             classification = "unclear"
         else:
             finding = await get_finding(row.finding_id, session=s)
-            api_key = await byok_get(org_id, "anthropic", session=s)
+            api_key = await api_key_get(org_id, "anthropic", session=s)
             result = await classify_comment(
                 ClassifyCommentInput(
                     finding_body=finding.body, finding_severity=finding.severity, comment_body=row.body

@@ -4,10 +4,10 @@ import { http, HttpResponse } from "msw";
 import type React from "react";
 import { describe, expect, it } from "vitest";
 import { server } from "../../../../test/msw/server";
-import { BYOKSettingsPage } from "../../public/byok/BYOKSettingsPage";
+import { ApiKeysSettingsPage } from "../../public/api_keys/ApiKeysSettingsPage";
 
 /**
- * Tests for BYOKSettingsPage via MSW — exercises the not_set / configured
+ * Tests for ApiKeysSettingsPage via MSW — exercises the not_set / configured
  * / rotate states and the save / test / clear action flows.
  */
 
@@ -32,15 +32,15 @@ const CONFIGURED = {
   updated_at: "2026-05-20T00:00:00Z",
 };
 
-describe("BYOKSettingsPage (MSW)", () => {
+describe("ApiKeysSettingsPage (MSW)", () => {
   it("not_set: shows status badge + Save (no Test/Remove until configured)", async () => {
     server.use(http.get("/api/api-keys", () => HttpResponse.json([NOT_SET])));
-    render(wrap(<BYOKSettingsPage />));
-    await waitFor(() => expect(screen.getByTestId("byok-card-anthropic")).toBeInTheDocument());
-    expect(screen.getByTestId("byok-status-anthropic")).toHaveTextContent(/not set/i);
-    expect(screen.getByTestId("byok-save-anthropic")).toBeDisabled();
-    expect(screen.queryByTestId("byok-test-anthropic")).toBeNull();
-    expect(screen.queryByTestId("byok-clear-anthropic")).toBeNull();
+    render(wrap(<ApiKeysSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("apikey-card-anthropic")).toBeInTheDocument());
+    expect(screen.getByTestId("apikey-status-anthropic")).toHaveTextContent(/not set/i);
+    expect(screen.getByTestId("apikey-save-anthropic")).toBeDisabled();
+    expect(screen.queryByTestId("apikey-test-anthropic")).toBeNull();
+    expect(screen.queryByTestId("apikey-clear-anthropic")).toBeNull();
   });
 
   it("typing enables Save; Save fires the mutation with provider+value", async () => {
@@ -52,11 +52,11 @@ describe("BYOKSettingsPage (MSW)", () => {
         return HttpResponse.json({ status: "ok" });
       }),
     );
-    render(wrap(<BYOKSettingsPage />));
-    await waitFor(() => expect(screen.getByTestId("byok-input-anthropic")).toBeInTheDocument());
-    const input = screen.getByTestId("byok-input-anthropic");
+    render(wrap(<ApiKeysSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("apikey-input-anthropic")).toBeInTheDocument());
+    const input = screen.getByTestId("apikey-input-anthropic");
     fireEvent.change(input, { target: { value: "sk-ant-test" } });
-    fireEvent.click(screen.getByTestId("byok-save-anthropic"));
+    fireEvent.click(screen.getByTestId("apikey-save-anthropic"));
     await waitFor(() => expect(savedBody).toEqual({ value: "sk-ant-test" }));
   });
 
@@ -74,48 +74,50 @@ describe("BYOKSettingsPage (MSW)", () => {
         return HttpResponse.json({ removed: true });
       }),
     );
-    render(wrap(<BYOKSettingsPage />));
+    render(wrap(<ApiKeysSettingsPage />));
     await waitFor(() =>
-      expect(screen.getByTestId("byok-status-anthropic")).toHaveTextContent(/configured/i),
+      expect(screen.getByTestId("apikey-status-anthropic")).toHaveTextContent(/configured/i),
     );
-    expect(screen.getByTestId("byok-configured-summary-anthropic")).toHaveTextContent(/last set/i);
-    expect(screen.queryByTestId("byok-input-anthropic")).toBeNull();
-    expect(screen.getByTestId("byok-test-anthropic")).toBeInTheDocument();
-    expect(screen.getByTestId("byok-rotate-anthropic")).toBeInTheDocument();
-    expect(screen.getByTestId("byok-clear-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("apikey-configured-summary-anthropic")).toHaveTextContent(
+      /last set/i,
+    );
+    expect(screen.queryByTestId("apikey-input-anthropic")).toBeNull();
+    expect(screen.getByTestId("apikey-test-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("apikey-rotate-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("apikey-clear-anthropic")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("byok-test-anthropic"));
+    fireEvent.click(screen.getByTestId("apikey-test-anthropic"));
     await waitFor(() => expect(validateCalled).toBe(true));
 
-    fireEvent.click(screen.getByTestId("byok-clear-anthropic"));
+    fireEvent.click(screen.getByTestId("apikey-clear-anthropic"));
     await waitFor(() => expect(clearCalled).toBe(true));
 
-    expect(screen.getByTestId("byok-timestamps-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("apikey-timestamps-anthropic")).toBeInTheDocument();
   });
 
   it("configured + Rotate: clicking Rotate reveals input; Cancel hides it again", async () => {
     server.use(http.get("/api/api-keys", () => HttpResponse.json([CONFIGURED])));
-    render(wrap(<BYOKSettingsPage />));
-    await waitFor(() => expect(screen.getByTestId("byok-rotate-anthropic")).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId("byok-rotate-anthropic"));
-    const input = screen.getByTestId("byok-input-anthropic") as HTMLInputElement;
+    render(wrap(<ApiKeysSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("apikey-rotate-anthropic")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("apikey-rotate-anthropic"));
+    const input = screen.getByTestId("apikey-input-anthropic") as HTMLInputElement;
     expect(input.type).toBe("password");
-    fireEvent.click(screen.getByTestId("byok-rotate-cancel-anthropic"));
-    expect(screen.queryByTestId("byok-input-anthropic")).toBeNull();
+    fireEvent.click(screen.getByTestId("apikey-rotate-cancel-anthropic"));
+    expect(screen.queryByTestId("apikey-input-anthropic")).toBeNull();
   });
 
   it("empty provider list shows empty message", async () => {
     server.use(http.get("/api/api-keys", () => HttpResponse.json([])));
-    render(wrap(<BYOKSettingsPage />));
-    await waitFor(() => expect(screen.getByTestId("byok-empty")).toBeInTheDocument());
+    render(wrap(<ApiKeysSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("apikey-empty")).toBeInTheDocument());
   });
 
   it("not_set: input is always type=password (no reveal toggle)", async () => {
     server.use(http.get("/api/api-keys", () => HttpResponse.json([NOT_SET])));
-    render(wrap(<BYOKSettingsPage />));
-    await waitFor(() => expect(screen.getByTestId("byok-input-anthropic")).toBeInTheDocument());
-    const input = screen.getByTestId("byok-input-anthropic") as HTMLInputElement;
+    render(wrap(<ApiKeysSettingsPage />));
+    await waitFor(() => expect(screen.getByTestId("apikey-input-anthropic")).toBeInTheDocument());
+    const input = screen.getByTestId("apikey-input-anthropic") as HTMLInputElement;
     expect(input.type).toBe("password");
-    expect(screen.queryByTestId("byok-reveal-anthropic")).toBeNull();
+    expect(screen.queryByTestId("apikey-reveal-anthropic")).toBeNull();
   });
 });

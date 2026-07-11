@@ -1,12 +1,12 @@
-"""Service tests — BYOK key distribution to agents via ConfigUpdate.
+"""Service tests — API key distribution to agents via ConfigUpdate.
 
 Covers:
-- `_build_config_update_dto` populates `byok_secrets` when a byok provider is registered.
-- Wire JSON (model_dump(mode='json')) unwraps byok_secrets values to plaintext.
+- `_build_config_update_dto` populates `api_keys` when an API key provider is registered.
+- Wire JSON (model_dump(mode='json')) unwraps api_keys values to plaintext.
 - Python model_dump stays redacted (SecretStr).
-- `byok.set` triggers `enqueue_config_update_for_all_org_agents` for every
+- `api_keys.set` triggers `enqueue_config_update_for_all_org_agents` for every
   configured agent in the org.
-- `byok.clear` triggers a ConfigUpdate refresh with an empty byok_secrets dict.
+- `api_keys.clear` triggers a ConfigUpdate refresh with an empty api_keys dict.
 - `ClaudeCodePlugin.build_invocation` no longer emits `ANTHROPIC_API_KEY` in
   `InvokeCodingAgent.env` — key delivery is exclusively via ConfigUpdate.
 """
@@ -40,73 +40,73 @@ async def _make_agent(*, org_id=None):
     return result["id"]
 
 
-# ── AgentConfig.byok_secrets wire shape ─────────────────────────────────────
+# ── AgentConfig.api_keys wire shape ─────────────────────────────────────────
 
 
 @pytest.mark.service
-def test_agent_config_byok_secrets_redacted_in_python_mode() -> None:
-    """`byok_secrets` values must appear as SecretStr (redacted) in Python model_dump."""
+def test_agent_config_api_keys_redacted_in_python_mode() -> None:
+    """`api_keys` values must appear as SecretStr (redacted) in Python model_dump."""
     config = AgentConfig(
         max_workspaces=2,
-        byok_secrets={"anthropic": SecretStr("sk-real-key")},
+        api_keys={"anthropic": SecretStr("sk-real-key")},
     )
     py_dump = config.model_dump()
-    val = py_dump["byok_secrets"]["anthropic"]
+    val = py_dump["api_keys"]["anthropic"]
     # SecretStr renders as '**********' — must NOT be the raw key.
-    assert str(val) != "sk-real-key", f"byok_secrets must be redacted in model_dump(); got {val}"
+    assert str(val) != "sk-real-key", f"api_keys must be redacted in model_dump(); got {val}"
 
 
 @pytest.mark.service
-def test_agent_config_byok_secrets_plaintext_in_json_mode() -> None:
-    """`byok_secrets` values must be plaintext strings in model_dump(mode='json')."""
+def test_agent_config_api_keys_plaintext_in_json_mode() -> None:
+    """`api_keys` values must be plaintext strings in model_dump(mode='json')."""
     config = AgentConfig(
         max_workspaces=2,
-        byok_secrets={"anthropic": SecretStr("sk-real-key")},
+        api_keys={"anthropic": SecretStr("sk-real-key")},
     )
     json_dump = config.model_dump(mode="json")
-    assert json_dump["byok_secrets"]["anthropic"] == "sk-real-key", (
-        f"byok_secrets must be plaintext in JSON mode; got {json_dump['byok_secrets']}"
+    assert json_dump["api_keys"]["anthropic"] == "sk-real-key", (
+        f"api_keys must be plaintext in JSON mode; got {json_dump['api_keys']}"
     )
 
 
 @pytest.mark.service
-def test_agent_config_byok_secrets_empty_by_default() -> None:
-    """`byok_secrets` defaults to an empty dict when not supplied."""
+def test_agent_config_api_keys_empty_by_default() -> None:
+    """`api_keys` defaults to an empty dict when not supplied."""
     config = AgentConfig(max_workspaces=1)
-    assert config.byok_secrets == {}
+    assert config.api_keys == {}
 
 
-# ── build_config_update_dto populates byok_secrets ──────────────────────────
+# ── build_config_update_dto populates api_keys ──────────────────────────────
 
 
 @pytest.mark.service
-async def test_build_config_update_includes_byok_secrets(db_session) -> None:
-    """`_build_config_update_dto` includes byok_secrets from the registered provider."""
+async def test_build_config_update_includes_api_keys(db_session) -> None:
+    """`_build_config_update_dto` includes api_keys from the registered provider."""
     import app.core.agent_gateway.service as svc  # noqa: PLC0415
     from app.core.agent_gateway import (  # noqa: PLC0415
-        clear_byok_secrets_provider,
-        register_byok_secrets_provider,
+        clear_api_key_secrets_provider,
+        register_api_key_secrets_provider,
     )
 
     org_id = await seed_org()
 
     async def fake_provider(oid, *, session):
         if oid == org_id:
-            return {"anthropic": SecretStr("sk-byok-test")}
+            return {"anthropic": SecretStr("sk-api-key-test")}
         return {}
 
     # Clear the production provider (registered by coding_agent bootstrap)
     # and install the fake for this test.
-    clear_byok_secrets_provider()
-    register_byok_secrets_provider(fake_provider)
+    clear_api_key_secrets_provider()
+    register_api_key_secrets_provider(fake_provider)
     try:
         cmd = await svc._build_config_update_dto(org_id, session=db_session)
         wire = cmd.config.model_dump(mode="json")
-        assert wire["byok_secrets"].get("anthropic") == "sk-byok-test", (
-            f"Expected anthropic key in byok_secrets; got {wire['byok_secrets']}"
+        assert wire["api_keys"].get("anthropic") == "sk-api-key-test", (
+            f"Expected anthropic key in api_keys; got {wire['api_keys']}"
         )
     finally:
-        clear_byok_secrets_provider()
+        clear_api_key_secrets_provider()
 
 
 # ── enqueue_config_update_for_all_org_agents ────────────────────────────────
@@ -164,14 +164,14 @@ async def test_enqueue_config_update_for_all_org_agents_inserts_rows(db_session)
 
 @pytest.mark.service
 async def test_fan_out_resolves_per_org_inputs_once(db_session) -> None:
-    """The fan-out path resolves the per-org `AgentConfig` (org row + BYOK
+    """The fan-out path resolves the per-org `AgentConfig` (org row + API key
     secrets) exactly once and reuses it across every agent — not once per
     agent. Regression-locks the O(N)→O(1) collapse in
     `enqueue_config_update_for_all_org_agents`."""
     from app.core.agent_gateway import (  # noqa: PLC0415
-        clear_byok_secrets_provider,
+        clear_api_key_secrets_provider,
         enqueue_config_update_for_all_org_agents,
-        register_byok_secrets_provider,
+        register_api_key_secrets_provider,
     )
 
     org_id = await seed_org()
@@ -187,24 +187,24 @@ async def test_fan_out_resolves_per_org_inputs_once(db_session) -> None:
         calls += 1
         return {}
 
-    clear_byok_secrets_provider()
-    register_byok_secrets_provider(counting_provider)
+    clear_api_key_secrets_provider()
+    register_api_key_secrets_provider(counting_provider)
     try:
         await enqueue_config_update_for_all_org_agents(org_id, session=db_session)
         await db_session.flush()
     finally:
-        clear_byok_secrets_provider()
+        clear_api_key_secrets_provider()
 
-    assert calls == 1, f"BYOK provider must be called exactly once per fan-out; got {calls}"
+    assert calls == 1, f"API key provider must be called exactly once per fan-out; got {calls}"
 
 
-# ── byok.set triggers ConfigUpdate fan-out ──────────────────────────────────
+# ── api_keys.set triggers ConfigUpdate fan-out ──────────────────────────────
 
 
 @pytest.mark.service
-async def test_byok_set_triggers_config_update_for_org_agents(db_session) -> None:
-    """`byok.set` must enqueue a ConfigUpdate for every configured agent in the org."""
-    import app.core.byok as byok  # noqa: PLC0415
+async def test_api_key_set_triggers_config_update_for_org_agents(db_session) -> None:
+    """`api_keys.set` must enqueue a ConfigUpdate for every configured agent in the org."""
+    import app.core.api_keys as api_keys  # noqa: PLC0415
 
     org_id = await _make_org(db_session)
     agent_id = await _make_agent(org_id=org_id)
@@ -224,7 +224,7 @@ async def test_byok_set_triggers_config_update_for_org_agents(db_session) -> Non
         .all()
     )
 
-    await byok.set(org_id, "anthropic", "sk-test", actor=Actor.system(), session=db_session)
+    await api_keys.set(org_id, "anthropic", "sk-test", actor=Actor.system(), session=db_session)
     await db_session.flush()
 
     after_count = len(
@@ -240,20 +240,20 @@ async def test_byok_set_triggers_config_update_for_org_agents(db_session) -> Non
         .all()
     )
     assert after_count == before_count + 1, (
-        f"byok.set must enqueue 1 ConfigUpdate; before={before_count} after={after_count}"
+        f"api_keys.set must enqueue 1 ConfigUpdate; before={before_count} after={after_count}"
     )
 
 
 @pytest.mark.service
-async def test_byok_clear_triggers_config_update_for_org_agents(db_session) -> None:
-    """`byok.clear` must enqueue a ConfigUpdate (key removed) for every configured agent."""
-    import app.core.byok as byok  # noqa: PLC0415
+async def test_api_key_clear_triggers_config_update_for_org_agents(db_session) -> None:
+    """`api_keys.clear` must enqueue a ConfigUpdate (key removed) for every configured agent."""
+    import app.core.api_keys as api_keys  # noqa: PLC0415
 
     org_id = await _make_org(db_session)
     agent_id = await _make_agent(org_id=org_id)
     await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
     # Set a key first.
-    await byok.set(org_id, "anthropic", "sk-test", actor=Actor.system(), session=db_session)
+    await api_keys.set(org_id, "anthropic", "sk-test", actor=Actor.system(), session=db_session)
     await db_session.flush()
 
     before_count = len(
@@ -269,10 +269,10 @@ async def test_byok_clear_triggers_config_update_for_org_agents(db_session) -> N
         .all()
     )
 
-    cleared = await byok.clear(org_id, "anthropic", actor=Actor.system(), session=db_session)
+    cleared = await api_keys.clear(org_id, "anthropic", actor=Actor.system(), session=db_session)
     await db_session.flush()
 
-    assert cleared, "byok.clear must return True when a row was removed"
+    assert cleared, "api_keys.clear must return True when a row was removed"
     after_count = len(
         (
             await db_session.execute(
@@ -286,7 +286,7 @@ async def test_byok_clear_triggers_config_update_for_org_agents(db_session) -> N
         .all()
     )
     assert after_count == before_count + 1, (
-        f"byok.clear must enqueue 1 ConfigUpdate; before={before_count} after={after_count}"
+        f"api_keys.clear must enqueue 1 ConfigUpdate; before={before_count} after={after_count}"
     )
 
 
@@ -297,7 +297,7 @@ async def test_byok_clear_triggers_config_update_for_org_agents(db_session) -> N
 def test_compile_invocation_does_not_emit_anthropic_api_key() -> None:
     """`ClaudeCodePlugin.compile_invocation` must NOT put ANTHROPIC_API_KEY in env.
 
-    Key delivery is exclusively via ConfigUpdate byok_secrets, never via the
+    Key delivery is exclusively via ConfigUpdate api_keys, never via the
     InvokeCodingAgent exec env.
     """
     from app.core.coding_agent import Invocation  # noqa: PLC0415

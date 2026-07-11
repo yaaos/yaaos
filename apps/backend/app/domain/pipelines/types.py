@@ -216,6 +216,7 @@ class PauseDetail(BaseModel, frozen=True):
 class RunOutcome(BaseModel, frozen=True):
     """Overview-tab payload for a `terminal` run."""
 
+    run_id: UUID
     state: RunState
     pr_url: str | None
     failure_reason: str | None

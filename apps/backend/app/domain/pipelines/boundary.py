@@ -10,9 +10,10 @@ any condition is read. `conditional` accumulates every tripped condition
 (rather than stopping at the first hit) so a pause record shows every
 reason a human needs to look, not just one:
 
-- `on_blocker_residuals` / `on_should_fix_residuals` against `residuals`'
-  severities. A review-off stage always passes an empty `residuals` — the
-  checkboxes structurally can't fire (no review ran, so no findings exist).
+- `on_blocker_residuals` / `on_should_fix_residuals` / `on_nit_residuals`
+  against `residuals`' severities. A review-off stage always passes an empty
+  `residuals` — the checkboxes structurally can't fire (no review ran, so no
+  findings exist).
 - `on_protected_code` against `repos.evaluate_protected(paths_affected)`.
   Skipped when `paths_affected` is empty — a standalone `ReviewSkillStage`'s
   `SkillReviewReturn` carries no such field, so the condition can never
@@ -71,6 +72,8 @@ async def evaluate_boundary(
         tripped["blocker_residuals"] = True
     if control.on_should_fix_residuals and any(f.severity == "should_fix" for f in residuals):
         tripped["should_fix_residuals"] = True
+    if control.on_nit_residuals and any(f.severity == "nit" for f in residuals):
+        tripped["nit_residuals"] = True
 
     protected_owner_user_ids: tuple[UUID, ...] = ()
     if control.on_protected_code and paths_affected:

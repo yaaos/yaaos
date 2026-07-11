@@ -187,7 +187,7 @@ class AgentConfig(BaseModel):
     otlp_token is treated as a secret and must not be logged.
     environment is the OTel deployment.environment.name resource attribute,
     sourced from Settings.environment (required at backend boot).
-    byok_secrets carries per-provider API keys (provider_id → SecretStr) that
+    api_keys carries per-provider API keys (provider_id → SecretStr) that
     the agent injects as env vars at Claude exec time (e.g. anthropic →
     ANTHROPIC_API_KEY). Values are treated as secrets: Python mode stays
     redacted; wire JSON (model_dump mode="json") unwraps to plaintext so the
@@ -200,7 +200,7 @@ class AgentConfig(BaseModel):
     otlp_token: SecretStr | None = None
     otlp_dataset: str | None = None
     environment: str | None = None
-    byok_secrets: dict[str, SecretStr] = Field(default_factory=dict)
+    api_keys: dict[str, SecretStr] = Field(default_factory=dict)
 
     @field_serializer("otlp_token", when_used="json")
     def _serialize_otlp_token(self, v: SecretStr | None) -> str | None:
@@ -213,8 +213,8 @@ class AgentConfig(BaseModel):
         """
         return v.get_secret_value() if v is not None else None
 
-    @field_serializer("byok_secrets", when_used="json")
-    def _serialize_byok_secrets(self, v: dict[str, SecretStr]) -> dict[str, str]:
+    @field_serializer("api_keys", when_used="json")
+    def _serialize_api_keys(self, v: dict[str, SecretStr]) -> dict[str, str]:
         """Unwrap every per-provider secret at the JSON wire-encode boundary only.
 
         Python mode (model_dump) keeps SecretStr wrappers so str/repr/logs

@@ -232,16 +232,6 @@ class CodingAgentPlugin(Protocol):
         """
         ...
 
-    def byok_requirement(self) -> str | None:
-        """Return the BYOK provider_id this plugin needs, or None if stateless.
-
-        Pure function — no IO. E.g. `ClaudeCodePlugin` returns `"anthropic"`;
-        a plugin with credentials delivered via other means returns `None`.
-        Used by `core/coding_agent.build_byok_secrets_for_org` to collect only
-        the keys the registered plugins actually need.
-        """
-        ...
-
 
 class CodingAgentError(Exception):
     """Infrastructure failure (subprocess won't spawn, config table unreadable)."""

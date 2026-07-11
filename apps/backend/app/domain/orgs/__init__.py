@@ -1,15 +1,6 @@
 """domain/orgs — orgs, memberships, invitations, SSO config, VCS + coding-agents."""
 
 from app.core.agent_gateway import register_org_arn_lookup as _register_arn_lookup
-from app.domain.orgs.coding_agents import (
-    CodingAgentAlreadyInstalledError,
-    CodingAgentInstall,
-    CodingAgentNotInstalledError,
-    install_coding_agent,
-    list_coding_agents,
-    uninstall_coding_agent,
-    update_coding_agent_settings,
-)
 from app.domain.orgs.email import (
     SentEmail,
     clear_global_inbox,
@@ -91,9 +82,6 @@ from app.domain.orgs.vcs import (
 _register_arn_lookup(_arn_lookup_impl)
 
 __all__ = [
-    "CodingAgentAlreadyInstalledError",
-    "CodingAgentInstall",
-    "CodingAgentNotInstalledError",
     "ExemptOwnerWithoutTotpError",
     "InsufficientRoleError",
     "Invitation",
@@ -130,10 +118,8 @@ __all__ = [
     "hash_token",
     "insert_membership",
     "insert_org",
-    "install_coding_agent",
     "invite",
     "list_active_member_ids",
-    "list_coding_agents",
     "list_memberships_for_org",
     "read_sent_emails",
     "register_assertion_verifier",
@@ -145,8 +131,6 @@ __all__ = [
     "set_email_inbox_for_tests",
     "set_vcs",
     "sp_metadata_xml",
-    "uninstall_coding_agent",
-    "update_coding_agent_settings",
     "update_role",
     "upsert_config",
 ]
@@ -156,8 +140,6 @@ __all__ = [
 # These web files import from `app.core.sessions` which is loaded on demand
 # here and never creates a cycle (sessions has no dependency on domain.orgs).
 import app.domain.orgs.audit_web  # noqa: E402
-import app.domain.orgs.byok_routes  # noqa: E402
-import app.domain.orgs.coding_agents_web  # noqa: E402
 import app.domain.orgs.org_settings_web  # noqa: E402
 import app.domain.orgs.sso_web  # noqa: E402
 import app.domain.orgs.vcs_web  # noqa: E402

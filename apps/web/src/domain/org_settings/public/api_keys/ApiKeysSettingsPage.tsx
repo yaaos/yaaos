@@ -12,30 +12,30 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import {
-  type ByokProviderStatus,
-  useByokProviders,
-  useClearByok,
-  useSetByok,
-  useValidateByok,
-} from "../../byok/queries";
+  type ApiKeyProviderStatus,
+  useApiKeyProviders,
+  useClearApiKey,
+  useSetApiKey,
+  useValidateApiKey,
+} from "../../api_keys/queries";
 
 /**
- * Org Settings > API Keys (BYOK). Lists every provider the backend's
+ * Org Settings > API Keys. Lists every provider the backend's
  * validator registry exposes (ships Anthropic only). Each provider
  * card is write-only: once a key is configured, the input is hidden
  * behind a Rotate button — the plaintext is never read back from the
  * backend, so we don't pretend it is. Test/Rotate/Clear actions surface
- * the underlying timestamps. The same `byok_keys` row is also shown on
+ * the underlying timestamps. The same `org_api_keys` row is also shown on
  * the Claude Code settings page; both round-trip through
  * `/api/api-keys/{provider}`.
  */
-export function BYOKSettingsPage() {
+export function ApiKeysSettingsPage() {
   return (
-    <OrgSettingsLayout active="byok">
+    <OrgSettingsLayout active="api-keys">
       <div className="mx-auto flex max-w-[900px] flex-col gap-4 p-6">
         <PageHeader
           title="API Keys"
-          subtitle="Bring your own LLM-provider keys. Encrypted at rest; never returned in plaintext after save."
+          subtitle="API keys for external providers. Encrypted at rest; never returned in plaintext after save."
         />
         <ErrorBoundary
           fallbackRender={({ resetErrorBoundary }) => (
@@ -43,7 +43,7 @@ export function BYOKSettingsPage() {
           )}
         >
           <Suspense fallback={<Skeleton className="h-24" />}>
-            <ByokProviderList />
+            <ApiKeyProviderList />
           </Suspense>
         </ErrorBoundary>
       </div>
@@ -51,12 +51,12 @@ export function BYOKSettingsPage() {
   );
 }
 
-function ByokProviderList() {
-  const { data: providers } = useByokProviders();
+function ApiKeyProviderList() {
+  const { data: providers } = useApiKeyProviders();
   if (providers.length === 0) {
     return (
-      <p className="text-muted-foreground text-sm" data-testid="byok-empty">
-        No BYOK-capable providers registered. Install a provider plugin to surface one here.
+      <p className="text-muted-foreground text-sm" data-testid="apikey-empty">
+        No API key providers registered. Install a provider plugin to surface one here.
       </p>
     );
   }
@@ -69,28 +69,28 @@ function ByokProviderList() {
   );
 }
 
-const byokKeySchema = z.object({
+const apiKeySchema = z.object({
   value: z.string().min(1, "API key is required."),
 });
 
-type ByokKeyValues = z.infer<typeof byokKeySchema>;
+type ApiKeyValues = z.infer<typeof apiKeySchema>;
 
-function ProviderCard({ status }: { status: ByokProviderStatus }) {
+function ProviderCard({ status }: { status: ApiKeyProviderStatus }) {
   // Editing mode: shown when the key isn't set, or when the user clicks Rotate.
   const [editing, setEditing] = useState(status.status !== "configured");
-  const setKey = useSetByok();
-  const validate = useValidateByok();
-  const clear = useClearByok();
+  const setKey = useSetApiKey();
+  const validate = useValidateApiKey();
+  const clear = useClearApiKey();
 
   const configured = status.status === "configured";
   const provider = status.provider;
 
-  const form = useForm<ByokKeyValues>({
-    resolver: zodResolver(byokKeySchema),
+  const form = useForm<ApiKeyValues>({
+    resolver: zodResolver(apiKeySchema),
     defaultValues: { value: "" },
   });
 
-  const onSave = (values: ByokKeyValues) => {
+  const onSave = (values: ApiKeyValues) => {
     setKey.mutate(
       { provider, value: values.value },
       {
@@ -110,14 +110,14 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
   return (
     <section
       className="rounded-lg border border-border bg-card"
-      data-testid={`byok-card-${provider}`}
+      data-testid={`apikey-card-${provider}`}
     >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold capitalize">{provider}</h3>
         {configured ? (
-          <Badge data-testid={`byok-status-${provider}`}>configured</Badge>
+          <Badge data-testid={`apikey-status-${provider}`}>configured</Badge>
         ) : (
-          <Badge variant="destructive" data-testid={`byok-status-${provider}`}>
+          <Badge variant="destructive" data-testid={`apikey-status-${provider}`}>
             not set
           </Badge>
         )}
@@ -127,7 +127,7 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
           <div className="flex flex-wrap items-center gap-2">
             <span
               className="text-sm text-muted-foreground"
-              data-testid={`byok-configured-summary-${provider}`}
+              data-testid={`apikey-configured-summary-${provider}`}
             >
               Configured ✓ · last set{" "}
               {status.updated_at ? new Date(status.updated_at).toLocaleString() : "—"}
@@ -135,7 +135,7 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
             <Button
               variant="outline"
               size="sm"
-              data-testid={`byok-test-${provider}`}
+              data-testid={`apikey-test-${provider}`}
               disabled={validate.isPending}
               onClick={() => validate.mutate(provider)}
             >
@@ -144,7 +144,7 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
             <Button
               variant="outline"
               size="sm"
-              data-testid={`byok-rotate-${provider}`}
+              data-testid={`apikey-rotate-${provider}`}
               onClick={() => setEditing(true)}
             >
               Rotate
@@ -152,7 +152,7 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
             <Button
               variant="destructive"
               size="sm"
-              data-testid={`byok-clear-${provider}`}
+              data-testid={`apikey-clear-${provider}`}
               disabled={clear.isPending}
               onClick={() => clear.mutate(provider)}
             >
@@ -173,7 +173,7 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
                         {...field}
                         type="password"
                         placeholder={configured ? "Paste new API key to replace" : "Paste API key"}
-                        data-testid={`byok-input-${provider}`}
+                        data-testid={`apikey-input-${provider}`}
                       />
                     </FormControl>
                     <FormMessage />
@@ -183,7 +183,7 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
               <Button
                 type="submit"
                 size="sm"
-                data-testid={`byok-save-${provider}`}
+                data-testid={`apikey-save-${provider}`}
                 disabled={!form.watch("value") || setKey.isPending}
               >
                 {setKey.isPending ? "Saving…" : "Save"}
@@ -193,7 +193,7 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
                   type="button"
                   variant="outline"
                   size="sm"
-                  data-testid={`byok-rotate-cancel-${provider}`}
+                  data-testid={`apikey-rotate-cancel-${provider}`}
                   onClick={onCancelRotate}
                 >
                   Cancel
@@ -205,13 +205,13 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
         {validate.data && validate.variables === provider && (
           <p
             className={`mt-2 text-xs ${validate.data.valid ? "text-emerald-600" : "text-destructive"}`}
-            data-testid={`byok-test-result-${provider}`}
+            data-testid={`apikey-test-result-${provider}`}
           >
             {validate.data.valid ? "Key looks good." : "Key rejected."}
           </p>
         )}
         {setKey.isError && (
-          <p className="mt-2 text-xs text-destructive" data-testid={`byok-save-err-${provider}`}>
+          <p className="mt-2 text-xs text-destructive" data-testid={`apikey-save-err-${provider}`}>
             {(setKey.error as Error)?.message || "Failed"}
           </p>
         )}
@@ -221,12 +221,12 @@ function ProviderCard({ status }: { status: ByokProviderStatus }) {
   );
 }
 
-function Timestamps({ status }: { status: ByokProviderStatus }) {
+function Timestamps({ status }: { status: ApiKeyProviderStatus }) {
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
   return (
     <dl
       className="mt-4 grid grid-cols-3 gap-3 text-xs"
-      data-testid={`byok-timestamps-${status.provider}`}
+      data-testid={`apikey-timestamps-${status.provider}`}
     >
       <div>
         <dt className="text-muted-foreground uppercase text-[10px] tracking-wide">

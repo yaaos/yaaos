@@ -130,7 +130,7 @@ Each subdirectory of a layer is a module. Standard files:
 
 ### Side-effect-only `web` / `*_web` submodules
 
-- `web.py`, `user_web.py`, `org_settings_web.py`, `sso_web.py`, `audit_web.py`, `coding_agents_web.py`, `vcs_web.py`, `byok_routes.py` are **side-effect-only** route-registration modules — never imported for their symbols.
+- `web.py`, `user_web.py`, `org_settings_web.py`, `sso_web.py`, `audit_web.py`, `vcs_web.py`, `installs_web.py` are **side-effect-only** route-registration modules — never imported for their symbols.
 - They are NOT exported in their owning module's `__all__`. Adding them violates Rule-9 (submodule namespace handle in `__all__`).
 - Route registration fires via a bare body-level import inside the owning `__init__.py`: `import app.<layer>.<module>.<web_file>  # noqa: F401`. The `noqa: F401` tags the import as intentional-side-effect; the `__init__.py` body's import order keeps composition deterministic.
 - Cross-module callers (tests + production) that need a `*_web` module's routes loaded use the same shape — `import app.<layer>.<module>  # noqa: F401` (the package's `__init__.py` side-effect already triggers every `*_web` registration). Never `from app.<layer>.<module> import <web_file>` — that's the Rule-6 violation the C9 sweep retired.
@@ -315,7 +315,7 @@ Canonical shapes for work that can run concurrently across multiple backend pods
 
 ## Secrets
 
-Every sensitive value crosses module boundaries as Pydantic `SecretStr`: encryption keys, OAuth client secrets + access/refresh tokens, TOTP master key, session tokens, invitation tokens, SMTP password, third-party API keys (Braintrust, Anthropic via BYOK), GitHub App private keys. `SecretStr` renders as `'**********'` in `repr`, `str`, `model_dump`, and `model_dump_json` so logs / tracebacks / audit payloads never carry plaintext.
+Every sensitive value crosses module boundaries as Pydantic `SecretStr`: encryption keys, OAuth client secrets + access/refresh tokens, TOTP master key, session tokens, invitation tokens, SMTP password, third-party API keys (Braintrust, Anthropic via `core/api_keys`), GitHub App private keys. `SecretStr` renders as `'**********'` in `repr`, `str`, `model_dump`, and `model_dump_json` so logs / tracebacks / audit payloads never carry plaintext.
 
 `SecretStr` applies at **every** module boundary, not just Settings:
 
@@ -404,7 +404,7 @@ Handlers triggered by external events MUST be idempotent under retry.
 - Single Fernet wrapper in [`core/secrets`](core_secrets.md); master key from `YAAOS_TOTP_MASTER_KEY` (fallback `YAAOS_ENCRYPTION_KEY` in non-prod). Callers `encrypt(plaintext)` / `decrypt(ciphertext)` — never construct `Fernet` directly.
 - Decrypted only at the call site. No "decrypted credentials" cache; no passing across module boundaries when not needed.
 - Never logged, echoed in errors, or placed in audit payloads. Redact before logging if an exception message could contain a secret.
-- Per-(org, provider) API keys go through [`core/byok`](core_byok.md); provider plugins register their `validate(key) -> bool` callable via `byok.register_validator(provider, callable)` at bootstrap so `core/byok` stays free of plugin imports.
+- Per-(org, provider) API keys go through [`core/api_keys`](core_api_keys.md); provider plugins register their `validate(key) -> bool` callable via `api_keys.register_validator(provider, callable)` at bootstrap so `core/api_keys` stays free of plugin imports.
 
 ## Bearer token discipline
 

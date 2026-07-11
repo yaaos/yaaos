@@ -97,6 +97,19 @@ def test_dev_planning_stages_carry_attached_reviews() -> None:
     assert plan.review is None
 
 
+def test_dev_plan_stage_uses_opus_xhigh() -> None:
+    stages_by_name = {getattr(s, "name", None): s for s in defaults.DEV.stages}
+    plan = stages_by_name["plan"]
+    assert plan.model == "claude-opus-4-8"
+    assert plan.effort == "xhigh"
+
+
+def test_implementation_implement_stage_has_extended_wallclock() -> None:
+    stages_by_name = {getattr(s, "name", None): s for s in defaults.IMPLEMENTATION.stages}
+    implement = stages_by_name["implement"]
+    assert implement.wallclock_seconds == 14400
+
+
 def test_troubleshoot_flattens_to_diagnose_fix_plan_then_implementation() -> None:
     by_id = {t.id: t for t in defaults.ALL_DEFAULTS}
     flattened = flatten(defaults.TROUBLESHOOT, org_definitions=by_id)

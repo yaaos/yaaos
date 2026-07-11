@@ -1,10 +1,10 @@
 # core/coding_agent
 
-> Vendor-neutral abstraction over coding-agent CLIs — Protocol, registry, dispatch, and run lifecycle.
+> Vendor-neutral abstraction over coding-agent CLIs — Protocol, registry, dispatch, run lifecycle, and per-org install state.
 
 ## Scope
 
-Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `byok_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), BYOK aggregator (`build_byok_secrets_for_org`), and the `coding_agent_runs` + `coding_agent_activity` tables.
+Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), API key aggregator (`build_api_key_secrets_for_org`), per-org install state (`org_coding_agents` table, `CodingAgentInstall` VO, install/update/uninstall/list service functions, `/api/coding-agents` routes), and the `coding_agent_runs` + `coding_agent_activity` tables.
 
 Does NOT own: prompt assembly, skill resolution, output-format choice, or workspace mechanics — those are plugin- or caller-owned (`plugins/claude_code`, `domain/pipelines`).
 
@@ -14,7 +14,7 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 
 - **Remote-dispatch only.** All review work dispatches via the `WorkspaceAgent` — the control plane never execs the CLI in-process.
 - **Plugin owns skill resolution, stdout parsing, and settings validation.** `core/coding_agent` owns dispatch and the run lifecycle; plugins own the exec-spec shape, parse logic, and schema enforcement for their settings.
-- **BYOK secrets delivered via ConfigUpdate, not invocation env.** `build_byok_secrets_for_org` aggregates per-org secrets across all registered plugins and registers as the `BytokSecretsProvider` IoC seam in `core/agent_gateway`. `_build_config_update_dto` calls the provider to populate `AgentConfig.byok_secrets` on every ConfigUpdate. The agent injects them as env vars when spawning Claude Code. `InvokeCodingAgent.env` is intentionally empty — no credentials travel via the exec env.
+- **API key secrets delivered via ConfigUpdate, not invocation env.** `build_api_key_secrets_for_org` forward-forwards all stored org keys (from `core/api_keys.list_keys_for_org` + `get` per provider) and registers as the `ApiKeySecretsProvider` IoC seam in `core/agent_gateway`. `_build_config_update_dto` calls the provider to populate `AgentConfig.api_keys` on every ConfigUpdate. The agent-side env maps (`apiKeyProviderEnvVars` / `apiKeyProcessEnvVars`) are the effective allowlist — unknown providers are ignored there by design. `InvokeCodingAgent.env` is intentionally empty — no credentials travel via the exec env.
 - **`dispatch_invocation` is Layer 3 — the full intent-to-wire helper.** Takes `invocation`, `plugin`, `ctx`, a required caller-minted `command_id`, `session`. Loads the workspace owner for `org_id`, calls `plugin.compile_invocation(invocation)` to get the exec block, builds an `InvokeClaudeCodeCommand`, delegates to `dispatch_via_workspace` (Layer 2 in `core/workspace`) with `claim_workspace=True`, then inserts a `coding_agent_runs` row. Returns `command_id`. Durable iff the caller's transaction commits.
 - **`command_id` is caller-minted, not minted inside `dispatch_invocation`.** `domain/pipelines`'s skill-stage dispatch mints it before calling `dispatch_invocation`, since it also needs the id for the skill's `artifact_path = "$TMPDIR/<command_id>.md"` — no default, no shim.
 
@@ -23,8 +23,7 @@ Lives in `core/` (not `domain/`) because it defines the `CodingAgentPlugin` Prot
 Signatures in `app/core/coding_agent/types.py`.
 
 - `plugin_id: str` — registry key and run-row attribute.
-- `compile_invocation(invocation: Invocation) -> InvokeCodingAgent` — pure function: translates skill + model + effort + context + wallclock cap into the exact argv/env/stdin the Go agent runs. Returns `env={}` — credentials are delivered via ConfigUpdate `byok_secrets`, not the exec env. Raises `CodingAgentError` when required context keys are missing.
-- `byok_requirement(self) -> str | None` — returns the BYOK `provider_id` this plugin needs (e.g. `"anthropic"`), or `None` if no key is required. Called by `build_byok_secrets_for_org` to determine which per-org secrets to include in ConfigUpdate.
+- `compile_invocation(invocation: Invocation) -> InvokeCodingAgent` — pure function: translates skill + model + effort + context + wallclock cap into the exact argv/env/stdin the Go agent runs. Returns `env={}` — credentials are delivered via ConfigUpdate `api_keys`, not the exec env. Raises `CodingAgentError` when required context keys are missing.
 - `parse_result(terminal_event_payload: Mapping[str, Any]) -> RunResult` — pure function: decodes a terminal AgentEvent `outputs` dict into a `RunResult`. Reads `stdout` and `exit_code`; extracts `RunResult.output` from the `result` field of the terminal stream-json event (the agent's structured response JSON — the caller validates it against the invocation's own output schema); populates `usage`, `activity`, `duration_ms`. Never raises on missing keys.
 - `validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]` — pure function: validates a raw settings dict and returns the normalized form. Raises `ValueError` on invalid input (unknown keys, bad types). The `/api/coding-agents` install and update endpoints call this before persisting to `org_coding_agents.settings`; a `ValueError` becomes a 422 with `{"error": "invalid_settings", "message": ...}`.
 - `parse_activity_line(line: str) -> ActivityEvent | None` — pure function: decodes one raw `stream-json` output line into a normalized `ActivityEvent`. Returns `None` for blank lines or lines the plugin does not recognize. Called by `CodingAgentRunSinkImpl.handle_progress_event` on every `progress` AgentEvent's `stream_line` field to produce the `{kind, ts, message, detail}` frame published on the workspace-activity SSE channel.
@@ -110,15 +109,58 @@ Partitioned RANGE on `created_at` (weekly child partitions, ~4-week TTL). One ro
 | `org_id` | Soft FK. |
 | `payload` | JSONB `ActivityLog` blob (`{"events": [...]}`). |
 
+## Install state
+
+`app/core/coding_agent/installs.py` owns per-org coding-agent installs and the `/api/coding-agents` HTTP routes (in `installs_web.py`).
+
+### Value objects
+
+- `CodingAgentInstall{org_id, plugin_id, settings, created_at, updated_at, created_by}` — one row per org-plugin pair.
+- `CodingAgentAlreadyInstalledError` — raised by `install_coding_agent` when the row already exists.
+- `CodingAgentNotInstalledError` — raised by `update_coding_agent_settings` when no row exists.
+
+### Service functions
+
+All take `session: AsyncSession` as the first positional argument; they flush but do not commit. Callers commit.
+
+- `list_coding_agents(session, org_id) -> list[CodingAgentInstall]` — all installs for the org.
+- `install_coding_agent(session, *, org_id, plugin_id, settings, actor, created_by=None) -> CodingAgentInstall` — inserts row, audits `coding_agent.installed`. Raises `CodingAgentAlreadyInstalledError` on conflict.
+- `update_coding_agent_settings(session, *, org_id, plugin_id, settings, actor) -> CodingAgentInstall` — replaces `settings` + stamps `updated_at`, audits `coding_agent.settings_updated`. Raises `CodingAgentNotInstalledError` when no row exists.
+- `uninstall_coding_agent(session, *, org_id, plugin_id, actor) -> bool` — deletes row, audits `coding_agent.uninstalled`. Returns `True` if deleted, `False` if not found (no audit on no-op).
+
+### Table — `org_coding_agents`
+
+Composite PK `(org_id, plugin_id)`. One row per installed plugin per org.
+
+| Column | Purpose |
+|---|---|
+| `org_id` | FK → `orgs.id` (CASCADE delete). |
+| `plugin_id` | Plugin registry key (`"claude_code"`, etc.). |
+| `settings` | JSONB blob; plugin-shaped (validated by `plugin.validate_settings` before write). |
+| `created_at` / `updated_at` | Server-default `now()`. |
+| `created_by` | Nullable FK → `users.id` (SET NULL). |
+
+### HTTP routes — `/api/coding-agents`
+
+`installs_web.py` registers under `module_name="coding_agent"` with `url_prefix="/api/coding-agents"`. All routes are `RouteSecurity.ORG_SCOPED`.
+
+| Method | Path | Action | Notes |
+|---|---|---|---|
+| `GET` | `/api/coding-agents` | `CODING_AGENT_READ` | Returns list of installs. |
+| `POST` | `/api/coding-agents` | `CODING_AGENT_WRITE` | Installs a plugin; calls `plugin.validate_settings` before write; 409 on duplicate. |
+| `PATCH` | `/api/coding-agents/{plugin_id}` | `CODING_AGENT_WRITE` | Replaces settings; calls `plugin.validate_settings`; 404 when not installed. |
+| `DELETE` | `/api/coding-agents/{plugin_id}` | `CODING_AGENT_WRITE` | Uninstalls; 404 when not installed. |
+
 ## Data owned
 
 - In-memory: plugin registry (`CodingAgentRegistry` in `ContextVar`).
-- Persistent: `coding_agent_runs`, `coding_agent_activity` (partitioned).
+- Persistent: `org_coding_agents`, `coding_agent_runs`, `coding_agent_activity` (partitioned).
 
 ## How it's tested
 
 - `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `set_coding_agents_for_tests` isolation.
-- `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set, Protocol has exactly `compile_invocation` + `byok_requirement` + `parse_result` + `validate_settings`, retired names not importable.
+- `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set (including install-state symbols), Protocol has exactly `compile_invocation` + `parse_result` + `parse_activity_line` + `validate_settings`, retired names not importable.
+- `app/core/coding_agent/test/test_coding_agents.py` — install service + `/api/coding-agents` endpoint tests: install/list, audit emission, duplicate → 409, settings update + audit, uninstall + audit, role enforcement (member → 403, unauthenticated → 401), `validate_settings` rejection → 422.
 - `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns exactly the caller-supplied `command_id` (a UUIDv7), inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` on the enqueued command from the `.claude/skills/<skill_name>/SKILL.md` convention.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service: create/finalize round-trip, activity blob, `get_step_activity`.
 - `app/core/coding_agent/test/test_sink_uses_parse_result_service.py` — service: `CodingAgentRunSinkImpl.handle_terminal_event` calls `plugin.parse_result`, writes run row, returns `output` + `error_message`; non-`InvokeClaudeCode` kinds return `None`.

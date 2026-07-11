@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — five methods (`compile_invocation`, `byok_requirement`, `parse_result`, `parse_activity_line`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` table and the `/api/claude_code/defaults` HTTP route. Knows nothing about tickets, review jobs, audit log, or workspace paths. Skill selection is not this plugin's concern — a pipeline stage's own `skill_name` picks the skill (see [domain_pipelines.md](domain_pipelines.md)).
+Implements `CodingAgentPlugin` — four methods (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`) plus `plugin_id = "claude_code"`. Owns the `claude_code_settings` table and the `/api/claude_code/defaults` HTTP route. Knows nothing about tickets, review jobs, audit log, or workspace paths. Skill selection is not this plugin's concern — a pipeline stage's own `skill_name` picks the skill (see [domain_pipelines.md](domain_pipelines.md)).
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
@@ -16,11 +16,7 @@ Singleton `_plugin = ClaudeCodePlugin()` holds no decrypted credentials — sett
 
 ### `compile_invocation`
 
-Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Works for any skill name — `invocation.skill` is untyped, resolved against the checkout by the agent's pre-spawn stat, not validated here. Validates `context` carries the fields every stage invocation supplies (`stage_name`, `input`, `artifact_path`); raises `CodingAgentError` when they're missing. `_render_stage_prompt` renders the full `StageInvocationContext` (input text, PR diff pointers, upstream artifacts, revision/re-entry text, prior findings, artifact write path) plus a strict-JSON-output directive built from the engine-injected `output_schema`, and tells the model which named skill to use. Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --permission-mode=bypassPermissions`) — no `--allowed-tools` restriction; `bypassPermissions` already grants the full toolset, and tool scoping (e.g. a review skill staying read-only) is the skill file's own discipline, not a backend policy. Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.byok_secrets["anthropic"]` and injected as `ANTHROPIC_API_KEY` at subprocess exec time.
-
-### `byok_requirement`
-
-Returns `"anthropic"` — the BYOK `provider_id` this plugin needs. Called by `core/coding_agent.build_byok_secrets_for_org` to look up the org's stored Anthropic key and include it in `AgentConfig.byok_secrets` on every ConfigUpdate.
+Takes a `core/coding_agent.Invocation{skill, model, effort, context, wallclock_seconds}`. Works for any skill name — `invocation.skill` is untyped, resolved against the checkout by the agent's pre-spawn stat, not validated here. Validates `context` carries the fields every stage invocation supplies (`stage_name`, `input`, `artifact_path`); raises `CodingAgentError` when they're missing. `_render_stage_prompt` renders the full `StageInvocationContext` (input text, PR diff pointers, upstream artifacts, revision/re-entry text, prior findings, artifact write path) plus a strict-JSON-output directive built from the engine-injected `output_schema`, and tells the model which named skill to use. Assembles argv (`claude --print --output-format=stream-json --verbose --model <model> --effort <effort> --permission-mode=bypassPermissions`) — no `--allowed-tools` restriction; `bypassPermissions` already grants the full toolset, and tool scoping (e.g. a review skill staying read-only) is the skill file's own discipline, not a backend policy. Returns `InvokeCodingAgent{argv, env={}, stdin, wallclock_seconds}`. The Anthropic API key is NOT in `env` — it is delivered to the Go agent via `ConfigUpdate.api_keys["anthropic"]` (forward-all from `core/coding_agent.build_api_key_secrets_for_org`) and injected as `ANTHROPIC_API_KEY` at subprocess exec time.
 
 ### `parse_result`
 
@@ -48,11 +44,11 @@ Three module-private functions, each operating on `stdout: str`:
 
 `_probe_anthropic_auth(api_key)` — calls `GET https://api.anthropic.com/v1/models`. `200` → ok; `401`/`403` → invalid key. Cached 5 minutes keyed by `sha256(api_key)`. When `YAAOS_CODING_AGENT_STUB` is set the probe short-circuits to `(True, "ok (stub)")` — no outbound network call.
 
-`_onboarding_anthropic_key_set(org_id)` — returns `True` iff a byok row exists AND the key probes ok. Registered as an onboarding contributor in `bootstrap()`.
+`_onboarding_anthropic_key_set(org_id)` — returns `True` iff an `org_api_keys` row exists AND the key probes ok. Registered as an onboarding contributor in `bootstrap()`.
 
 ### `bootstrap()`
 
-Called once by `app/web.py` and `app/worker.py` at startup. Registers `_plugin` with `core/coding_agent.register_plugin`; registers `_onboarding_anthropic_key_set` as the `"anthropic_key_set"` onboarding contributor; registers `validate_anthropic_key` with `core/byok`.
+Called once by `app/web.py` and `app/worker.py` at startup. Registers `_plugin` with `core/coding_agent.register_plugin`; registers `_onboarding_anthropic_key_set` as the `"anthropic_key_set"` onboarding contributor; registers `validate_anthropic_key` with `core/api_keys`.
 
 ### Test-mode wrapping
 
@@ -60,7 +56,7 @@ Never branches on `YAAOS_CODING_AGENT_STUB`. When that env var is set, `app/web.
 
 ## Data owned
 
-- `claude_code_settings` — one row per org: `cli_path` (optional; controls the binary name the remote agent resolves). Anthropic API key is stored in `byok_keys` (provider=`anthropic`), not here.
+- `claude_code_settings` — one row per org: `cli_path` (optional; controls the binary name the remote agent resolves). Anthropic API key is stored in `org_api_keys` (provider=`anthropic`), not here.
 
 ## HTTP routes
 

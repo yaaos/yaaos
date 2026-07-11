@@ -1,10 +1,11 @@
-"""core/byok — bring-your-own-key storage for external LLM providers."""
+"""core/api_keys — encrypted at-rest storage for per-org provider API keys."""
 
-from app.core.byok.service import (
-    ByokDecryptError,
-    ByokKey,
+from app.core.api_keys.service import (
+    ApiKey,
+    ApiKeyDecryptError,
     clear,
     get,
+    get_all_for_org,
     get_validator,
     known_providers,
     list_keys_for_org,
@@ -15,10 +16,11 @@ from app.core.byok.service import (
 )
 
 __all__ = [
-    "ByokDecryptError",
-    "ByokKey",
+    "ApiKey",
+    "ApiKeyDecryptError",
     "clear",
     "get",
+    "get_all_for_org",
     "get_validator",
     "known_providers",
     "list_keys_for_org",
@@ -27,3 +29,5 @@ __all__ = [
     "set",
     "validate",
 ]
+
+import app.core.api_keys.web  # noqa: F401

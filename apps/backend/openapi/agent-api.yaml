@@ -685,7 +685,7 @@ components:
             from backend `Settings.environment` (required at boot). Stamped
             on every agent trace/metric/log so signals can be filtered by
             `local` / `staging` / `production` in Dash0.
-        byok_secrets:
+        api_keys:
           type: object
           additionalProperties:
             type: string

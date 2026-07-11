@@ -33,6 +33,7 @@ const BOUNDARY_ALWAYS_HITL = {
   mode: "always_hitl",
   on_blocker_residuals: false,
   on_should_fix_residuals: false,
+  on_nit_residuals: false,
   on_protected_code: false,
   on_confidence_below: null,
 };
@@ -107,6 +108,16 @@ describe("PipelinesSettingsPage (MSW)", () => {
     server.use(http.get("/api/pipelines", () => HttpResponse.json({ pipelines: [] })));
     render(wrap(<PipelinesSettingsPage />));
     expect(await screen.findByText("No pipelines yet.")).toBeInTheDocument();
+  });
+
+  it("renders a download link for the pipeline skills bundle", async () => {
+    server.use(http.get("/api/pipelines", () => HttpResponse.json({ pipelines: [] })));
+    render(wrap(<PipelinesSettingsPage />));
+    await screen.findByText("No pipelines yet.");
+
+    const link = screen.getByTestId("pipelines-download-skills");
+    expect(link).toHaveAttribute("href", "/yaaos-pipeline-skills.zip");
+    expect(link).toHaveAttribute("download");
   });
 
   it("lists pipelines with stage count and referenced badge", async () => {
@@ -190,6 +201,7 @@ describe("PipelinesSettingsPage (MSW)", () => {
 
     expect(within(sheet).getByTestId("stage-boundary-on-blocker")).toBeInTheDocument();
     expect(within(sheet).getByTestId("stage-boundary-on-should-fix")).toBeInTheDocument();
+    expect(within(sheet).getByTestId("stage-boundary-on-nit")).toBeInTheDocument();
     expect(within(sheet).getByTestId("stage-boundary-on-protected")).toBeInTheDocument();
     expect(within(sheet).getByTestId("stage-boundary-confidence")).toBeInTheDocument();
 
@@ -293,6 +305,22 @@ describe("PipelinesSettingsPage (MSW)", () => {
     ).toBeInTheDocument();
   });
 
+  it("has no pipeline-level Save button on an expanded existing row", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    server.use(
+      http.get("/api/pipelines", () =>
+        HttpResponse.json({ pipelines: [DEV_SUMMARY, IMPLEMENTATION_SUMMARY] }),
+      ),
+      http.get("/api/pipelines/p1", () => HttpResponse.json(DEV_DETAIL)),
+    );
+    render(wrap(<PipelinesSettingsPage />));
+    const devRow = await screen.findByTestId("pipeline-row-p1");
+    await user.click(within(devRow).getByText("dev"));
+    await waitFor(() => expect(within(devRow).getByTestId("pipeline-delete")).toBeInTheDocument());
+
+    expect(screen.queryByTestId("pipeline-save")).not.toBeInTheDocument();
+  });
+
   it("New from template creates a pipeline from the picked template", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     let requestedId: string | null = null;
@@ -317,5 +345,292 @@ describe("PipelinesSettingsPage (MSW)", () => {
     await user.click(within(dialog).getByTestId("pipeline-template-dev"));
 
     await waitFor(() => expect(requestedId).toBe("t1"));
+  });
+});
+
+type PutStageBody = {
+  kind: string;
+  id?: string;
+  effort?: string;
+  action_id?: string;
+};
+type PutBody = { name: string; stages: PutStageBody[] };
+
+const THREE_STAGE_DETAIL = {
+  ...DEV_DETAIL,
+  stages: [
+    ...DEV_DETAIL.stages,
+    { kind: "action", id: "s3", description: "", action_id: "github:create_pr" },
+  ],
+};
+
+describe("PipelinesSettingsPage auto-save (MSW)", () => {
+  beforeEach(() => withBaseHandlers());
+
+  /** Registers list/detail handlers for `dev` (p1) plus a body-capturing PUT
+   *  handler. Returns the array PUT bodies accumulate into. */
+  function capturePuts(result?: { status: number; body: Record<string, unknown> }): PutBody[] {
+    const puts: PutBody[] = [];
+    server.use(
+      http.get("/api/pipelines", () =>
+        HttpResponse.json({ pipelines: [DEV_SUMMARY, IMPLEMENTATION_SUMMARY] }),
+      ),
+      http.get("/api/pipelines/p1", () => HttpResponse.json(DEV_DETAIL)),
+      http.put("/api/pipelines/p1", async ({ request }) => {
+        puts.push((await request.json()) as PutBody);
+        return result
+          ? HttpResponse.json(result.body, { status: result.status })
+          : HttpResponse.json(DEV_DETAIL);
+      }),
+    );
+    return puts;
+  }
+
+  async function expandDevRow(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+    render(wrap(<PipelinesSettingsPage />));
+    const devRow = await screen.findByTestId("pipeline-row-p1");
+    await user.click(within(devRow).getByText("dev"));
+    await waitFor(() =>
+      expect(devRow.querySelectorAll('[data-testid^="pipeline-stage-row-"]')).toHaveLength(2),
+    );
+    return devRow;
+  }
+
+  /** Stage-row testids key on a client-only React key — grab controls by
+   *  testid prefix + position instead. */
+  function stageControl(devRow: HTMLElement, prefix: string, index: number): HTMLElement {
+    const control = within(devRow).getAllByTestId(new RegExp(`^${prefix}`))[index];
+    if (!control) throw new Error(`no ${prefix} control at index ${index}`);
+    return control;
+  }
+
+  it("stage editor save persists immediately and shows Saved.", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const puts = capturePuts();
+    const devRow = await expandDevRow(user);
+
+    await user.click(stageControl(devRow, "pipeline-stage-edit-", 0));
+    const sheet = await screen.findByTestId("stage-editor");
+    await user.click(within(sheet).getByTestId("stage-effort"));
+    await user.click(await screen.findByRole("option", { name: "high" }));
+    await user.click(within(sheet).getByTestId("stage-editor-save"));
+
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]?.stages[0]?.kind).toBe("skill");
+    expect(puts[0]?.stages[0]?.effort).toBe("high");
+    await waitFor(() =>
+      expect(within(devRow).getByTestId("pipeline-save-status")).toHaveTextContent("Saved."),
+    );
+    expect(puts).toHaveLength(1);
+  });
+
+  it("moving a stage persists the new order", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const puts = capturePuts();
+    const devRow = await expandDevRow(user);
+
+    await user.click(stageControl(devRow, "pipeline-stage-menu-", 0));
+    await user.click(await screen.findByRole("menuitem", { name: "Move down" }));
+
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]?.stages.map((s) => s.kind)).toEqual(["call", "skill"]);
+  });
+
+  it("removing a stage persists without it", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const puts = capturePuts();
+    const devRow = await expandDevRow(user);
+
+    await user.click(stageControl(devRow, "pipeline-stage-menu-", 0));
+    await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]?.stages.map((s) => s.kind)).toEqual(["call"]);
+  });
+
+  it("name edits persist once on blur, not per keystroke", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const puts = capturePuts();
+    const devRow = await expandDevRow(user);
+
+    await user.type(within(devRow).getByTestId("pipeline-name"), "x");
+    expect(puts).toHaveLength(0);
+    await user.tab();
+
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]?.name).toBe("devx");
+  });
+
+  it("an invalid draft blocks auto-save without a PUT", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const puts = capturePuts();
+    const devRow = await expandDevRow(user);
+
+    await user.clear(within(devRow).getByTestId("pipeline-name"));
+    await user.tab();
+
+    expect(await within(devRow).findByTestId("pipeline-save-status")).toHaveTextContent(
+      "Not saved — needs a name and at least one complete stage.",
+    );
+    expect(puts).toHaveLength(0);
+  });
+
+  it("a rejected save shows the error banner and keeps the edit", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    capturePuts({ status: 400, body: { detail: { error: "invalid_definition" } } });
+    const devRow = await expandDevRow(user);
+
+    await user.click(stageControl(devRow, "pipeline-stage-edit-", 0));
+    const sheet = await screen.findByTestId("stage-editor");
+    await user.click(within(sheet).getByTestId("stage-effort"));
+    await user.click(await screen.findByRole("option", { name: "high" }));
+    await user.click(within(sheet).getByTestId("stage-editor-save"));
+
+    expect(await within(devRow).findByText(/Invalid pipeline definition/)).toBeInTheDocument();
+
+    // The draft keeps the user's edit — reopening the editor shows it.
+    await user.click(stageControl(devRow, "pipeline-stage-edit-", 0));
+    const reopened = await screen.findByTestId("stage-editor");
+    expect(within(reopened).getByTestId("stage-effort")).toHaveTextContent("high");
+  });
+
+  it("server-minted stage ids are merged and sent on the next save", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const puts = capturePuts({ status: 200, body: THREE_STAGE_DETAIL });
+    const devRow = await expandDevRow(user);
+
+    await user.click(within(devRow).getByTestId("pipeline-add-stage"));
+    await user.click(await screen.findByTestId("pipeline-add-stage-action"));
+    const sheet = await screen.findByTestId("stage-editor");
+    await user.click(within(sheet).getByTestId("stage-action"));
+    await user.click(await screen.findByText("Open pull request"));
+    await user.click(within(sheet).getByTestId("stage-editor-save"));
+
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]?.stages[2]?.id).toBeUndefined();
+    await waitFor(() =>
+      expect(within(devRow).getByTestId("pipeline-save-status")).toHaveTextContent("Saved."),
+    );
+
+    await user.type(within(devRow).getByTestId("pipeline-name"), "x");
+    await user.tab();
+
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]?.stages[2]?.id).toBe("s3");
+  });
+
+  it("Cancel discards a just-added stage without a PUT", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const puts = capturePuts();
+    const devRow = await expandDevRow(user);
+
+    await user.click(within(devRow).getByTestId("pipeline-add-stage"));
+    await user.click(await screen.findByTestId("pipeline-add-stage-skill"));
+    const sheet = await screen.findByTestId("stage-editor");
+    await waitFor(() =>
+      expect(devRow.querySelectorAll('[data-testid^="pipeline-stage-row-"]')).toHaveLength(3),
+    );
+    await user.click(within(sheet).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() =>
+      expect(devRow.querySelectorAll('[data-testid^="pipeline-stage-row-"]')).toHaveLength(2),
+    );
+    expect(puts).toHaveLength(0);
+    expect(screen.queryByTestId("pipeline-save-status")).not.toBeInTheDocument();
+  });
+
+  it("Cancel keeps a stage that was already saved once", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const puts = capturePuts({ status: 200, body: THREE_STAGE_DETAIL });
+    const devRow = await expandDevRow(user);
+
+    await user.click(within(devRow).getByTestId("pipeline-add-stage"));
+    await user.click(await screen.findByTestId("pipeline-add-stage-action"));
+    const sheet = await screen.findByTestId("stage-editor");
+    await user.click(within(sheet).getByTestId("stage-action"));
+    await user.click(await screen.findByText("Open pull request"));
+    await user.click(within(sheet).getByTestId("stage-editor-save"));
+    await waitFor(() => expect(puts).toHaveLength(1));
+
+    await user.click(stageControl(devRow, "pipeline-stage-edit-", 2));
+    const reopened = await screen.findByTestId("stage-editor");
+    await user.click(within(reopened).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() =>
+      expect(devRow.querySelectorAll('[data-testid^="pipeline-stage-row-"]')).toHaveLength(3),
+    );
+    expect(puts).toHaveLength(1);
+  });
+
+  /** Registers handlers whose FIRST PUT stays open until the returned
+   *  release fn is called — overlapping-commit tests hold a save on the
+   *  wire while the user keeps editing. */
+  function captureHeldPuts(): { puts: PutBody[]; releaseFirst: () => void } {
+    const puts: PutBody[] = [];
+    let releaseFirst: () => void = () => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    server.use(
+      http.get("/api/pipelines", () =>
+        HttpResponse.json({ pipelines: [DEV_SUMMARY, IMPLEMENTATION_SUMMARY] }),
+      ),
+      http.get("/api/pipelines/p1", () => HttpResponse.json(DEV_DETAIL)),
+      http.put("/api/pipelines/p1", async ({ request }) => {
+        puts.push((await request.json()) as PutBody);
+        if (puts.length === 1) await firstGate;
+        return HttpResponse.json(DEV_DETAIL);
+      }),
+    );
+    return { puts, releaseFirst };
+  }
+
+  it("a revert while a save is on the wire is re-sent so server and screen converge", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const { puts, releaseFirst } = captureHeldPuts();
+    const devRow = await expandDevRow(user);
+
+    await user.click(stageControl(devRow, "pipeline-stage-menu-", 0));
+    await user.click(await screen.findByRole("menuitem", { name: "Move down" }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]?.stages.map((s) => s.kind)).toEqual(["call", "skill"]);
+
+    // Undo the move while the first PUT is still open.
+    await user.click(stageControl(devRow, "pipeline-stage-menu-", 1));
+    await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
+    expect(within(devRow).getByTestId("pipeline-save-status")).toHaveTextContent("Saving…");
+    expect(puts).toHaveLength(1);
+
+    releaseFirst();
+
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]?.stages.map((s) => s.kind)).toEqual(["skill", "call"]);
+    await waitFor(() =>
+      expect(within(devRow).getByTestId("pipeline-save-status")).toHaveTextContent("Saved."),
+    );
+  });
+
+  it("a blocked draft is not overridden by an older save's success", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const { puts, releaseFirst } = captureHeldPuts();
+    const devRow = await expandDevRow(user);
+
+    await user.click(stageControl(devRow, "pipeline-stage-menu-", 0));
+    await user.click(await screen.findByRole("menuitem", { name: "Move down" }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+
+    // Invalidate the draft while the first PUT is still open.
+    await user.clear(within(devRow).getByTestId("pipeline-name"));
+    await user.tab();
+    expect(within(devRow).getByTestId("pipeline-save-status")).toHaveTextContent("Not saved");
+
+    releaseFirst();
+
+    // The held response lands, but the newer blocked verdict stands.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(within(devRow).getByTestId("pipeline-save-status")).toHaveTextContent(
+      "Not saved — needs a name and at least one complete stage.",
+    );
+    expect(puts).toHaveLength(1);
   });
 });

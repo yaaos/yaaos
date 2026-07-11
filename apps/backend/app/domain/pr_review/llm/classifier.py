@@ -38,7 +38,7 @@ class ClassifyCommentOutput(BaseModel):
 
 
 async def classify_comment(input: ClassifyCommentInput, *, api_key: str | None) -> ClassifyCommentOutput:
-    """Run the comment classifier under the org's BYOK Anthropic key (when
+    """Run the comment classifier under the org's Anthropic API key (when
     set — `api_key=None` falls through to the process-wide provider key).
 
     `YAAOS_PR_COMMENT_CLASSIFIER_STUB=1` (e2e docker stack; forbidden in

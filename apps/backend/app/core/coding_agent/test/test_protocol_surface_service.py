@@ -37,8 +37,16 @@ EXPECTED_ALL = frozenset(
         "get_stage_activity",
         # Test isolation seam
         "set_coding_agents_for_tests",
-        # BYOK secrets provider
-        "build_byok_secrets_for_org",
+        # API key secrets provider
+        "build_api_key_secrets_for_org",
+        # Per-org install state
+        "CodingAgentAlreadyInstalledError",
+        "CodingAgentInstall",
+        "CodingAgentNotInstalledError",
+        "install_coding_agent",
+        "list_coding_agents",
+        "uninstall_coding_agent",
+        "update_coding_agent_settings",
     ]
 )
 
@@ -85,7 +93,7 @@ def test_all_matches_expected_set() -> None:
 def test_protocol_has_expected_methods() -> None:
     """CodingAgentPlugin Protocol must expose exactly compile_invocation, parse_result,
     parse_activity_line, and validate_settings as non-dunder, non-`plugin_id` protocol
-    methods."""
+    methods. api_key_requirement was removed — secrets are forwarded via forward-all."""
     from app.core.coding_agent import CodingAgentPlugin  # noqa: PLC0415
 
     # Collect Protocol method names (non-dunder, non-plugin_id members
@@ -97,7 +105,6 @@ def test_protocol_has_expected_methods() -> None:
     }
     assert proto_methods == {
         "compile_invocation",
-        "byok_requirement",
         "parse_result",
         "parse_activity_line",
         "validate_settings",

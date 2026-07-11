@@ -72,6 +72,11 @@ function PipelinesContent() {
         subtitle="Compose the stage sequence a ticket runs through."
         actions={
           <>
+            <Button variant="outline" size="sm" asChild>
+              <a href="/yaaos-pipeline-skills.zip" download data-testid="pipelines-download-skills">
+                Download skills
+              </a>
+            </Button>
             <Button
               variant="outline"
               data-testid="pipeline-new-from-template"
@@ -85,6 +90,9 @@ function PipelinesContent() {
           </>
         }
       />
+      <p className="-mt-2 text-xs text-muted-foreground">
+        Unzip at the repo root. Adds .claude/skills and .claude/agents.
+      </p>
 
       {creating && (
         <NewPipelineCard

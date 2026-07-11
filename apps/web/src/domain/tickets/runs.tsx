@@ -1,8 +1,9 @@
 /**
  * Runs tab — one collapsible card per run (newest first, latest run open),
  * a dense table of that run's stage executions, an artifact Sheet per row
- * that produced one, and "Instruct & re-run from here" on a completed
- * skill/review row.
+ * that produced one, "Instruct & re-run from here" on a completed
+ * skill/review row, and "Re-run" on a terminal-failure run card (starts a
+ * fresh run from the top).
  */
 
 import {
@@ -10,10 +11,12 @@ import {
   type StageExecutionView,
   useArtifactVersion,
   useRerunFromStage,
+  useRerunRun,
   useRuns,
   useStageActivity,
 } from "@core/api/public/queries";
 import { useRunActivityTail } from "@core/sse/public/run_activity";
+import { ConfirmModal } from "@shared/components/public/layout/confirm-modal";
 import { EmptyState } from "@shared/components/public/layout/empty-state";
 import { ErrorBanner } from "@shared/components/public/layout/error-banner";
 import { Markdown } from "@shared/components/public/markdown";
@@ -39,6 +42,7 @@ import {
 import { Textarea } from "@shared/components/ui/textarea";
 import { ago } from "@shared/utils/public/ago";
 import { cn } from "@shared/utils/public/cn";
+import { duration } from "@shared/utils/public/duration";
 import { GitBranch, ListChecks, Play, Wrench } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
@@ -73,6 +77,8 @@ const KIND_ICON: Record<string, typeof Play> = {
   system: GitBranch,
 };
 
+const RERUNNABLE_RUN_STATES = new Set(["failed", "cancelled", "killed"]);
+
 function RunCard({
   ticketId,
   run,
@@ -82,6 +88,10 @@ function RunCard({
   run: PipelineRunView;
   defaultOpen: boolean;
 }) {
+  const rerun = useRerunRun(ticketId);
+  const [rerunOpen, setRerunOpen] = useState(false);
+  const canRerunRun = RERUNNABLE_RUN_STATES.has(run.state);
+
   return (
     <details
       className="rounded-md border border-border transition-opacity duration-200"
@@ -95,13 +105,39 @@ function RunCard({
           {run.state}
         </Badge>
         <span className="text-muted-foreground">by {run.kickoff.actor_login ?? "yaaos"}</span>
-        <span className="ml-auto text-xs text-muted-foreground mono">{ago(run.created_at)}</span>
+        <span className="ml-auto text-xs text-muted-foreground mono">
+          {ago(run.created_at)} · {duration(run.created_at, run.completed_at)}
+        </span>
+        {canRerunRun && (
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="rerun-run"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setRerunOpen(true);
+            }}
+          >
+            Re-run
+          </Button>
+        )}
       </summary>
+      <ConfirmModal
+        open={rerunOpen}
+        onOpenChange={setRerunOpen}
+        title="Re-run pipeline?"
+        body="Starts a new run from the beginning."
+        confirmLabel="Re-run"
+        pending={rerun.isPending}
+        onConfirm={() => rerun.mutate(run.id, { onSettled: () => setRerunOpen(false) })}
+      />
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Stage</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Timing</TableHead>
             <TableHead>Confidence</TableHead>
             <TableHead>Iterations</TableHead>
             <TableHead>Boundary</TableHead>
@@ -155,6 +191,9 @@ function StageRow({
           {stage.stage_name}
         </TableCell>
         <TableCell className="capitalize">{stage.status}</TableCell>
+        <TableCell className="text-xs text-muted-foreground mono">
+          {ago(stage.started_at)} · {duration(stage.started_at, stage.completed_at)}
+        </TableCell>
         <TableCell>
           {stage.confidence && (
             <Badge variant="outline" className="capitalize">
@@ -207,7 +246,7 @@ function StageRow({
       </TableRow>
       {activityOpen && (
         <TableRow>
-          <TableCell colSpan={7} className="p-0">
+          <TableCell colSpan={8} className="p-0">
             <ErrorBoundary
               fallbackRender={({ resetErrorBoundary }) => (
                 <ErrorBanner message="Couldn't load activity." onRetry={resetErrorBoundary} />

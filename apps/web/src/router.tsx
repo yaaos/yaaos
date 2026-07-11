@@ -16,7 +16,7 @@ import { AuditSettingsPage } from "@domain/org_settings/public/AuditSettingsPage
 import { AuthSettingsPage } from "@domain/org_settings/public/AuthSettingsPage";
 import { MembersSettingsPage } from "@domain/org_settings/public/MembersSettingsPage";
 import { WorkspacesSettingsPage } from "@domain/org_settings/public/WorkspacesSettingsPage";
-import { BYOKSettingsPage } from "@domain/org_settings/public/byok/BYOKSettingsPage";
+import { ApiKeysSettingsPage } from "@domain/org_settings/public/api_keys/ApiKeysSettingsPage";
 import { CodingAgentSettingsPage } from "@domain/org_settings/public/coding_agents/CodingAgentSettingsPage";
 import { CodingAgentsSettingsPage } from "@domain/org_settings/public/coding_agents/CodingAgentsSettingsPage";
 import { IntegrationsSettingsPage } from "@domain/org_settings/public/integrations/IntegrationsSettingsPage";
@@ -170,10 +170,10 @@ const orgSettingsCodingAgentDetailRoute = createRoute({
   },
 });
 
-const orgSettingsByokRoute = createRoute({
+const orgSettingsApiKeysRoute = createRoute({
   getParentRoute: () => orgScopeRoute,
   path: "/settings/api-keys",
-  component: BYOKSettingsPage,
+  component: ApiKeysSettingsPage,
 });
 
 const orgSettingsIntegrationsRoute = createRoute({
@@ -251,7 +251,7 @@ const routeTree = rootRoute.addChildren([
     orgSettingsVcsRoute,
     orgSettingsCodingAgentsRoute,
     orgSettingsCodingAgentDetailRoute,
-    orgSettingsByokRoute,
+    orgSettingsApiKeysRoute,
     orgSettingsIntegrationsRoute,
     orgSettingsWorkspacesRoute,
     orgSettingsPipelinesRoute,

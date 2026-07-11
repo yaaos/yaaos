@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 
-// BYOK handlers
-export const BYOK_FIXTURE = [
+// API key handlers
+export const API_KEY_FIXTURE = [
   {
     provider: "anthropic",
     status: "not_set",
@@ -61,8 +61,8 @@ export const ORG_SETTINGS_FIXTURE = {
 };
 
 export const settingsHandlers = [
-  // BYOK
-  http.get("/api/api-keys", () => HttpResponse.json(BYOK_FIXTURE)),
+  // API keys
+  http.get("/api/api-keys", () => HttpResponse.json(API_KEY_FIXTURE)),
   http.post("/api/api-keys/:provider", () => HttpResponse.json({ status: "ok" })),
   http.post("/api/api-keys/:provider/validate", () => HttpResponse.json({ valid: true })),
   http.delete("/api/api-keys/:provider", () => HttpResponse.json({ removed: true })),

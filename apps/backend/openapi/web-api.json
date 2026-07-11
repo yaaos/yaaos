@@ -691,6 +691,11 @@
             ],
             "title": "On Confidence Below"
           },
+          "on_nit_residuals": {
+            "default": false,
+            "title": "On Nit Residuals",
+            "type": "boolean"
+          },
           "on_protected_code": {
             "default": false,
             "title": "On Protected Code",
@@ -2398,6 +2403,12 @@
             "title": "Id",
             "type": "string"
           },
+          "name": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Name",
+            "type": "string"
+          },
           "owner_user_ids": {
             "items": {
               "format": "uuid",
@@ -2808,6 +2819,11 @@
             ],
             "title": "Pr Url"
           },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
           "state": {
             "enum": [
               "queued",
@@ -2823,6 +2839,7 @@
           }
         },
         "required": [
+          "run_id",
           "state",
           "pr_url",
           "failure_reason"
@@ -4026,7 +4043,7 @@
         },
         "summary": "List Providers",
         "tags": [
-          "byok"
+          "api_keys"
         ]
       }
     },
@@ -4104,7 +4121,7 @@
         },
         "summary": "Clear Key",
         "tags": [
-          "byok"
+          "api_keys"
         ]
       },
       "post": {
@@ -4190,7 +4207,7 @@
         },
         "summary": "Set Key",
         "tags": [
-          "byok"
+          "api_keys"
         ]
       }
     },
@@ -4269,7 +4286,7 @@
         },
         "summary": "Validate Key",
         "tags": [
-          "byok"
+          "api_keys"
         ]
       }
     },
@@ -5159,7 +5176,7 @@
         },
         "summary": "List Endpoint",
         "tags": [
-          "coding_agents"
+          "coding_agent"
         ]
       },
       "post": {
@@ -5232,7 +5249,7 @@
         },
         "summary": "Install Endpoint",
         "tags": [
-          "coding_agents"
+          "coding_agent"
         ]
       }
     },
@@ -5310,7 +5327,7 @@
         },
         "summary": "Uninstall Endpoint",
         "tags": [
-          "coding_agents"
+          "coding_agent"
         ]
       },
       "patch": {
@@ -5392,7 +5409,7 @@
         },
         "summary": "Update Settings Endpoint",
         "tags": [
-          "coding_agents"
+          "coding_agent"
         ]
       }
     },
@@ -8638,6 +8655,82 @@
           }
         },
         "summary": "Cancel Run Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/pipelines/runs/{run_id}/rerun": {
+      "post": {
+        "description": "A NEW run on the SAME ticket, starting at stage index 0 — distinct\nfrom `POST /runs/rerun` above (`start_rerun_from_stage`, a 2-segment\npath; this 3-segment path can never collide with it in FastAPI's\nrouter).",
+        "operationId": "rerun_run_endpoint_api_pipelines_runs__run_id__rerun_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerun Run Endpoint",
         "tags": [
           "pipelines"
         ]

@@ -283,3 +283,48 @@ async def test_agent_event_artifact_error_forwarded_to_outbox_payload(db_session
     task_outputs = handle_payloads[0]["args"]["outputs"]
     assert task_outputs.get("artifact_error") == "artifact exceeds 2097152 bytes (was 3000000)"
     assert "artifact" not in task_outputs
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+async def test_agent_failure_reason_forwarded_as_error_message(db_session) -> None:
+    """A `completed_failure` event's `failure_reason` (the agent's detailed
+    reason, e.g. the pre-spawn skill check's "skill not found: <path>") rides
+    the forwarded outputs as `error_message` — the key the run engine persists
+    as the stage/run failure_reason. Without it the engine falls back to the
+    bare outcome label ("failure") and the run is undiagnosable from the DB."""
+    org_id = uuid4()
+    run_id = uuid4()
+
+    cmd_id = await _seed_invoke_command(org_id, run_id=run_id, session=db_session)
+    await db_session.commit()
+
+    reason = "skill not found: .claude/skills/pipeline-code-review/SKILL.md"
+    event = AgentEvent(
+        command_id=cmd_id,
+        kind=AgentEventKind.COMPLETED_FAILURE,
+        outputs={"stdout": ""},
+        failure_reason=reason,
+        reported_at=datetime.now(UTC),
+        traceparent="",
+    )
+
+    from app.core.audit_log import ActorKind  # noqa: PLC0415
+    from app.core.auth import org_context  # noqa: PLC0415
+
+    async with org_context(org_id, ActorKind.WORKSPACE):
+        await record_agent_event(event, session=db_session)
+
+    payloads = await get_pending_outbox_payloads(db_session)
+    # `record_agent_event` also enqueues the seeding outbox row; filter to
+    # the run engine's own consumer task name.
+    handle_payloads = [p for p in payloads if p.get("task_name") == "pipelines.handle_agent_event"]
+    assert len(handle_payloads) == 1, (
+        f"expected exactly one pipelines.handle_agent_event; got {handle_payloads}"
+    )
+
+    args = handle_payloads[0]["args"]
+    assert args["outcome_label"] == "failure"
+    assert args["outputs"].get("error_message") == reason, (
+        f"expected error_message={reason!r}, got {args['outputs'].get('error_message')!r}"
+    )

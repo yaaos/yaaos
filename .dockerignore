@@ -16,8 +16,20 @@
 # Planning scaffolding — gitignored working docs, never part of the image.
 plan/
 
-# Local tooling / editor noise
-.claude
+# Local tooling / editor noise. Carve-out: pipeline-* skills + agents are
+# a required web-build input (apps/web/bin/build-skills-bundle bundles
+# them into the static yaaos-pipeline-skills.zip download) — the
+# web-builder Docker stage needs them in the build context. Docker can't
+# re-include a path whose parent directory was fully excluded, so the
+# exclude/re-include pairs below walk down one level at a time rather
+# than excluding `.claude` outright.
+.claude/*
+!.claude/skills
+!.claude/agents
+.claude/skills/*
+!.claude/skills/pipeline-*
+.claude/agents/*
+!.claude/agents/pipeline-*.md
 .idea
 .vscode
 *.log
