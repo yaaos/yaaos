@@ -137,11 +137,6 @@ async def test_claimed_config_update_dto_carries_api_keys(db_session) -> None:
     """
     import app.core.api_keys as api_keys  # noqa: PLC0415
 
-    # Ensure the production ConfigUpdate hydrator is registered.
-    # (core/coding_agent.__init__ registers it at import time; calling seed_agent
-    # triggers that import if it hasn't happened yet.)
-    import app.core.coding_agent  # noqa: F401, PLC0415
-
     org_id = await _make_org(db_session)
     agent_id = await _make_agent(org_id=org_id)
 
@@ -194,7 +189,6 @@ async def test_claimed_config_update_dto_carries_api_keys(db_session) -> None:
 async def test_claimed_config_update_dto_has_empty_api_keys_when_key_cleared(db_session) -> None:
     """When the API key has been cleared, `claim_next` delivers `api_keys == {}`."""
     import app.core.api_keys as api_keys  # noqa: PLC0415
-    import app.core.coding_agent  # noqa: F401, PLC0415
 
     org_id = await _make_org(db_session)
     agent_id = await _make_agent(org_id=org_id)

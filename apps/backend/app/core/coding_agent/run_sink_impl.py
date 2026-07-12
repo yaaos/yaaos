@@ -29,18 +29,13 @@ from uuid import UUID
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.agent_gateway import AgentEvent, AgentEventEnrichment
+from app.core.agent_gateway import RUN_BEARING_KINDS, AgentEvent, AgentEventEnrichment
 from app.core.coding_agent.run_service import finalize_run, get_run_ref_for_command
 from app.core.coding_agent.service import PluginNotFoundError, get_plugin
 from app.core.database import session as db_session
 from app.core.sse import publish_workspace_activity
 
 log = structlog.get_logger("core.coding_agent.run_sink")
-
-# Command kinds that produce coding-agent run rows. Both InvokeClaudeCode and
-# InvokeCodex route through the same run lifecycle — the plugin resolves from
-# the run row's plugin_id, not from the command kind.
-_INVOKE_KINDS: frozenset[str] = frozenset({"InvokeClaudeCode", "InvokeCodex"})
 
 
 class CodingAgentRunSinkImpl:
@@ -72,7 +67,7 @@ class CodingAgentRunSinkImpl:
         so `agent_gateway` can merge those keys into the run outputs.
         Returns `None` for all other command kinds.
         """
-        if command_kind not in _INVOKE_KINDS:
+        if command_kind not in RUN_BEARING_KINDS:
             return None
 
         run_ref = await get_run_ref_for_command(command_id, session=session)

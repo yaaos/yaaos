@@ -28,6 +28,13 @@ def upgrade() -> None:
     # The JSONB `#-` operator removes the element at the given path; when the
     # path does not exist the expression returns the original value unchanged,
     # making this statement inherently idempotent.
+    #
+    # Lock profile: an unbounded UPDATE takes row-level write locks on every
+    # ConfigUpdate row. `claim_next` uses `SELECT … FOR UPDATE SKIP LOCKED`,
+    # so any ConfigUpdate row currently being claimed is skipped (not blocked).
+    # The statement is safe to run while the service is live and causes no
+    # deadlock against the claim loop. Tables with O(agents) ConfigUpdate rows
+    # make this effectively instant.
     op.execute(
         text(
             "UPDATE agent_commands "

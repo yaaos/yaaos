@@ -5,17 +5,15 @@ Reads the canonical `.claude/` skill and agent sources from the configured
 rendering to the plugin's `render_skill_bundle` method, and assembles the
 result into an in-memory ZIP archive.
 
-Filesystem access here is a **sanctioned carve-out**: unlike workspace
-repo operations (which go through `core/workspace` + the remote agent),
-this module reads *image-baked static assets* — the `.claude/skills/` and
-`.claude/agents/` source trees copied into the backend image at build time.
-The same narrow exception list as `core/database` (Postgres connections) and
-`core/observability` (log files); callers must not use this module for
+Filesystem access here is a sanctioned carve-out — see
+`apps/backend/docs/patterns.md § Filesystem + processes via core/workspace`
+for the rationale and the full exception list. Do not extend this module for
 arbitrary filesystem access.
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 import zipfile
@@ -25,7 +23,7 @@ from typing import Any
 import yaml
 
 from app.core.coding_agent.service import get_plugin
-from app.core.coding_agent.types import AgentSource, BundleFile, SkillSource
+from app.core.coding_agent.types import AgentSource, BundleFile, CodingAgentPlugin, SkillSource
 from app.core.config import get_settings
 
 # Pattern matching a YAML frontmatter block at the start of a markdown file.
@@ -138,23 +136,13 @@ def _load_agent_sources(agents_dir: Path) -> list[AgentSource]:
     return sources
 
 
-async def build_skills_bundle_zip(plugin_id: str) -> bytes:
-    """Build an in-memory ZIP of the skills bundle for the named plugin.
+def _build_bundle_sync(plugin: CodingAgentPlugin, source_dir: Path) -> bytes:
+    """Synchronous core of `build_skills_bundle_zip` — runs inside `to_thread`.
 
-    Loads the canonical `.claude/skills/pipeline-*/**` and
-    `.claude/agents/pipeline-*.md` sources from `settings.yaaos_skills_source_dir`,
-    parses their YAML frontmatter, passes the parsed objects to the plugin's
-    `render_skill_bundle` method, and packages the output into a ZIP archive.
-
-    Raises:
-        PluginNotFoundError: when ``plugin_id`` is not registered (→ 404).
-        FileNotFoundError: when the skills source directory is missing from the
-            image — a deploy defect (→ 500).
+    Loads sources, renders via the plugin, and assembles the ZIP archive.
+    All file I/O is blocking; this function must not be called directly on
+    the async event loop.
     """
-    plugin = get_plugin(plugin_id)
-    settings = get_settings()
-    source_dir = Path(settings.yaaos_skills_source_dir)
-
     skills_dir = source_dir / "skills"
     agents_dir = source_dir / "agents"
 
@@ -172,3 +160,25 @@ async def build_skills_bundle_zip(plugin_id: str) -> bytes:
             zi = zipfile.ZipInfo(filename=bf.path, date_time=fixed_mtime)
             zf.writestr(zi, bf.content)
     return buf.getvalue()
+
+
+async def build_skills_bundle_zip(plugin_id: str) -> bytes:
+    """Build an in-memory ZIP of the skills bundle for the named plugin.
+
+    Loads the canonical `.claude/skills/pipeline-*/**` and
+    `.claude/agents/pipeline-*.md` sources from `settings.yaaos_skills_source_dir`,
+    parses their YAML frontmatter, passes the parsed objects to the plugin's
+    `render_skill_bundle` method, and packages the output into a ZIP archive.
+
+    File I/O runs in a thread pool via `asyncio.to_thread` so the event loop
+    is not blocked.
+
+    Raises:
+        PluginNotFoundError: when ``plugin_id`` is not registered (→ 404).
+        FileNotFoundError: when the skills source directory is missing from the
+            image — a deploy defect (→ 500).
+    """
+    plugin = get_plugin(plugin_id)
+    settings = get_settings()
+    source_dir = Path(settings.yaaos_skills_source_dir)
+    return await asyncio.to_thread(_build_bundle_sync, plugin, source_dir)

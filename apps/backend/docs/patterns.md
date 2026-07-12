@@ -58,7 +58,7 @@ Domain functions succeed or raise. No translation unless translation is genuinel
 
 Never touch the filesystem (`open()`, `pathlib`) or spawn processes (`subprocess`) directly for repo/code work. Workspace operations go through the remote agent via `core/coding_agent.dispatch_invocation` (which enqueues via `core/agent_gateway`). Consumers never see internal paths; the Protocol exposes operations, not paths.
 
-Exceptions: `core/database` (Postgres connections), `core/observability` (log files).
+Exceptions: `core/database` (Postgres connections), `core/observability` (log files), `core/coding_agent/skills_bundle.py` (image-baked static skill assets — read-only, blocking I/O offloaded to `asyncio.to_thread`).
 
 ### Imports
 

@@ -503,3 +503,77 @@ async def test_disconnect_removes_connection_and_audits(
         "user", user_id, org_id=org_id, kinds=["oauth_connection.disconnected"]
     )
     assert len(audit_rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: poll_device_auth — server-side cooldown (last_polled_at)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_poll_stamps_last_polled_at(db_session: AsyncSession, user_id: UUID) -> None:
+    """A successful poll call stamps `last_polled_at` on the session row."""
+    from app.core.oauth.service import OAuthError  # noqa: PLC0415
+
+    _STUB.device_response = _device_auth_response()
+    await start_device_auth(user_id, _TEST_PROVIDER_ID, session=db_session)
+    await db_session.flush()
+
+    _STUB.token_result = OAuthError("pending", error_code="authorization_pending")
+    actor = Actor.user(user_id=user_id)
+    await poll_device_auth(user_id, _TEST_PROVIDER_ID, actor=actor, session=db_session)
+    await db_session.flush()
+
+    db_session.expire_all()
+    row = (
+        await db_session.execute(
+            select(UserOAuthDeviceSessionRow).where(
+                UserOAuthDeviceSessionRow.user_id == user_id,
+                UserOAuthDeviceSessionRow.provider_id == _TEST_PROVIDER_ID,
+            )
+        )
+    ).scalar_one()
+    assert row.last_polled_at is not None, "poll_device_auth must stamp last_polled_at"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_poll_within_cooldown_skips_provider(db_session: AsyncSession, user_id: UUID) -> None:
+    """A second poll within the poll_interval_seconds window returns 'pending' without
+    calling the provider. The token_fn call count stays at 1."""
+    from app.core.oauth.service import OAuthError  # noqa: PLC0415
+
+    _STUB.device_response = _device_auth_response()
+    await start_device_auth(user_id, _TEST_PROVIDER_ID, session=db_session)
+    await db_session.flush()
+
+    token_calls = 0
+
+    async def _counting_token(spec: Any, data: Any) -> Any:
+        nonlocal token_calls
+        token_calls += 1
+        raise OAuthError("pending", error_code="authorization_pending")
+
+    import dataclasses  # noqa: PLC0415
+
+    from app.core.oauth.user_connections import _APPS  # noqa: PLC0415
+
+    orig_app = _APPS[_TEST_PROVIDER_ID]
+    _APPS[_TEST_PROVIDER_ID] = dataclasses.replace(orig_app, token_fn=_counting_token)
+
+    actor = Actor.user(user_id=user_id)
+    # First poll — provider called (authorization_pending).
+    status1 = await poll_device_auth(user_id, _TEST_PROVIDER_ID, actor=actor, session=db_session)
+    await db_session.flush()
+    assert status1 == "pending"
+    assert token_calls == 1
+
+    # Second poll immediately — within cooldown (poll_interval_seconds=5, last_polled_at just set).
+    status2 = await poll_device_auth(user_id, _TEST_PROVIDER_ID, actor=actor, session=db_session)
+    await db_session.flush()
+    assert status2 == "pending", "Cooldown poll must return 'pending'"
+    assert token_calls == 1, "Provider must NOT be called during the cooldown window"
+
+    # Restore
+    _APPS[_TEST_PROVIDER_ID] = orig_app

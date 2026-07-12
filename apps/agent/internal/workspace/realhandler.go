@@ -87,13 +87,13 @@ var apiKeyProviderEnvVars = map[string]string{
 	"rwx":       "RWX_ACCESS_TOKEN",
 }
 
-// Excerpt caps for the `claude exit N` failure string. Stderr stays small;
-// stdout gets a larger tail because claude with `--output-format=stream-json`
-// emits its `{"type":"result","is_error":true,…}` event at the end of stdout,
-// not stderr.
+// Excerpt caps for the failure string emitted on non-zero subprocess exit.
+// Stderr stays small; stdout gets a larger tail because coding agents with
+// structured output (e.g. claude --output-format=stream-json) emit result
+// events at the end of stdout, not stderr.
 const (
-	claudeErrStderrCap     = 2048
-	claudeErrStdoutTailCap = 4096
+	errStderrCap     = 2048
+	errStdoutTailCap = 4096
 )
 
 // artifactMaxBytes caps the artifact file RunClaude reads from
@@ -519,8 +519,8 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 			return result, fmt.Errorf(
 				"claude exit %d: stderr=%s stdout_tail=%s",
 				res.ExitCode,
-				excerptHead(res.Stderr, claudeErrStderrCap),
-				excerptTail(res.Stdout, claudeErrStdoutTailCap),
+				excerptHead(res.Stderr, errStderrCap),
+				excerptTail(res.Stdout, errStdoutTailCap),
 			)
 		}
 		return result, fmt.Errorf("claude subprocess: %w", runErr)
@@ -668,8 +668,8 @@ func (h *RealHandler) RunCodex(ctx context.Context, cmd *command.InvokeCodexComm
 			return result, fmt.Errorf(
 				"codex exit %d: stderr=%s stdout_tail=%s",
 				res.ExitCode,
-				excerptHead(res.Stderr, claudeErrStderrCap),
-				excerptTail(res.Stdout, claudeErrStdoutTailCap),
+				excerptHead(res.Stderr, errStderrCap),
+				excerptTail(res.Stdout, errStdoutTailCap),
 			)
 		}
 		return result, fmt.Errorf("codex subprocess: %w", runErr)

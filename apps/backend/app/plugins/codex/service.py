@@ -16,8 +16,11 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from app.core.agent_gateway import HydrationContext
 
 import structlog
 import yaml
@@ -489,6 +492,17 @@ def _toml_str(value: str) -> str:
     return f'"{escaped}"'
 
 
+def _escape_toml_multiline_basic(value: str) -> str:
+    """Escape a string for use inside a TOML basic multi-line string (triple-double-quoted).
+
+    Only backslashes and double-quotes need escaping — newlines are literal in
+    TOML basic multi-line strings. Escaping every double-quote as a backslash
+    plus double-quote prevents any three-consecutive-double-quote sequence from
+    terminating the enclosing multi-line string.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _build_agent_toml(agent: AgentSource) -> str:
     """Build a `.codex/agents/<name>.toml` file from an `AgentSource`.
 
@@ -496,11 +510,9 @@ def _build_agent_toml(agent: AgentSource) -> str:
     - `name` and `description` from the frontmatter.
     - A `[prompt]` section with `content` = defensive restatement + body.
 
-    Uses a literal TOML multi-line string (triple single-quotes) so the body
-    markdown can be embedded verbatim without escaping special characters.
-    Only `'''` sequences in the body (which would break the literal string)
-    are substituted with `''\\'` as an escape.  This is an extremely rare
-    edge case in practice; the canonical agent bodies contain none.
+    Uses a TOML basic multi-line string (triple double-quotes) so the body
+    markdown can contain single-quotes verbatim. Backslashes and double-quotes
+    are escaped via `_escape_toml_multiline_basic`.
     """
     name = agent.frontmatter.get("name") or agent.name
     description = agent.frontmatter.get("description") or ""
@@ -508,19 +520,19 @@ def _build_agent_toml(agent: AgentSource) -> str:
     # Prepend defensive restatement to the body.
     body = f"{_DEFENSIVE_RESTATEMENT}\n\n{agent.body}".strip()
 
-    # TOML literal multi-line strings: enclosed in ''', no escaping needed
-    # except that ''' itself cannot appear inside.  Replace ''' with '' + '
-    # (split across two literal strings) to avoid the sequence.
-    safe_body = body.replace("'''", "'' '")
+    safe_body = _escape_toml_multiline_basic(body)
 
+    # Triple double-quote delimiter for the TOML basic multi-line string.
+    # Built via chr() so the source file never contains the sequence itself.
+    _tdq = chr(34) * 3
     lines = [
         f"name = {_toml_str(name)}",
         f"description = {_toml_str(description)}",
         "",
         "[prompt]",
-        "content = '''",
+        f"content = {_tdq}",
         safe_body,
-        "'''",
+        _tdq,
         "",
     ]
     return "\n".join(lines)
@@ -603,13 +615,13 @@ async def _codex_credential_provider(
 
 async def _codex_command_hydrator(
     payload: dict[str, Any],
+    ctx: HydrationContext,
     session: Any,  # AsyncSession; shape-b — ensure_fresh_access_token opens its own session
 ) -> dict[str, Any]:
     """Claim-time hydrator for ``InvokeCodex`` commands.
 
-    api_key mode (``credential_user_id`` is None): strips ``_org_id``; no
-    ``auth_json`` injected — the Go agent reads ``CODEX_API_KEY`` from the
-    ConfigUpdate ``api_keys`` map.
+    api_key mode (``credential_user_id`` is None): no ``auth_json`` injected —
+    the Go agent reads ``CODEX_API_KEY`` from the ConfigUpdate ``api_keys`` map.
 
     per_user mode (``credential_user_id`` non-None): fetches a fresh OAuth
     token via ``ensure_fresh_access_token``, builds the ``auth.json`` payload
@@ -620,7 +632,7 @@ async def _codex_command_hydrator(
 
     ``credential_user_id`` is preserved in the output so the Go agent's
     ``RunCodex`` handler uses it as the signal to write ``auth.json``.
-    ``_org_id`` (gateway context key) is stripped from the output.
+    ``org_id`` arrives via ``ctx`` — it is not present in the payload dict.
     """
     from app.core.agent_gateway import CredentialHydrationError  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
@@ -631,8 +643,7 @@ async def _codex_command_hydrator(
     )
     from app.plugins.codex.auth_json import build_auth_json  # noqa: PLC0415
 
-    # Strip gateway-injected context key; all other fields pass through unchanged.
-    output = {k: v for k, v in payload.items() if k != "_org_id"}
+    output = dict(payload)
 
     raw_cred_id = payload.get("credential_user_id")
     if raw_cred_id is None:

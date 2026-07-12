@@ -379,6 +379,16 @@ TERMINAL_EVENT_KINDS: frozenset[AgentEventKind] = frozenset(
     }
 )
 
+# Canonical set of command kinds that carry a run_id and whose terminal events
+# must route back to the coding-agent run sink. Non-run-bearing kinds (e.g.
+# ConfigUpdate) follow a different terminal path.
+RUN_BEARING_KINDS: frozenset[str] = frozenset(
+    {
+        AgentCommandKind.INVOKE_CLAUDE_CODE,
+        AgentCommandKind.INVOKE_CODEX,
+    }
+)
+
 
 class Artifact(BaseModel):
     """Agent-collected artifact body for an InvokeClaudeCode terminal event.

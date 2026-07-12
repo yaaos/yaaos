@@ -21,6 +21,7 @@ from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_gateway import HydrationContext
 from app.core.secrets import encrypt
 from app.plugins.codex.service import _codex_command_hydrator
 
@@ -29,10 +30,12 @@ pytestmark = [pytest.mark.service]
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+_TEST_ORG_ID = uuid4()
+
+
 def _make_payload(*, credential_user_id: UUID | None, wallclock_seconds: int = 900) -> dict:
     """Minimal InvokeCodex command payload for hydrator input."""
     return {
-        "_org_id": uuid4(),  # gateway context key; should be stripped by hydrator
         "kind": "InvokeCodex",
         "command_id": str(uuid4()),
         "workspace_id": str(uuid4()),
@@ -40,6 +43,10 @@ def _make_payload(*, credential_user_id: UUID | None, wallclock_seconds: int = 9
         "limits": {"wallclock_seconds": wallclock_seconds},
         "skill_path": ".codex/skills/test/SKILL.md",
     }
+
+
+def _make_ctx(org_id: UUID | None = None) -> HydrationContext:
+    return HydrationContext(org_id=org_id or _TEST_ORG_ID)
 
 
 async def _seed_connection_row(
@@ -113,12 +120,13 @@ async def _seed_connection_row(
 
 @pytest.mark.asyncio
 async def test_api_key_mode_strips_org_id_no_auth_json(db_session: AsyncSession) -> None:
-    """api_key mode (credential_user_id=None): _org_id stripped, auth_json absent."""
+    """api_key mode (credential_user_id=None): org_id not in output, auth_json absent."""
     payload = _make_payload(credential_user_id=None)
+    ctx = _make_ctx()
 
-    result = await _codex_command_hydrator(payload, db_session)
+    result = await _codex_command_hydrator(payload, ctx, db_session)
 
-    assert "_org_id" not in result, "_org_id must be stripped from the output"
+    assert "_org_id" not in result, "_org_id must not appear in the output"
     assert "auth_json" not in result or result.get("auth_json") is None, (
         "api_key mode must not inject auth_json"
     )
@@ -134,10 +142,11 @@ async def test_per_user_connected_injects_auth_json(db_session: AsyncSession) ->
     await _seed_connection_row(db_session, user_id=user_id, status="connected")
 
     payload = _make_payload(credential_user_id=user_id)
+    ctx = _make_ctx()
 
-    result = await _codex_command_hydrator(payload, db_session)
+    result = await _codex_command_hydrator(payload, ctx, db_session)
 
-    assert "_org_id" not in result, "_org_id must be stripped"
+    assert "_org_id" not in result, "_org_id must not appear in the output"
     assert "auth_json" in result, "per_user mode must inject auth_json"
     auth_json = result["auth_json"]
     assert isinstance(auth_json, SecretStr), "auth_json must be a SecretStr (not a plaintext str)"
@@ -163,9 +172,10 @@ async def test_per_user_no_connection_raises_hydration_error(db_session: AsyncSe
 
     user_id = uuid4()  # no row seeded
     payload = _make_payload(credential_user_id=user_id)
+    ctx = _make_ctx()
 
     with pytest.raises(CredentialHydrationError, match="not connected"):
-        await _codex_command_hydrator(payload, db_session)
+        await _codex_command_hydrator(payload, ctx, db_session)
 
 
 @pytest.mark.asyncio
@@ -177,6 +187,7 @@ async def test_per_user_needs_reauth_raises_hydration_error(db_session: AsyncSes
     await _seed_connection_row(db_session, user_id=user_id, status="needs_reauth")
 
     payload = _make_payload(credential_user_id=user_id)
+    ctx = _make_ctx()
 
     with pytest.raises(CredentialHydrationError, match="re-authorization"):
-        await _codex_command_hydrator(payload, db_session)
+        await _codex_command_hydrator(payload, ctx, db_session)

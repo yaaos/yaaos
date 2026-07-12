@@ -32,7 +32,7 @@ from app.core.agent_gateway.bearers import (
 )
 from app.core.agent_gateway.hydrators import (
     CredentialHydrationError,
-    clear_command_hydrators_for_tests,
+    HydrationContext,
     register_command_hydrator,
 )
 from app.core.agent_gateway.org_arn_lookup import (
@@ -95,6 +95,7 @@ from app.core.agent_gateway.subscribers import (
     shutdown,
 )
 from app.core.agent_gateway.types import (
+    RUN_BEARING_KINDS,
     TERMINAL_EVENT_KINDS,
     AgentCommand,
     AgentCommandKind,
@@ -136,6 +137,7 @@ from app.core.agent_gateway.types import (
 )
 
 __all__ = [
+    "RUN_BEARING_KINDS",
     "TERMINAL_EVENT_KINDS",
     "AgentCommand",
     "AgentCommandKind",
@@ -159,6 +161,7 @@ __all__ = [
     "HeartbeatRequest",
     "HeartbeatResponse",
     "HeartbeatWorkspaceEntry",
+    "HydrationContext",
     "IdentityExchangeRequest",
     "IdentityExchangeResponse",
     "InvokeClaudeCodeCommand",
@@ -187,7 +190,6 @@ __all__ = [
     "cancel_shutdown_agents",
     "claim_next",
     "clear_api_key_secrets_provider",
-    "clear_command_hydrators_for_tests",
     "clear_run_sink",
     "compute_agent_liveness_transitions",
     "connection_status_for_org",

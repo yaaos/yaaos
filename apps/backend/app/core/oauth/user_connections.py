@@ -414,6 +414,22 @@ async def poll_device_auth(
     if session_row is None:
         return "none"
 
+    # Server-side cooldown: if a poll already fired within the last
+    # `poll_interval_seconds`, return "pending" immediately without hitting the
+    # provider. This guards against clients that ignore the RFC-8628 interval.
+    now = datetime.now(UTC)
+    if session_row.last_polled_at is not None:
+        elapsed = (now - session_row.last_polled_at).total_seconds()
+        if elapsed < session_row.poll_interval_seconds:
+            return "pending"
+
+    # Stamp last_polled_at before the upstream call so concurrent requests also
+    # see the cooldown immediately (best-effort; not a strict lock).
+    # Direct ORM assignment keeps the in-memory object consistent for same-session
+    # callers (e.g. tests that call poll_device_auth twice in one session).
+    session_row.last_polled_at = now
+    await session.flush()
+
     device_code = decrypt(session_row.encrypted_device_code.encode()).decode()
     spec = TokenEndpointSpec(
         url=app.token_url,

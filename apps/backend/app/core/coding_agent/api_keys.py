@@ -22,6 +22,9 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway import (
+    HydrationContext,
+)
+from app.core.agent_gateway import (
     enqueue_config_update_for_all_org_agents as _enqueue_config_update_for_all_org_agents,
 )
 
@@ -48,13 +51,14 @@ async def build_api_key_secrets_for_org(
 
 async def _config_update_hydrator(
     payload: dict[str, Any],
+    ctx: HydrationContext,
     session: AsyncSession,
 ) -> dict[str, Any]:
     """Claim-time hydrator for `ConfigUpdate` commands.
 
-    Injects the current per-org API key secrets into `config.api_keys`.  The
-    `_org_id` gateway-context key is consumed here and stripped from the output;
-    `claim_next` also strips it as belt-and-braces.
+    Injects the current per-org API key secrets into `config.api_keys`.
+    `org_id` arrives via the typed `HydrationContext` — no `_`-prefixed magic
+    key in the payload dict.
 
     Credentials flow: `api_keys.get_all_for_org` → `SecretStr` values in the
     returned dict → unwrapped only at the wire-encode boundary by
@@ -62,8 +66,8 @@ async def _config_update_hydrator(
     """
     from app.core.agent_gateway import get_api_key_secrets_provider  # noqa: PLC0415
 
-    org_id: UUID = payload["_org_id"]
-    out = {k: v for k, v in payload.items() if k != "_org_id"}
+    org_id: UUID = ctx.org_id
+    out = dict(payload)
 
     provider = get_api_key_secrets_provider()
     if provider is None:

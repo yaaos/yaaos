@@ -23,8 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway.api_key_provider import get_api_key_secrets_provider
 from app.core.agent_gateway.hydrators import (
+    _HYDRATORS,
     CredentialHydrationError,
-    clear_command_hydrators_for_tests,
+    HydrationContext,
     register_command_hydrator,
 )
 from app.core.agent_gateway.models import AgentCommandRow
@@ -40,15 +41,17 @@ from app.testing.e2e_setup import seed_agent, seed_org
 # ── Inline ConfigUpdate hydrator ─────────────────────────────────────────────
 
 
-async def _hydrate_config_update_for_test(payload: dict, session: AsyncSession) -> dict:
+async def _hydrate_config_update_for_test(
+    payload: dict, ctx: HydrationContext, session: AsyncSession
+) -> dict:
     """Replicate core/coding_agent's ConfigUpdate hydrator for tests.
 
     Uses the registered ApiKeySecretsProvider (same IoC seam as production)
     without a cross-module submodule import.
     """
 
-    org_id: UUID = payload["_org_id"]
-    out = {k: v for k, v in payload.items() if k != "_org_id"}
+    org_id: UUID = ctx.org_id
+    out = dict(payload)
     provider = get_api_key_secrets_provider()
     if provider is None:
         return out
@@ -64,14 +67,17 @@ async def _hydrate_config_update_for_test(payload: dict, session: AsyncSession) 
 
 @pytest.fixture(autouse=True)
 def _isolate_hydrators():
-    """Clear all hydrators before and after each test in this module.
+    """Save, clear, then restore the hydrator registry around each test.
 
-    Prevents production hydrators registered at import time from leaking into
-    tests that install stubs, and vice versa.
+    Production hydrators are registered at import time as a side effect.
+    Saving and restoring ensures they survive across test runs regardless of
+    execution order (previously the double-clear permanently destroyed them).
     """
-    clear_command_hydrators_for_tests()
+    _prior = dict(_HYDRATORS)
+    _HYDRATORS.clear()
     yield
-    clear_command_hydrators_for_tests()
+    _HYDRATORS.clear()
+    _HYDRATORS.update(_prior)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -84,7 +90,13 @@ def _minimal_invoke_codex_payload(
     run_id: UUID,
     credential_user_id: UUID | None = None,
 ) -> dict:
-    """Return a minimal payload dict for an InvokeCodex AgentCommandRow."""
+    """Return a minimal payload dict for an InvokeCodex AgentCommandRow.
+
+    `invocation` nests the exec block (argv, env, stdin) as required by
+    `InvokeCodexFields`/`InvokeCodexCommand`.  Putting those keys at the
+    top level is a schema violation that causes Pydantic validation to fail
+    at claim time.
+    """
     return {
         "kind": "InvokeCodex",
         "command_id": str(command_id),
@@ -94,9 +106,11 @@ def _minimal_invoke_codex_payload(
         "run_id": str(run_id),
         "skill_path": ".codex/skills/test/SKILL.md",
         "limits": {"wallclock_seconds": 900},
-        "argv": ["codex", "exec", "--model", "codex-mini-latest", "--quiet"],
-        "env": {},
-        "stdin": "test prompt",
+        "invocation": {
+            "argv": ["codex", "exec", "--model", "codex-mini-latest", "--quiet"],
+            "env": {},
+            "stdin": "test prompt",
+        },
         "output_schema_json": None,
         "credential_user_id": str(credential_user_id) if credential_user_id else None,
     }
@@ -257,6 +271,57 @@ async def test_no_hydrator_passes_payload_verbatim(db_session) -> None:
     assert wire["api_keys"] == {}, "Verbatim path must return what was stored"
 
 
+# ── InvokeCodex api-key mode success path (shape lock) ──────────────────────
+
+
+@pytest.mark.service
+async def test_invoke_codex_api_key_mode_shape_validates(db_session) -> None:
+    """InvokeCodex api-key mode (credential_user_id=None): correct `invocation`
+    dict shape → Pydantic validates and claim_next returns InvokeCodexCommand.
+
+    This test locks the wire shape: `argv`/`env`/`stdin` must be nested under
+    `invocation`, not at the payload top level.
+    """
+    from app.core.agent_gateway.types import InvokeCodexCommand  # noqa: PLC0415
+
+    org_id = await seed_org()
+    agent_row = await seed_agent(org_id=org_id)
+    agent_id = agent_row["id"]
+    workspace_id = uuid4()
+    run_id = uuid4()
+
+    await _insert_invoke_codex_row(
+        db_session,
+        org_id=org_id,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+        run_id=run_id,
+        credential_user_id=None,  # api_key mode — no hydrator needed
+    )
+    await db_session.flush()
+
+    # No InvokeCodex hydrator registered (autouse fixture cleared them all).
+    # The no-hydrator path passes the payload verbatim; Pydantic validates the shape.
+    cmd = await claim_next(
+        agent_id,
+        lifecycle="active",
+        new_workspaces=0,
+        workspace_ids=[workspace_id],
+        wait_seconds=0,
+        session=db_session,
+    )
+
+    assert cmd is not None, "Expected a claimed InvokeCodex command"
+    assert isinstance(cmd, InvokeCodexCommand), f"Expected InvokeCodexCommand, got {type(cmd).__name__}"
+    assert cmd.invocation == {
+        "argv": ["codex", "exec", "--model", "codex-mini-latest", "--quiet"],
+        "env": {},
+        "stdin": "test prompt",
+    }, f"Unexpected invocation dict: {cmd.invocation!r}"
+    assert cmd.credential_user_id is None
+    assert cmd.skill_path == ".codex/skills/test/SKILL.md"
+
+
 # ── Run-bearing kind hydration failure ──────────────────────────────────────
 
 
@@ -273,7 +338,7 @@ async def test_invoke_codex_hydration_failure_retires_row(
     """
 
     # InvokeCodex: always fail hydration.
-    async def failing_hydrator(payload, session):
+    async def failing_hydrator(payload, ctx, session):
         raise CredentialHydrationError("test: per-user auth not supported")
 
     register_command_hydrator("InvokeCodex", failing_hydrator)
@@ -319,7 +384,7 @@ async def test_invoke_codex_hydration_failure_with_run_id_synthesizes_failure_ev
     AgentEvent outbox entry for the run engine."""
     from sqlalchemy import text  # noqa: PLC0415
 
-    async def failing_hydrator(payload, session):
+    async def failing_hydrator(payload, ctx, session):
         raise CredentialHydrationError("no api key")
 
     register_command_hydrator("InvokeCodex", failing_hydrator)
@@ -380,7 +445,7 @@ async def test_hydration_retire_cap_returns_none_after_n_retirements(
     This prevents a misconfigured org from starving the claim loop indefinitely.
     """
 
-    async def always_fail(payload, session):
+    async def always_fail(payload, ctx, session):
         raise CredentialHydrationError("forced failure for cap test")
 
     register_command_hydrator("InvokeCodex", always_fail)
@@ -439,7 +504,7 @@ async def test_config_update_hydration_failure_leaves_row_pending_returns_none(
     """A CredentialHydrationError from a ConfigUpdate hydrator reverts the row
     to pending status and returns None — the agent retries on the next cycle."""
 
-    async def always_fail(payload, session):
+    async def always_fail(payload, ctx, session):
         raise CredentialHydrationError("config update hydration forced failure")
 
     register_command_hydrator("ConfigUpdate", always_fail)

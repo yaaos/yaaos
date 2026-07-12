@@ -42,6 +42,7 @@ from app.core.agent_gateway.report_sink import (
     get_report_sink,
 )
 from app.core.agent_gateway.types import (
+    RUN_BEARING_KINDS,
     AgentCommand,
     AgentCommandKind,
     AgentConfig,
@@ -100,18 +101,6 @@ MAX_ATTEMPT: int = 5
 # org filling the queue with commands that all fail hydration and starving the
 # claim loop indefinitely.
 _HYDRATION_RETIRE_CAP: int = 5
-
-# Command kinds that are "run-bearing" — they carry a run_id and resume a
-# pipeline run on their terminal event. A CredentialHydrationError on one of
-# these kinds retires the row to `done` and synthesizes a `completed_failure`
-# event so the run engine surfaces the failure. Non-run-bearing kinds (e.g.
-# ConfigUpdate) follow a different path: leave pending, return None.
-_RUN_BEARING_KINDS: frozenset[str] = frozenset(
-    {
-        AgentCommandKind.INVOKE_CLAUDE_CODE,
-        AgentCommandKind.INVOKE_CODEX,
-    }
-)
 
 # Discriminated-union adapter that deserializes a persisted command payload back
 # to a typed AgentCommand. Built once at import time — `claim_next` is a hot path.
@@ -742,6 +731,7 @@ async def claim_next(
     """
     from app.core.agent_gateway.hydrators import (  # noqa: PLC0415
         CredentialHydrationError,
+        HydrationContext,
         get_command_hydrator,
     )
 
@@ -797,14 +787,12 @@ async def claim_next(
             # No hydrator registered for this kind — payload passes verbatim.
             break
 
-        # Inject the gateway-context key so the hydrator can access org_id
-        # without a separate column projection.  The caller strips it on the
-        # success path; the error path abandons the row anyway.
-        persisted_payload = dict(row.payload or {})
-        persisted_payload["_org_id"] = row.org_id
+        # Build a typed context carrying org_id so hydrators receive it
+        # explicitly — no magic `_`-prefixed keys in the payload dict.
+        ctx = HydrationContext(org_id=row.org_id)
 
         try:
-            hydrated_payload = await hydrator(persisted_payload, session)
+            hydrated_payload = await hydrator(dict(row.payload or {}), ctx, session)
         except CredentialHydrationError as exc:
             log.warning(
                 "agent.claim.hydration_failed",
@@ -812,7 +800,7 @@ async def claim_next(
                 command_id=str(row.id),
                 reason=exc.user_message,
             )
-            if row.command_kind in _RUN_BEARING_KINDS:
+            if row.command_kind in RUN_BEARING_KINDS:
                 # Guard: at most _HYDRATION_RETIRE_CAP retirements per call.
                 if retired_count >= _HYDRATION_RETIRE_CAP:
                     log.warning(
@@ -861,9 +849,7 @@ async def claim_next(
                 await session.flush()
                 return None
         else:
-            # Hydration succeeded — strip the gateway context key if it leaked
-            # through (the hydrator should already have stripped it).
-            hydrated_payload.pop("_org_id", None)
+            # Hydration succeeded.
             break
 
     # ── 3. Build the outbound AgentCommand DTO ───────────────────────────────

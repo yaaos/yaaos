@@ -19,21 +19,33 @@ Canonical import direction:
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+
+@dataclass(frozen=True, slots=True)
+class HydrationContext:
+    """Gateway-supplied context passed to every `CommandHydrator` at claim time.
+
+    Carries org_id (and any future gateway context) without polluting the
+    persisted payload dict with magic `_`-prefixed keys.
+    """
+
+    org_id: UUID
+
+
 # CommandHydrator:
-#   First arg  — the persisted payload dict augmented with gateway context;
-#                callers must not rely on extra `_`-prefixed keys persisting
-#                into the returned dict (gateway strips them before returning
-#                the DTO to the agent).
-#   Second arg — the claim-time AsyncSession (read-only use recommended).
+#   First arg  — the persisted payload dict (no gateway context keys).
+#   Second arg — HydrationContext carrying org_id and other gateway facts.
+#   Third arg  — the claim-time AsyncSession (read-only use recommended).
 #   Returns    — the COMPLETE outbound payload dict; credential values are
 #                SecretStr, unwrapped by the relevant field_serializer at
 #                wire-encode time.
 #   Raises     — CredentialHydrationError on unresolvable credentials.
-CommandHydrator = Callable[[dict[str, Any], AsyncSession], Awaitable[dict[str, Any]]]
+CommandHydrator = Callable[[dict[str, Any], HydrationContext, AsyncSession], Awaitable[dict[str, Any]]]
 
 
 class CredentialHydrationError(Exception):

@@ -80,6 +80,10 @@ class UserOAuthDeviceSessionRow(Base):
     verification_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     poll_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Server-side poll cooldown. Stamped to `now()` at the start of each
+    # `poll_device_auth` call; the next call returns "pending" immediately
+    # (without hitting the provider) if `now - last_polled_at < poll_interval_seconds`.
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
