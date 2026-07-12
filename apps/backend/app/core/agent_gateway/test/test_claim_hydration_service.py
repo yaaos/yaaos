@@ -69,9 +69,10 @@ async def _hydrate_config_update_for_test(
 def _isolate_hydrators():
     """Save, clear, then restore the hydrator registry around each test.
 
-    Production hydrators are registered at import time as a side effect.
-    Saving and restoring ensures they survive across test runs regardless of
-    execution order (previously the double-clear permanently destroyed them).
+    Production hydrators register once, at import time, as a side effect — so a
+    fixture that merely cleared the registry would unregister them for the rest of
+    the pytest process. Saving and restoring keeps them intact regardless of test
+    execution order.
     """
     _prior = dict(_HYDRATORS)
     _HYDRATORS.clear()
