@@ -539,6 +539,11 @@ class DispatchContext(BaseModel):
     stage_execution_id: UUID
     attempt: int
     traceparent: str | None = None
+    # Attribution: the user whose credentials drive per-user-mode stages.
+    # Populated from `pipeline_runs.triggered_by_user_id` by the run engine
+    # when building a dispatch context.  None when attribution is unavailable
+    # (API-key mode, schedule without a creator, etc.).
+    user_id: UUID | None = None
 
 
 # ── Errors ─────────────────────────────────────────────────────────────

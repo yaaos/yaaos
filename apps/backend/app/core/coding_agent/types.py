@@ -342,5 +342,33 @@ class CodingAgentError(Exception):
     """Infrastructure failure (subprocess won't spawn, config table unreadable)."""
 
 
+class CredentialUnavailableError(CodingAgentError):
+    """Raised by a credential provider when it cannot resolve a usable credential
+    for a dispatch (missing OAuth connection, expired token that can't be refreshed,
+    API key not configured, attribution gap, etc.).
+
+    ``user_message`` is a short human-readable description suitable for inclusion
+    in the stage's ``failure_reason`` — it is surfaced in the Runs tab and must
+    not contain internal details (user IDs, secret excerpts, stack traces).
+    """
+
+    def __init__(self, user_message: str) -> None:
+        super().__init__(user_message)
+        self.user_message = user_message
+
+
+class CommandCredentialSpec(BaseModel, frozen=True):
+    """Result returned by a credential provider.
+
+    ``credential_user_id`` is ``None`` in API-key mode (credentials arrive via
+    the ConfigUpdate ``api_keys`` map, not the claim-time hydrator) and
+    non-``None`` in per-user mode (the hydrator fetches a fresh user token at
+    claim time and writes it to the workspace's auth store before the subprocess
+    launches).
+    """
+
+    credential_user_id: UUID | None
+
+
 class PluginNotFoundError(LookupError):
     """Plugin id not registered."""

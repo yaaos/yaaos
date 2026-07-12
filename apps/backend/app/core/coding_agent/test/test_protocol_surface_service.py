@@ -25,6 +25,7 @@ EXPECTED_ALL = frozenset(
         "CodingAgentError",
         "PluginNotFoundError",
         "ActivityEvent",
+        "ActivityEventKind",
         "ActivityLog",
         "ACTIVITY_EVENT_KINDS",
         # Skills-bundle VOs
@@ -46,6 +47,10 @@ EXPECTED_ALL = frozenset(
         "set_coding_agents_for_tests",
         # API key secrets provider
         "build_api_key_secrets_for_org",
+        # Credential provider seam
+        "CommandCredentialSpec",
+        "CredentialUnavailableError",
+        "register_credential_provider",
         # Per-org install state
         "CodingAgentAlreadyInstalledError",
         "CodingAgentInstall",

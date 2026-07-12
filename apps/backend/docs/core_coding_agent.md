@@ -58,6 +58,18 @@ Returns `command_id`. `org_id` is resolved from the workspace row, not a caller 
 
 The agent stats `skill_path` before spawning claude — absent → `completed_failure` with `failure_reason="skill not found: <path>"`. Zero policy on the agent side; the path is entirely plugin-computed on the backend.
 
+For `InvokeCodex` commands, `dispatch_invocation` also calls the registered `CredentialProvider` (see below) to resolve the `CommandCredentialSpec`; the spec's `credential_user_id` is stamped onto the command before dispatch.
+
+## Credential provider seam
+
+`register_credential_provider(plugin_id: str, provider: CredentialProvider)` wires a per-plugin async callable into `dispatch_invocation`. Called at plugin `bootstrap()` time; raises `ValueError` on duplicate. Currently only `plugins/codex` registers one.
+
+**`CredentialProvider` signature** — `async (*, org_id: UUID, user_id: UUID | None, wallclock_seconds: int, session: AsyncSession) -> CommandCredentialSpec`. `user_id` is `run.triggered_by_user_id` from the dispatch context; may be `None` for system-actor runs.
+
+**`CommandCredentialSpec`** — frozen Pydantic model: `credential_user_id: UUID | None`. For `api_key` mode it is always `None` (no per-user credential); for `per_user` mode it is the attributed user's ID. The Go agent uses this field as the signal to write `auth.json` from the injected `auth_json` payload at claim time.
+
+**`CredentialUnavailableError(CodingAgentError)`** — raised by the provider when credentials can't be resolved. Fields: `user_message: str` (human-facing; shown as the stage's `failure_reason`). Two sub-cases: missing API key / no attributed user / user not connected → stage fails with a connection-required message; user connection exists but `needs_reauth` → stage fails with a reauthorize message.
+
 ### Value objects
 
 - `SkillSource{name, frontmatter, body, extra_files}` · `AgentSource{name, frontmatter, body}` · `BundleFile{path, content}` — skills-bundle VOs; see [§ `build_skills_bundle_zip` and skills-bundle VOs](#build_skills_bundle_zip-and-skills-bundle-vos) above.

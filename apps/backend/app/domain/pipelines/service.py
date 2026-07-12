@@ -344,6 +344,7 @@ async def start_run(
     ticket_id: UUID,
     pipeline_id: UUID,
     kickoff: Kickoff,
+    triggered_by_user_id: UUID | None = None,
     session: AsyncSession,
 ) -> UUID:
     """Flatten against CURRENT definitions, pin the snapshot; queue if a run
@@ -370,6 +371,7 @@ async def start_run(
         state="queued",
         phase="stages",
         kickoff=kickoff.model_dump(mode="json"),
+        triggered_by_user_id=triggered_by_user_id,
     )
     session.add(row)
     await session.flush()
@@ -380,7 +382,14 @@ async def start_run(
 _RERUNNABLE_RUN_STATES = frozenset({"failed", "cancelled", "killed"})
 
 
-async def start_rerun(*, org_id: UUID, run_id: UUID, actor: Actor, session: AsyncSession) -> UUID:
+async def start_rerun(
+    *,
+    org_id: UUID,
+    run_id: UUID,
+    actor: Actor,
+    triggered_by_user_id: UUID | None = None,
+    session: AsyncSession,
+) -> UUID:
     """A NEW run on the SAME ticket: clones the prior run's `Kickoff`,
     re-flattens the CURRENT definition, starts at stage index 0. Everything
     regenerates — continuity comes from durable state (branch commits,
@@ -417,6 +426,7 @@ async def start_rerun(*, org_id: UUID, run_id: UUID, actor: Actor, session: Asyn
         ticket_id=run.ticket_id,
         pipeline_id=run.pipeline_id,
         kickoff=cloned_kickoff,
+        triggered_by_user_id=triggered_by_user_id,
         session=session,
     )
 
@@ -451,6 +461,7 @@ async def start_rerun_from_stage(
     from_stage: str,
     instruction: str,
     actor: Actor,
+    triggered_by_user_id: UUID | None = None,
     session: AsyncSession,
 ) -> UUID:
     """New run on the CURRENT definition, starting at `from_stage`'s index.
@@ -516,6 +527,7 @@ async def start_rerun_from_stage(
         phase="stages",
         current_stage_index=from_index,
         kickoff=kickoff.model_dump(mode="json"),
+        triggered_by_user_id=triggered_by_user_id,
     )
     session.add(row)
     await session.flush()

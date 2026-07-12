@@ -303,6 +303,7 @@ async def rerun_endpoint(body: RerunRequest) -> RerunResponse:
                 from_stage=body.from_stage,
                 instruction=body.instruction,
                 actor=actor,
+                triggered_by_user_id=actor.user_id,
                 session=s,
             )
         except RunNotFoundError as exc:
@@ -327,7 +328,9 @@ async def rerun_run_endpoint(run_id: UUID) -> RerunResponse:
     actor = current_actor()
     async with db_session() as s:
         try:
-            new_run_id = await pipelines.start_rerun(org_id=org_id, run_id=run_id, actor=actor, session=s)
+            new_run_id = await pipelines.start_rerun(
+                org_id=org_id, run_id=run_id, actor=actor, triggered_by_user_id=actor.user_id, session=s
+            )
         except RunNotFoundError as exc:
             raise _err(404, "not_found") from exc
         except RunNotRerunnableError as exc:

@@ -76,6 +76,10 @@ class TriggerBinding(BaseModel):
     pipeline_id: UUID
     pipeline_name: str
     schedule: Schedule | None = None
+    # Attribution: the yaaos user who created this binding.  For
+    # schedule-kind bindings this propagates to `triggered_by_user_id` on
+    # per-user-mode runs fired by the binding.
+    created_by: UUID | None = None
 
 
 class TriggerBindingSpec(BaseModel):

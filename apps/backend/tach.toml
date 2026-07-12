@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pr_review"
-depends_on = ["app.core.api_keys", "app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.intake", "app.core.llm", "app.core.tasks", "app.core.vcs", "app.domain.findings", "app.domain.pipelines", "app.domain.repos", "app.domain.tickets"]
+depends_on = ["app.core.api_keys", "app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.llm", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.domain.findings", "app.domain.pipelines", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.repos"
@@ -151,7 +151,7 @@ depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.coding_ag
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.domain.actions", "app.domain.findings", "app.domain.orgs", "app.domain.pipelines", "app.domain.pr_review", "app.domain.repos", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.sessions", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.domain.actions", "app.domain.findings", "app.domain.orgs", "app.domain.pipelines", "app.domain.pr_review", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.linear"
@@ -396,6 +396,7 @@ from = ["app.core.auth"]
 expose = [
   "ACTIVITY_EVENT_KINDS",
   "ActivityEvent",
+  "ActivityEventKind",
   "ActivityLog",
   "AgentSource",
   "BundleFile",
@@ -404,6 +405,8 @@ expose = [
   "CodingAgentInstall",
   "CodingAgentNotInstalledError",
   "CodingAgentPlugin",
+  "CommandCredentialSpec",
+  "CredentialUnavailableError",
   "Effort",
   "Invocation",
   "InvokeCodingAgent",
@@ -423,6 +426,7 @@ expose = [
   "install_coding_agent",
   "list_coding_agents",
   "list_plugins",
+  "register_credential_provider",
   "register_plugin",
   "replace_plugin",
   "set_coding_agents_for_tests",
@@ -476,6 +480,7 @@ expose = [
   "find_oauth_identity",
   "find_session_by_hash",
   "find_user_by_email",
+  "find_user_ids_by_github_username",
   "get_provider",
   "get_user",
   "has_verified_totp",

@@ -82,6 +82,12 @@ class RepoTriggerBindingRow(Base):
     # NULL` partial predicate and `add_binding`'s own duplicate-binding
     # pre-check (both need genuine SQL NULL on a non-schedule binding).
     schedule: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    # Attribution: the user who created this binding.  For schedule-kind
+    # bindings this becomes the `triggered_by_user_id` on per-user-mode runs
+    # fired by this binding.  NULL on pre-existing rows.
+    created_by: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

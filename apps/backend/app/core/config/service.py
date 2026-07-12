@@ -176,6 +176,10 @@ class Settings(BaseSettings):
     # auth service. The device-authorize and token endpoints are derived from
     # this base.
     yaaos_codex_oauth_base_url: str = "https://auth.openai.com"
+    # How far ahead of a Codex per-user run's deadline the dispatch must have a
+    # fresh token.  A 1-hour margin (3600 s) ensures the agent still holds a
+    # non-expired token even for the longest-allowed wallclock cap.
+    yaaos_codex_token_dispatch_margin_seconds: int = 3600
 
     # Linear OAuth + hosted MCP. Defaults point at the real upstreams;
     # the test compose overrides to fake-linear hostnames.

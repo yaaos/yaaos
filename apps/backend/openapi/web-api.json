@@ -3371,6 +3371,18 @@
       "TriggerBinding": {
         "description": "One repo intake→pipeline binding.",
         "properties": {
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",

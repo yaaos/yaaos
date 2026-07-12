@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 import structlog
 
 from app.core.coding_agent.types import (
     CodingAgentPlugin,
+    CommandCredentialSpec,
     PluginNotFoundError,
 )
 
@@ -20,6 +21,16 @@ if TYPE_CHECKING:
 
     from app.core.agent_gateway import DispatchContext
     from app.core.coding_agent.types import Invocation
+
+# A credential provider is an async callable registered per-plugin.  It
+# receives the org_id, user_id (from the dispatch context — may be None),
+# the run's wallclock cap, and a session; it returns a CommandCredentialSpec
+# or raises CredentialUnavailableError.  The callable signature is:
+#   async (*, org_id, user_id, wallclock_seconds, session) -> CommandCredentialSpec
+CredentialProvider = Callable[..., Coroutine[Any, Any, CommandCredentialSpec]]
+
+# Module-private: keyed by plugin_id.
+_credential_providers: dict[str, CredentialProvider] = {}
 
 log = structlog.get_logger("coding_agent")
 
@@ -117,6 +128,18 @@ def list_plugins() -> list[CodingAgentPlugin]:
     return _get().list()
 
 
+def register_credential_provider(plugin_id: str, provider: CredentialProvider) -> None:
+    """Register an async credential-provider callable for ``plugin_id``.
+
+    Called once at bootstrap time by the plugin's ``bootstrap()`` function.
+    Raises ``ValueError`` if a provider is already registered for that
+    ``plugin_id`` (duplicate registration is a programming error).
+    """
+    if plugin_id in _credential_providers:
+        raise ValueError(f"credential provider for {plugin_id!r} already registered")
+    _credential_providers[plugin_id] = provider
+
+
 async def dispatch_invocation(
     *,
     invocation: Invocation,
@@ -186,6 +209,21 @@ async def dispatch_invocation(
     }
 
     if plugin.command_kind == AgentCommandKind.INVOKE_CODEX:
+        # Resolve credentials via the registered provider (if any).  The
+        # provider raises CredentialUnavailableError when it cannot supply a
+        # usable credential; callers (the run engine) catch that and fail the
+        # stage with the provider's user_message.
+        credential_user_id: UUID | None = None
+        provider = _credential_providers.get(plugin.plugin_id)
+        if provider is not None:
+            spec: CommandCredentialSpec = await provider(
+                org_id=owner.org_id,
+                user_id=ctx.user_id,
+                wallclock_seconds=invocation_data.wallclock_seconds,
+                session=session,
+            )
+            credential_user_id = spec.credential_user_id
+
         cmd = InvokeCodexCommand(
             command_id=command_id,
             workspace_id=workspace_id,
@@ -195,6 +233,7 @@ async def dispatch_invocation(
             result_spec={},
             skill_path=skill_path,
             output_schema_json=invocation_data.output_schema_json,
+            credential_user_id=credential_user_id,
         )
     else:
         # Default: InvokeClaudeCode (and any future plugin that uses this kind).

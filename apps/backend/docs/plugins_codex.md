@@ -12,7 +12,7 @@ Does NOT own: workspace mechanics, agent dispatch, run-lifecycle tables, or API 
 
 - `CodexPlugin` — the `CodingAgentPlugin` implementation; registered at import time via `bootstrap()`.
 - `build_auth_json(credential: UserOAuthCredential) -> SecretStr` — builds the `chatgptAuthTokens` JSON payload used by the Codex CLI's `CODEX_HOME/auth.json`. Returns a `SecretStr` so the plaintext never appears in logs.
-- Bootstrap side effects: `register_plugin(CodexPlugin())` + `api_keys.register_validator("openai", validate_openai_key)` + `register_command_hydrator("InvokeCodex", _codex_command_hydrator)` + `register_user_oauth_app(UserOAuthApp(...))`. The `InvokeCodex` hydrator raises `CredentialHydrationError` for per-user credential flows (not yet supported in this mode); passes through unchanged for API-key mode (credentials arrive via `ConfigUpdate` `api_keys`).
+- Bootstrap side effects: `register_plugin(CodexPlugin())` + `api_keys.register_validator("openai", validate_openai_key)` + `register_command_hydrator("InvokeCodex", _codex_command_hydrator)` + `register_user_oauth_app(UserOAuthApp(...))` + `register_credential_provider("codex", _codex_credential_provider)`. See § Credential provider and hydrator below.
 
 ## Module architecture
 
@@ -52,6 +52,19 @@ No tables. No persistent state.
 
 `build_auth_json(credential)` serializes the `chatgptAuthTokens` shape required by the Codex CLI. The `refresh_token` field is always empty — the backend owns the refresh cycle via `ensure_fresh_access_token`.
 
+## Credential provider and hydrator
+
+Two functions registered at bootstrap handle per-user credential flows:
+
+**`_codex_credential_provider(*, org_id, user_id, wallclock_seconds, session) -> CommandCredentialSpec`** — dispatch-time resolver called by `core/coding_agent.dispatch_invocation` for every `InvokeCodex` command. Reads the org's codex install `auth_mode` setting:
+
+- `api_key` mode — checks `core/api_keys` for an org-level `"openai"` key; raises `CredentialUnavailableError("No OpenAI API key …")` if absent; returns `CommandCredentialSpec(credential_user_id=None)` if present (key arrives on the agent via `ConfigUpdate`).
+- `per_user` mode — requires `user_id` (raises if `None`); calls `core/oauth.ensure_fresh_access_token(user_id, "codex", …)` to probe connection freshness without making HTTP calls when the token is valid (fast path: `access_token_expires_at > now + margin`); raises `CredentialUnavailableError` wrapping `ConnectionMissingError` ("not connected") or `ConnectionNeedsReauthError` ("re-authorization required"); on success returns `CommandCredentialSpec(credential_user_id=user_id)`. The dispatch-margin is `Settings.yaaos_codex_token_dispatch_margin_seconds` (default 3600 s).
+
+**`_codex_command_hydrator(payload, session) -> dict`** — claim-time hydrator called by `core/agent_gateway` on every `InvokeCodex` command when it's claimed. Strips the gateway-internal `_org_id` key from the payload. For `per_user` mode (non-`None` `credential_user_id`): calls `ensure_fresh_access_token` again (the token may have expired in the window between dispatch and claim), calls `build_auth_json(credential)` to produce the `chatgptAuthTokens` JSON blob, and injects it as `auth_json: SecretStr` into the claimed payload. `credential_user_id` is kept in the output — the Go agent uses it as the signal to write `auth.json` from the injected payload. Raises `CredentialHydrationError` on `ConnectionMissingError` ("not connected") or `ConnectionNeedsReauthError` ("re-authorization required"); the gateway maps this to a `completed_failure` event with the error message as `failure_reason`. API-key mode passes through with no `auth_json` addition.
+
+`auth_json` is always `SecretStr` — `.get_secret_value()` is called only in the Go agent's workspace child process, never in backend logs or error messages.
+
 ## How it's tested
 
 - `app/plugins/codex/test/test_parse_result_method.py` — `CodexPlugin.parse_result` unit.
@@ -59,3 +72,5 @@ No tables. No persistent state.
 - `app/plugins/codex/test/test_validate_settings.py` — `CodexPlugin.validate_settings` unit.
 - `app/plugins/codex/test/test_auth_json.py` — `build_auth_json` unit: `SecretStr` wrapping, exact `chatgptAuthTokens` shape, `None` id_token / account_id → empty strings.
 - `app/core/coding_agent/test/test_skills_bundle.py` (codex renderer tests) — paths emit `.codex/` prefix; `AGENTS.md` contains delegation-authorization vocabulary; agent TOMLs include defensive restatement + correct TOML structure.
+- `app/plugins/codex/test/test_credential_provider_service.py` (`@pytest.mark.service`) — `_codex_credential_provider`: `api_key` mode with no key raises `CredentialUnavailableError`; with key returns `CommandCredentialSpec(credential_user_id=None)`; `per_user` mode with `user_id=None` raises; no connection raises; connected fresh token returns `CommandCredentialSpec(credential_user_id=user_id)`; `needs_reauth` connection raises.
+- `app/plugins/codex/test/test_claim_hydrator_service.py` (`@pytest.mark.service`) — `_codex_command_hydrator`: `api_key` mode strips `_org_id` and adds no `auth_json`; `per_user` connected injects `auth_json` as `SecretStr` with correct `chatgptAuthTokens` shape and preserves `credential_user_id`; no connection raises `CredentialHydrationError`; `needs_reauth` raises `CredentialHydrationError`.

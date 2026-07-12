@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.identity.models import UserRow
@@ -289,6 +289,34 @@ async def set_session_last_seen_for_tests(
     assert row is not None, f"session not found for hash: {token_hash[:8]}..."
     row.last_seen_at = last_seen_at
     await db.flush()
+
+
+async def find_user_ids_by_github_username(github_username: str, *, session: AsyncSession) -> list[UUID]:
+    """Return all non-deactivated user IDs whose ``github_username`` matches
+    ``github_username`` (case-insensitive).
+
+    Most callers expect exactly one result.  Zero means the PR author hasn't
+    connected a GitHub account; two or more means a collision (same GitHub
+    login on multiple accounts) — both cases should be treated as
+    "unresolvable" by the caller.
+
+    Callers that need to scope to a single org must intersect the returned
+    IDs with ``core/tenancy.list_active_member_ids(session, org_id)``
+    before deciding.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(UserRow.id).where(
+                    func.lower(UserRow.github_username) == github_username.lower(),
+                    UserRow.deactivated_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
 
 
 async def _delete_user_artifacts_for_tests(db: AsyncSession, *, user_id: UUID) -> None:

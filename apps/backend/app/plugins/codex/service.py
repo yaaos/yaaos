@@ -17,6 +17,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import structlog
 import yaml
@@ -26,11 +27,14 @@ from app.core.coding_agent import (
     ActivityLog,
     AgentSource,
     BundleFile,
+    CommandCredentialSpec,
+    CredentialUnavailableError,
     InvokeCodingAgent,
     RunResult,
     SkillSource,
     StageOptions,
     Usage,
+    register_credential_provider,
     register_plugin,
 )
 from app.core.coding_agent import (
@@ -525,30 +529,140 @@ def _build_agent_toml(agent: AgentSource) -> str:
 _plugin = CodexPlugin()
 
 
+async def _codex_credential_provider(
+    *,
+    org_id: UUID,
+    user_id: UUID | None,
+    wallclock_seconds: int,
+    session: Any,  # AsyncSession
+) -> CommandCredentialSpec:
+    """Dispatch-time credential resolver for Codex invocations.
+
+    Reads `auth_mode` from the org's Codex install settings.
+
+    api_key mode: verifies the org has an OpenAI API key configured; returns
+    ``CommandCredentialSpec(credential_user_id=None)``. Raises
+    ``CredentialUnavailableError`` when no key is present.
+
+    per_user mode: requires the run to have an attributed user (``user_id``
+    non-None); calls ``ensure_fresh_access_token`` with a margin large enough
+    to cover the full wallclock cap plus a buffer; returns
+    ``CommandCredentialSpec(credential_user_id=user_id)``. Translates
+    ``ConnectionMissingError`` / ``ConnectionNeedsReauthError`` into
+    ``CredentialUnavailableError`` with a user-facing message.
+    """
+    from app.core.api_keys import get as _api_keys_get  # noqa: PLC0415
+    from app.core.coding_agent import list_coding_agents  # noqa: PLC0415
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.oauth import (  # noqa: PLC0415
+        ConnectionMissingError,
+        ConnectionNeedsReauthError,
+        ensure_fresh_access_token,
+    )
+
+    installs = await list_coding_agents(session, org_id)
+    codex_install = next((i for i in installs if i.plugin_id == "codex"), None)
+    auth_mode = codex_install.settings.get("auth_mode", "api_key") if codex_install else "api_key"
+
+    if auth_mode == "api_key":
+        key = await _api_keys_get(org_id, "openai", session=session)
+        if key is None:
+            raise CredentialUnavailableError(
+                "No OpenAI API key configured for this org; add one in Settings → Coding Agents → Codex"
+            )
+        return CommandCredentialSpec(credential_user_id=None)
+
+    # per_user mode
+    if user_id is None:
+        raise CredentialUnavailableError(
+            "This pipeline run has no attributed user; per-user Codex auth requires "
+            "a PR author who is an active org member with a connected Codex account"
+        )
+
+    settings = get_settings()
+    margin = settings.yaaos_codex_token_dispatch_margin_seconds
+    try:
+        await ensure_fresh_access_token(
+            user_id,
+            "codex",
+            min_remaining_seconds=wallclock_seconds + margin,
+        )
+    except ConnectionMissingError:
+        raise CredentialUnavailableError(
+            "The run's attributed user has not connected their Codex account; "
+            "visit Settings → Connected Accounts to connect"
+        )
+    except ConnectionNeedsReauthError:
+        raise CredentialUnavailableError(
+            "The run's attributed user's Codex connection needs re-authorization; "
+            "visit Settings → Connected Accounts to reconnect"
+        )
+
+    return CommandCredentialSpec(credential_user_id=user_id)
+
+
 async def _codex_command_hydrator(
     payload: dict[str, Any],
-    session: Any,  # AsyncSession; unused by this hydrator but required by CommandHydrator protocol
+    session: Any,  # AsyncSession; shape-b — ensure_fresh_access_token opens its own session
 ) -> dict[str, Any]:
-    """Claim-time hydrator for `InvokeCodex` commands.
+    """Claim-time hydrator for ``InvokeCodex`` commands.
 
-    Phase-4 stub — supports API-key mode only.  Per-user mode (non-None
-    `credential_user_id`) raises `CredentialHydrationError` so the pipeline
-    engine surfaces a meaningful failure instead of forwarding a command the
-    Go agent cannot satisfy without per-user auth.
+    api_key mode (``credential_user_id`` is None): strips ``_org_id``; no
+    ``auth_json`` injected — the Go agent reads ``CODEX_API_KEY`` from the
+    ConfigUpdate ``api_keys`` map.
 
-    `credential_user_id` is stripped from the output in all cases: in API-key
-    mode the Go agent reads `CODEX_API_KEY` (injected via ConfigUpdate's
-    `api_keys["openai"]` map) and ignores `credential_user_id` when absent.
+    per_user mode (``credential_user_id`` non-None): fetches a fresh OAuth
+    token via ``ensure_fresh_access_token``, builds the ``auth.json`` payload
+    via ``build_auth_json``, and injects it as ``auth_json``. Translates
+    ``ConnectionMissingError`` / ``ConnectionNeedsReauthError`` into
+    ``CredentialHydrationError`` so the run engine surfaces a user-facing
+    failure reason.
+
+    ``credential_user_id`` is preserved in the output so the Go agent's
+    ``RunCodex`` handler uses it as the signal to write ``auth.json``.
+    ``_org_id`` (gateway context key) is stripped from the output.
     """
     from app.core.agent_gateway import CredentialHydrationError  # noqa: PLC0415
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.oauth import (  # noqa: PLC0415
+        ConnectionMissingError,
+        ConnectionNeedsReauthError,
+        ensure_fresh_access_token,
+    )
+    from app.plugins.codex.auth_json import build_auth_json  # noqa: PLC0415
 
-    if payload.get("credential_user_id") is not None:
-        raise CredentialHydrationError(
-            "per-user Codex authentication is not yet supported; "
-            "configure an OpenAI API key in org settings to use API-key mode"
+    # Strip gateway-injected context key; all other fields pass through unchanged.
+    output = {k: v for k, v in payload.items() if k != "_org_id"}
+
+    raw_cred_id = payload.get("credential_user_id")
+    if raw_cred_id is None:
+        # api_key mode — Go agent reads CODEX_API_KEY; no auth_json needed.
+        return output
+
+    # per_user mode: fetch fresh credential and build auth.json.
+    user_id = UUID(str(raw_cred_id))
+    settings = get_settings()
+    margin = settings.yaaos_codex_token_dispatch_margin_seconds
+    wallclock = (payload.get("limits") or {}).get("wallclock_seconds", 0)
+    try:
+        cred = await ensure_fresh_access_token(
+            user_id,
+            "codex",
+            min_remaining_seconds=wallclock + margin,
         )
-    # Strip the persistence-only field; api-key mode ignores it.
-    return {k: v for k, v in payload.items() if k != "credential_user_id"}
+    except ConnectionMissingError as exc:
+        raise CredentialHydrationError(
+            "The run's attributed user has not connected their Codex account; "
+            "visit Settings → Connected Accounts to connect"
+        ) from exc
+    except ConnectionNeedsReauthError as exc:
+        raise CredentialHydrationError(
+            "The run's attributed user's Codex connection needs re-authorization; "
+            "visit Settings → Connected Accounts to reconnect"
+        ) from exc
+
+    output["auth_json"] = build_auth_json(cred)
+    return output
 
 
 def bootstrap() -> None:
@@ -565,6 +679,7 @@ def bootstrap() -> None:
     register_plugin(_plugin)
     _api_keys_register_validator("openai", validate_openai_key)
     register_command_hydrator("InvokeCodex", _codex_command_hydrator)
+    register_credential_provider("codex", _codex_credential_provider)
 
     # Register the Codex UserOAuthApp (public client — no client_secret).
     # Endpoints derive from `yaaos_codex_oauth_base_url` so the test stack

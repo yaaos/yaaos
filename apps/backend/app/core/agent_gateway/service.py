@@ -52,6 +52,7 @@ from app.core.agent_gateway.types import (
     HeartbeatRequest,
     HeartbeatResponse,
     InvokeClaudeCodeCommand,
+    InvokeCodexCommand,
     ProvisionWorkspaceCommand,
     RefreshWorkspaceAuthCommand,
     ShutdownCommand,
@@ -120,6 +121,7 @@ _COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
         | WriteFilesCommand
         | RefreshWorkspaceAuthCommand
         | InvokeClaudeCodeCommand
+        | InvokeCodexCommand
         | CleanupWorkspaceCommand
         | ConfigUpdateCommand
         | ShutdownCommand

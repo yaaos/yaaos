@@ -150,7 +150,9 @@ async def add_trigger_endpoint(repo: str, body: TriggerBindingSpec) -> AddTrigge
     actor = current_actor()
     async with db_session() as s:
         try:
-            binding_id = await repos.add_binding(org_id, repo, spec=body, actor=actor, session=s)
+            binding_id = await repos.add_binding(
+                org_id, repo, spec=body, actor=actor, created_by=actor.user_id, session=s
+            )
         except UnknownIntakePointError as exc:
             raise _err(400, "unknown_point") from exc
         except InvalidCronError as exc:

@@ -85,7 +85,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_gateway import DispatchContext
 from app.core.audit_log import Actor, audit
-from app.core.coding_agent import Invocation, dispatch_invocation, get_plugin
+from app.core.coding_agent import CredentialUnavailableError, Invocation, dispatch_invocation, get_plugin
 from app.core.database import session as db_session
 from app.core.notifications import create as create_notification
 from app.core.sse import GeneralEventKind, publish_general_after_commit
@@ -799,6 +799,7 @@ def _system_command_context(run: PipelineRunRow, stage_exec: StageExecutionRow) 
         stage_execution_id=stage_exec.id,
         attempt=0,
         traceparent=run.otel_trace_context,
+        user_id=run.triggered_by_user_id,
     )
 
 
@@ -1057,9 +1058,15 @@ async def _dispatch_skill_stage(
         wallclock_seconds=stage.wallclock_seconds,
     )
     cmd_ctx = _system_command_context(run, stage_exec)
-    await dispatch_invocation(
-        invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
-    )
+    try:
+        await dispatch_invocation(
+            invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
+        )
+    except CredentialUnavailableError as exc:
+        await _fail_stage(
+            run, stage_exec, stage_index=stage_index, failure_reason=exc.user_message, session=session
+        )
+        return
     run.pending_agent_command_id = command_id
 
 
@@ -1259,9 +1266,19 @@ async def _dispatch_review_invocation(
         wallclock_seconds=stage.wallclock_seconds,
     )
     cmd_ctx = _system_command_context(run, stage_exec)
-    await dispatch_invocation(
-        invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
-    )
+    try:
+        await dispatch_invocation(
+            invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
+        )
+    except CredentialUnavailableError as exc:
+        await _fail_stage(
+            run,
+            stage_exec,
+            stage_index=stage_exec.stage_index,
+            failure_reason=exc.user_message,
+            session=session,
+        )
+        return
     stage_exec.phase = "review"
     run.pending_agent_command_id = command_id
 
@@ -1312,9 +1329,15 @@ async def _dispatch_fix_invocation(
         wallclock_seconds=stage.wallclock_seconds,
     )
     cmd_ctx = _system_command_context(run, stage_exec)
-    await dispatch_invocation(
-        invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
-    )
+    try:
+        await dispatch_invocation(
+            invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
+        )
+    except CredentialUnavailableError as exc:
+        await _fail_stage(
+            run, stage_exec, stage_index=stage_index, failure_reason=exc.user_message, session=session
+        )
+        return
     # Durable record of what the fix invocation was asked to revise —
     # independent of the wire payload, so a caller (and tests) can observe
     # "the fix received these findings" straight off the row.
@@ -1380,9 +1403,15 @@ async def _dispatch_review_only_stage(
         wallclock_seconds=stage.wallclock_seconds,
     )
     cmd_ctx = _system_command_context(run, stage_exec)
-    await dispatch_invocation(
-        invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
-    )
+    try:
+        await dispatch_invocation(
+            invocation=invocation, plugin=plugin, ctx=cmd_ctx, command_id=command_id, session=session
+        )
+    except CredentialUnavailableError as exc:
+        await _fail_stage(
+            run, stage_exec, stage_index=stage_index, failure_reason=exc.user_message, session=session
+        )
+        return
     run.pending_agent_command_id = command_id
 
 
