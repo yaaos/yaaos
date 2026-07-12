@@ -11,7 +11,7 @@ Does NOT own: workspace mechanics, agent dispatch, run-lifecycle tables, or API 
 ## Public interface
 
 - `CodexPlugin` — the `CodingAgentPlugin` implementation; registered at import time via `bootstrap()`.
-- Bootstrap side effect: `register_plugin(CodexPlugin())` + `api_keys.register_validator("openai", validate_openai_key)`.
+- Bootstrap side effects: `register_plugin(CodexPlugin())` + `api_keys.register_validator("openai", validate_openai_key)` + `register_command_hydrator("InvokeCodex", _codex_command_hydrator)`. The `InvokeCodex` hydrator raises `CredentialHydrationError` for per-user credential flows (not yet supported in this mode); passes through unchanged for API-key mode (credentials arrive via `ConfigUpdate` `api_keys`).
 
 ## Module architecture
 

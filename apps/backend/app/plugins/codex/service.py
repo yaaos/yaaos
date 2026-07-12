@@ -525,12 +525,40 @@ def _build_agent_toml(agent: AgentSource) -> str:
 _plugin = CodexPlugin()
 
 
+async def _codex_command_hydrator(
+    payload: dict[str, Any],
+    session: Any,  # AsyncSession; unused by this hydrator but required by CommandHydrator protocol
+) -> dict[str, Any]:
+    """Claim-time hydrator for `InvokeCodex` commands.
+
+    Phase-4 stub — supports API-key mode only.  Per-user mode (non-None
+    `credential_user_id`) raises `CredentialHydrationError` so the pipeline
+    engine surfaces a meaningful failure instead of forwarding a command the
+    Go agent cannot satisfy without per-user auth.
+
+    `credential_user_id` is stripped from the output in all cases: in API-key
+    mode the Go agent reads `CODEX_API_KEY` (injected via ConfigUpdate's
+    `api_keys["openai"]` map) and ignores `credential_user_id` when absent.
+    """
+    from app.core.agent_gateway import CredentialHydrationError  # noqa: PLC0415
+
+    if payload.get("credential_user_id") is not None:
+        raise CredentialHydrationError(
+            "per-user Codex authentication is not yet supported; "
+            "configure an OpenAI API key in org settings to use API-key mode"
+        )
+    # Strip the persistence-only field; api-key mode ignores it.
+    return {k: v for k, v in payload.items() if k != "credential_user_id"}
+
+
 def bootstrap() -> None:
+    from app.core.agent_gateway import register_command_hydrator  # noqa: PLC0415
     from app.core.api_keys import register_validator as _api_keys_register_validator  # noqa: PLC0415
     from app.plugins.codex.api_key_validator import validate_openai_key  # noqa: PLC0415
 
     register_plugin(_plugin)
     _api_keys_register_validator("openai", validate_openai_key)
+    register_command_hydrator("InvokeCodex", _codex_command_hydrator)
 
 
 def get_plugin() -> CodexPlugin:

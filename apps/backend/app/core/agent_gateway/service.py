@@ -94,6 +94,24 @@ def register_agent_event_consumer(task_ref: TaskRef) -> None:
 # failure. Prevents infinite retry of a structurally bad command.
 MAX_ATTEMPT: int = 5
 
+# Maximum number of run-bearing rows that claim_next may retire to `done` in a
+# single call due to CredentialHydrationError. Guards against a misconfigured
+# org filling the queue with commands that all fail hydration and starving the
+# claim loop indefinitely.
+_HYDRATION_RETIRE_CAP: int = 5
+
+# Command kinds that are "run-bearing" — they carry a run_id and resume a
+# pipeline run on their terminal event. A CredentialHydrationError on one of
+# these kinds retires the row to `done` and synthesizes a `completed_failure`
+# event so the run engine surfaces the failure. Non-run-bearing kinds (e.g.
+# ConfigUpdate) follow a different path: leave pending, return None.
+_RUN_BEARING_KINDS: frozenset[str] = frozenset(
+    {
+        AgentCommandKind.INVOKE_CLAUDE_CODE,
+        AgentCommandKind.INVOKE_CODEX,
+    }
+)
+
 # Discriminated-union adapter that deserializes a persisted command payload back
 # to a typed AgentCommand. Built once at import time — `claim_next` is a hot path.
 _COMMAND_ADAPTER: TypeAdapter[AgentCommand] = TypeAdapter(
@@ -412,13 +430,12 @@ async def _build_agent_config(
     *,
     session: AsyncSession,
 ) -> AgentConfig:
-    """Build the per-org `AgentConfig` body from current Settings + per-org API key secrets.
+    """Build the per-org `AgentConfig` body from current Settings.
 
-    Invariant per `(org_id, session)` within one transaction — the org fetch
-    and API key provider read are both deterministic — so the fan-out path can
-    safely call this once and reuse the result across N agents.
+    `api_keys` is always `{}` at enqueue time — credentials are injected at
+    claim time by the ConfigUpdate hydrator registered in `core/coding_agent`.
+    This keeps credentials out of the `agent_commands` table at rest.
     """
-    from app.core.agent_gateway.api_key_provider import get_api_key_secrets_provider  # noqa: PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
     from app.core.tenancy import get_org_full  # noqa: PLC0415
 
@@ -426,17 +443,13 @@ async def _build_agent_config(
     org_full = await get_org_full(session, org_id)
     if org_full is None:
         raise LookupError(f"org {org_id} not found")
-    api_keys: dict = {}
-    provider = get_api_key_secrets_provider()
-    if provider is not None:
-        api_keys = await provider(org_id, session=session)
     return AgentConfig(
         max_workspaces=org_full.workspace_max_count,
         otlp_endpoint=settings.yaaos_dash0_endpoint,
         otlp_token=settings.yaaos_agent_dash0_bearer_token,
         otlp_dataset=settings.yaaos_dash0_dataset,
         environment=settings.environment,
-        api_keys=api_keys,
+        api_keys={},  # hydrated at claim time by the ConfigUpdate hydrator
     )
 
 
@@ -561,6 +574,121 @@ def _row_to_command(row: object) -> AgentCommand:
     return _COMMAND_ADAPTER.validate_python(row.payload)
 
 
+async def _select_eligible_row_nowait(
+    agent_id: UUID,
+    *,
+    lifecycle: str,
+    new_workspaces: int,
+    workspace_ids: list[UUID],
+    session: AsyncSession,
+) -> Any:
+    """One-shot non-blocking row selection for `claim_next`.
+
+    Returns an `AgentCommandRow` or `None` — typed as `Any` to avoid a
+    module-level deferred import in the function signature; callers trust the
+    deferred `AgentCommandRow` import inside `claim_next`.
+
+    Does NOT stamp or long-poll.  The caller owns both.
+    """
+    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+
+    if lifecycle == "unconfigured":
+        # Unconfigured agents may only claim their pending ConfigUpdate row.
+        # `enqueue_config_update_for_agent` pre-stamps `agent_id` so this
+        # SELECT finds it without a workspace_ids sweep.
+        return (
+            (
+                await session.execute(
+                    select(AgentCommandRow)
+                    .where(
+                        AgentCommandRow.status == "pending",
+                        AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                        AgentCommandRow.agent_id == agent_id,
+                    )
+                    .order_by(AgentCommandRow.id)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+
+    # Active lifecycle — three priority buckets evaluated in order.
+    #
+    # Bucket 1: agent-scoped commands (ConfigUpdate, Shutdown, CancelShutdown)
+    # pre-stamped with agent_id. ConfigUpdate must land before any workspace
+    # command so credential and endpoint rotations take effect before the next
+    # ProvisionWorkspace injects per-workspace env that lives for the
+    # workspace's whole life. Shutdown/CancelShutdown are agent lifecycle
+    # signals that must land regardless of workspace capacity.
+    row = (
+        (
+            await session.execute(
+                select(AgentCommandRow)
+                .where(
+                    AgentCommandRow.status == "pending",
+                    AgentCommandRow.command_kind.in_(
+                        [
+                            AgentCommandKind.CONFIG_UPDATE,
+                            AgentCommandKind.SHUTDOWN,
+                            AgentCommandKind.CANCEL_SHUTDOWN,
+                        ]
+                    ),
+                    AgentCommandRow.agent_id == agent_id,
+                )
+                .order_by(AgentCommandRow.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+
+    # Bucket 2: unassigned ProvisionWorkspace (capacity for new workspaces).
+    if row is None and new_workspaces > 0:
+        row = (
+            (
+                await session.execute(
+                    select(AgentCommandRow)
+                    .where(
+                        AgentCommandRow.status == "pending",
+                        AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
+                        AgentCommandRow.agent_id.is_(None),
+                    )
+                    .order_by(AgentCommandRow.id)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+
+    # Bucket 3: oldest pending command pinned to this agent for any named workspace.
+    if row is None and workspace_ids:
+        row = (
+            (
+                await session.execute(
+                    select(AgentCommandRow)
+                    .where(
+                        AgentCommandRow.status == "pending",
+                        AgentCommandRow.agent_id == agent_id,
+                        AgentCommandRow.workspace_id.in_(workspace_ids),
+                    )
+                    .order_by(AgentCommandRow.id)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+
+    return row
+
+
 async def claim_next(
     agent_id: UUID,
     *,
@@ -596,232 +724,160 @@ async def claim_next(
 
     `wait_seconds=0` → non-blocking peek (returns None immediately if nothing
     claimable). Non-zero `wait_seconds` → short-interval re-SELECT loop.
+
+    Claim-time hydration:
+    After selecting a row, `claim_next` calls the registered `CommandHydrator`
+    for the command's kind (see `core/agent_gateway/hydrators.py`).  Hydrators
+    inject credentials (e.g. per-org API keys into ConfigUpdate, per-user auth
+    into future InvokeCodex per-user mode) from live secrets, never from the
+    persisted payload.  On `CredentialHydrationError`:
+    - Run-bearing kinds (InvokeClaudeCode, InvokeCodex): retire the row to
+      `done`, synthesize a `completed_failure` AgentEvent so the run engine
+      surfaces the error, then try the next eligible row (up to
+      `_HYDRATION_RETIRE_CAP` retirements per call).
+    - Other kinds (ConfigUpdate, …): revert the row to `pending` (undo the
+      claim stamp) and return None — the agent retries on the next claim cycle.
     """
-    from app.core.agent_gateway.models import AgentCommandRow  # noqa: PLC0415
+    from app.core.agent_gateway.hydrators import (  # noqa: PLC0415
+        CredentialHydrationError,
+        get_command_hydrator,
+    )
 
-    now = datetime.now(UTC)
-    row: AgentCommandRow | None = None
+    # ── 1. Initial row selection (with optional long-poll) ──────────────────
+    row = await _select_eligible_row_nowait(
+        agent_id,
+        lifecycle=lifecycle,
+        new_workspaces=new_workspaces,
+        workspace_ids=workspace_ids,
+        session=session,
+    )
 
-    if lifecycle == "unconfigured":
-        # Unconfigured agents may only claim their pending ConfigUpdate row.
-        # `enqueue_config_update_for_agent` pre-stamps `agent_id` so this
-        # SELECT finds it without a workspace_ids sweep.
-        row = (
-            (
-                await session.execute(
-                    select(AgentCommandRow)
-                    .where(
-                        AgentCommandRow.status == "pending",
-                        AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
-                        AgentCommandRow.agent_id == agent_id,
-                    )
-                    .order_by(AgentCommandRow.id)
-                    .limit(1)
-                    .with_for_update(skip_locked=True)
-                )
-            )
-            .scalars()
-            .one_or_none()
-        )
-        if row is None:
-            if wait_seconds <= 0:
-                return None
-            import asyncio  # noqa: PLC0415
+    if row is None and wait_seconds > 0:
+        import asyncio  # noqa: PLC0415
 
-            deadline = datetime.now(UTC) + timedelta(seconds=wait_seconds)
-            while row is None and datetime.now(UTC) < deadline:
-                remaining = (deadline - datetime.now(UTC)).total_seconds()
-                await asyncio.sleep(min(2.0, remaining))
-                if datetime.now(UTC) >= deadline:
-                    break
-                row = (
-                    (
-                        await session.execute(
-                            select(AgentCommandRow)
-                            .where(
-                                AgentCommandRow.status == "pending",
-                                AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
-                                AgentCommandRow.agent_id == agent_id,
-                            )
-                            .order_by(AgentCommandRow.id)
-                            .limit(1)
-                            .with_for_update(skip_locked=True)
-                        )
-                    )
-                    .scalars()
-                    .one_or_none()
-                )
-            if row is None:
-                return None
-    else:
-        # Agent-scoped priority bucket first: ConfigUpdate, Shutdown, and
-        # CancelShutdown are pre-stamped with agent_id and carry no workspace_id.
-        # ConfigUpdate carries credential / endpoint rotations (API keys, OTLP
-        # token) that must land before the next ProvisionWorkspace. Shutdown /
-        # CancelShutdown are agent lifecycle signals that must land regardless of
-        # workspace capacity.
-        row = (
-            (
-                await session.execute(
-                    select(AgentCommandRow)
-                    .where(
-                        AgentCommandRow.status == "pending",
-                        AgentCommandRow.command_kind.in_(
-                            [
-                                AgentCommandKind.CONFIG_UPDATE,
-                                AgentCommandKind.SHUTDOWN,
-                                AgentCommandKind.CANCEL_SHUTDOWN,
-                            ]
-                        ),
-                        AgentCommandRow.agent_id == agent_id,
-                    )
-                    .order_by(AgentCommandRow.id)
-                    .limit(1)
-                    .with_for_update(skip_locked=True)
-                )
-            )
-            .scalars()
-            .one_or_none()
-        )
-
-        # Then unassigned ProvisionWorkspace (capacity for new workspaces).
-        if row is None and new_workspaces > 0:
-            row = (
-                (
-                    await session.execute(
-                        select(AgentCommandRow)
-                        .where(
-                            AgentCommandRow.status == "pending",
-                            AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
-                            AgentCommandRow.agent_id.is_(None),
-                        )
-                        .order_by(AgentCommandRow.id)
-                        .limit(1)
-                        .with_for_update(skip_locked=True)
-                    )
-                )
-                .scalars()
-                .one_or_none()
+        deadline = datetime.now(UTC) + timedelta(seconds=wait_seconds)
+        while row is None and datetime.now(UTC) < deadline:
+            remaining = (deadline - datetime.now(UTC)).total_seconds()
+            await asyncio.sleep(min(2.0, remaining))
+            if datetime.now(UTC) >= deadline:
+                break
+            row = await _select_eligible_row_nowait(
+                agent_id,
+                lifecycle=lifecycle,
+                new_workspaces=new_workspaces,
+                workspace_ids=workspace_ids,
+                session=session,
             )
 
-        # If no ProvisionWorkspace, try the oldest pending command pinned to this agent
-        # for any of the named workspaces.
-        if row is None and workspace_ids:
-            row = (
-                (
-                    await session.execute(
-                        select(AgentCommandRow)
-                        .where(
-                            AgentCommandRow.status == "pending",
-                            AgentCommandRow.agent_id == agent_id,
-                            AgentCommandRow.workspace_id.in_(workspace_ids),
-                        )
-                        .order_by(AgentCommandRow.id)
-                        .limit(1)
-                        .with_for_update(skip_locked=True)
-                    )
-                )
-                .scalars()
-                .one_or_none()
+    if row is None:
+        return None
+
+    # ── 2. Hydration retry loop ──────────────────────────────────────────────
+    # For run-bearing kinds, a credential failure retires the bad row and loops
+    # to the next eligible row (up to _HYDRATION_RETIRE_CAP retirements per
+    # call so a queue full of broken rows cannot starve the loop indefinitely).
+    retired_count: int = 0
+    hydrated_payload: dict | None = None
+
+    while True:
+        # Stamp claim on the selected row.
+        now = datetime.now(UTC)
+        raw = secrets.token_urlsafe(32)
+        row.agent_id = agent_id
+        row.status = "claimed"
+        row.claimed_at = now
+        row.completion_token_hash = hashlib.sha256(raw.encode()).hexdigest()
+        await session.flush()
+
+        # Apply claim-time credential hydration when a hydrator is registered.
+        hydrator = get_command_hydrator(row.command_kind)
+        if hydrator is None:
+            # No hydrator registered for this kind — payload passes verbatim.
+            break
+
+        # Inject the gateway-context key so the hydrator can access org_id
+        # without a separate column projection.  The caller strips it on the
+        # success path; the error path abandons the row anyway.
+        persisted_payload = dict(row.payload or {})
+        persisted_payload["_org_id"] = row.org_id
+
+        try:
+            hydrated_payload = await hydrator(persisted_payload, session)
+        except CredentialHydrationError as exc:
+            log.warning(
+                "agent.claim.hydration_failed",
+                kind=row.command_kind,
+                command_id=str(row.id),
+                reason=exc.user_message,
             )
-
-        if row is None:
-            if wait_seconds <= 0:
-                return None
-            # Long-poll: sleep in short intervals and re-try the claim SELECTs
-            # until either a row is found or wait_seconds elapses.
-            import asyncio  # noqa: PLC0415
-
-            deadline = datetime.now(UTC) + timedelta(seconds=wait_seconds)
-            while row is None and datetime.now(UTC) < deadline:
-                remaining = (deadline - datetime.now(UTC)).total_seconds()
-                await asyncio.sleep(min(2.0, remaining))
-                if datetime.now(UTC) >= deadline:
-                    break
-                # Re-run the same claim SELECTs without recursion.
-                row = (
-                    (
-                        await session.execute(
-                            select(AgentCommandRow)
-                            .where(
-                                AgentCommandRow.status == "pending",
-                                AgentCommandRow.command_kind.in_(
-                                    [
-                                        AgentCommandKind.CONFIG_UPDATE,
-                                        AgentCommandKind.SHUTDOWN,
-                                        AgentCommandKind.CANCEL_SHUTDOWN,
-                                    ]
-                                ),
-                                AgentCommandRow.agent_id == agent_id,
-                            )
-                            .order_by(AgentCommandRow.id)
-                            .limit(1)
-                            .with_for_update(skip_locked=True)
-                        )
+            if row.command_kind in _RUN_BEARING_KINDS:
+                # Guard: at most _HYDRATION_RETIRE_CAP retirements per call.
+                if retired_count >= _HYDRATION_RETIRE_CAP:
+                    log.warning(
+                        "agent.claim.hydration_retire_cap_reached",
+                        cap=_HYDRATION_RETIRE_CAP,
+                        agent_id=str(agent_id),
+                        last_kind=row.command_kind,
                     )
-                    .scalars()
-                    .one_or_none()
+                    # Revert the claim stamp so this row stays eligible for
+                    # the next claim cycle instead of getting stuck in
+                    # "claimed" state with no consumer.
+                    row.status = "pending"
+                    row.claimed_at = None
+                    await session.flush()
+                    return None
+                # Retire row to done + synthesize completed_failure so the run
+                # engine can surface the error to the pipeline UI.
+                row.status = "done"
+                await session.flush()
+                if row.run_id is not None:
+                    await enqueue_agent_event(
+                        run_id=row.run_id,
+                        agent_command_id=row.id,
+                        outcome_label="failure",
+                        outputs={"error_message": exc.user_message},
+                        session=session,
+                    )
+                retired_count += 1
+                # Try the next eligible row.
+                row = await _select_eligible_row_nowait(
+                    agent_id,
+                    lifecycle=lifecycle,
+                    new_workspaces=new_workspaces,
+                    workspace_ids=workspace_ids,
+                    session=session,
                 )
-                if row is None and new_workspaces > 0:
-                    row = (
-                        (
-                            await session.execute(
-                                select(AgentCommandRow)
-                                .where(
-                                    AgentCommandRow.status == "pending",
-                                    AgentCommandRow.command_kind == AgentCommandKind.PROVISION_WORKSPACE,
-                                    AgentCommandRow.agent_id.is_(None),
-                                )
-                                .order_by(AgentCommandRow.id)
-                                .limit(1)
-                                .with_for_update(skip_locked=True)
-                            )
-                        )
-                        .scalars()
-                        .one_or_none()
-                    )
-                if row is None and workspace_ids:
-                    row = (
-                        (
-                            await session.execute(
-                                select(AgentCommandRow)
-                                .where(
-                                    AgentCommandRow.status == "pending",
-                                    AgentCommandRow.agent_id == agent_id,
-                                    AgentCommandRow.workspace_id.in_(workspace_ids),
-                                )
-                                .order_by(AgentCommandRow.id)
-                                .limit(1)
-                                .with_for_update(skip_locked=True)
-                            )
-                        )
-                        .scalars()
-                        .one_or_none()
-                    )
-            if row is None:
+                if row is None:
+                    return None
+                hydrated_payload = None
+                continue
+            else:
+                # Non-run-bearing kind (e.g. ConfigUpdate): revert the claim
+                # stamp so the agent can retry on the next claim cycle.
+                row.status = "pending"
+                row.claimed_at = None
+                await session.flush()
                 return None
+        else:
+            # Hydration succeeded — strip the gateway context key if it leaked
+            # through (the hydrator should already have stripped it).
+            hydrated_payload.pop("_org_id", None)
+            break
 
-    # Stamp agent_id + claimed_at on the single selected row, and mint the
-    # per-command completion capability token. We persist only the sha256 hash;
-    # the raw token is returned to the claiming agent exactly once (injected into
-    # the command DTO below) and never stored — bearer-token discipline applied
-    # to `agent_commands`.
-    raw = secrets.token_urlsafe(32)
-    row.agent_id = agent_id
-    row.status = "claimed"
-    row.claimed_at = now
-    row.completion_token_hash = hashlib.sha256(raw.encode()).hexdigest()
-    await session.flush()
-
-    # Inject the raw token and run_id into the returned DTO without
-    # re-persisting them to `row.payload`. `_CommandBase` is frozen, so
-    # `model_copy(update=...)` returns a new typed instance of the concrete subtype.
-    # run_id is read from the row's dedicated column (not the payload)
-    # so agent-side spans can carry run_id without a separate lookup.
+    # ── 3. Build the outbound AgentCommand DTO ───────────────────────────────
+    # `completion_token` and `run_id` are always injected here, never stored.
+    # For the hydrated path, the hydrated dict contains the complete payload
+    # (including envelope keys from the persisted row) plus any injected
+    # credentials.  For the non-hydrated path, use the stored payload verbatim.
     updates: dict = {"completion_token": raw}
     if row.run_id is not None:
         updates["run_id"] = row.run_id
-    return _row_to_command(row).model_copy(update=updates)
+
+    if hydrated_payload is not None:
+        cmd = _COMMAND_ADAPTER.validate_python(hydrated_payload)
+        return cmd.model_copy(update=updates)
+    else:
+        return _row_to_command(row).model_copy(update=updates)
 
 
 async def acknowledge_command_received(

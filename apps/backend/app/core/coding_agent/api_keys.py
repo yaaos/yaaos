@@ -1,8 +1,13 @@
-"""API key secrets provider and on-change wiring for coding-agent plugins.
+"""API key secrets provider, ConfigUpdate hydrator, and on-change wiring.
 
 `build_api_key_secrets_for_org` is the api-key-secrets-provider callable registered
-with `core/agent_gateway` via the IoC seam. Called whenever a ConfigUpdate
-is enqueued for an org so the agent receives fresh API keys.
+with `core/agent_gateway` via the IoC seam.  Called at claim time by
+`_config_update_hydrator` to inject the current per-org API key secrets into the
+outbound ConfigUpdate DTO — credentials are never stored in `agent_commands` at rest.
+
+`_config_update_hydrator` is the `CommandHydrator` registered for the
+`ConfigUpdate` kind.  It runs inside `claim_next` and returns the COMPLETE
+outbound payload dict with `config.api_keys` populated from the live secrets.
 
 `_register_api_key_on_change` registers the ConfigUpdate fan-out callback with
 `core/api_keys` at module load time (called from `core/coding_agent/__init__.py`).
@@ -10,6 +15,7 @@ is enqueued for an org so the agent receives fresh API keys.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from pydantic import SecretStr
@@ -32,12 +38,44 @@ async def build_api_key_secrets_for_org(
     decrypts every row in one query, wrapping each plaintext in SecretStr on
     emergence so it never crosses module boundaries as a bare string.
 
-    Called by `core/agent_gateway._build_config_update_dto` via the registered
+    Called at claim time by `_config_update_hydrator` via the registered
     api-key-secrets-provider IoC seam.
     """
     import app.core.api_keys as _api_keys  # noqa: PLC0415
 
     return await _api_keys.get_all_for_org(org_id, session=session)
+
+
+async def _config_update_hydrator(
+    payload: dict[str, Any],
+    session: AsyncSession,
+) -> dict[str, Any]:
+    """Claim-time hydrator for `ConfigUpdate` commands.
+
+    Injects the current per-org API key secrets into `config.api_keys`.  The
+    `_org_id` gateway-context key is consumed here and stripped from the output;
+    `claim_next` also strips it as belt-and-braces.
+
+    Credentials flow: `api_keys.get_all_for_org` → `SecretStr` values in the
+    returned dict → unwrapped only at the wire-encode boundary by
+    `AgentConfig.api_keys`' `@field_serializer(when_used="json")`.
+    """
+    from app.core.agent_gateway import get_api_key_secrets_provider  # noqa: PLC0415
+
+    org_id: UUID = payload["_org_id"]
+    out = {k: v for k, v in payload.items() if k != "_org_id"}
+
+    provider = get_api_key_secrets_provider()
+    if provider is None:
+        return out
+
+    api_keys = await provider(org_id, session=session)
+
+    # Replace config.api_keys with the freshly-fetched secrets.
+    config = dict(out.get("config") or {})
+    config["api_keys"] = api_keys
+    out["config"] = config
+    return out
 
 
 def _register_api_key_on_change() -> None:

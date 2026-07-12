@@ -19,6 +19,9 @@ from app.core.agent_gateway import (
     register_api_key_secrets_provider as _register_api_key_secrets_provider,
 )
 from app.core.agent_gateway import (
+    register_command_hydrator as _register_command_hydrator,
+)
+from app.core.agent_gateway import (
     register_run_sink as _register_run_sink,
 )
 
@@ -27,6 +30,7 @@ from app.core.agent_gateway import (
 # the broker + scheduler registry at import time.
 from app.core.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
 from app.core.coding_agent.api_keys import (
+    _config_update_hydrator,
     _register_api_key_on_change,
     build_api_key_secrets_for_org,
 )
@@ -76,6 +80,7 @@ from app.core.coding_agent.types import (
 _register_run_sink(CodingAgentRunSinkImpl())
 _register_api_key_secrets_provider(build_api_key_secrets_for_org)
 _register_api_key_on_change()
+_register_command_hydrator("ConfigUpdate", _config_update_hydrator)
 
 __all__ = [
     "ACTIVITY_EVENT_KINDS",

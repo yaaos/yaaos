@@ -119,6 +119,39 @@ The `claim_next` lifecycle gate: `lifecycle='unconfigured'` → SELECT for `Conf
 
 The `received` EventKind is non-terminal: it cancels the lease requeue on the row (`claimed → delivered`). Terminal events retire the row to `done`.
 
+## Claim-time credential hydration
+
+**No credentials at rest.** `agent_commands.payload` never contains API keys or OAuth tokens. Credentials are injected into the outbound DTO at claim time by the `CommandHydrator` registry.
+
+### `CommandHydrator` registry
+
+- **Type alias** — `Callable[[dict[str, Any], AsyncSession], Awaitable[dict[str, Any]]]`. Receives the persisted payload dict (augmented by the gateway with `_org_id`) and returns the complete outbound payload with credential values wrapped as `SecretStr`.
+- **Registry** — `_HYDRATORS: dict[str, CommandHydrator]` in `app/core/agent_gateway/hydrators.py`. `register_command_hydrator(kind, fn)` raises `ValueError` on duplicate registration. `get_command_hydrator(kind)` returns `None` for unregistered kinds (verbatim path — payload passes through unchanged).
+- **`CredentialHydrationError`** — raised by a hydrator to signal that it cannot retrieve credentials for this row. Carries `user_message: str` (user-facing failure text) as a structured field.
+- **`_org_id` injection** — the gateway injects `payload["_org_id"] = row.org_id` before calling the hydrator. The hydrator reads and strips it; the gateway also strips it after the hydrator returns (on the success path only).
+
+### Per-kind failure handling
+
+When a hydrator raises `CredentialHydrationError` the gateway branches on command kind:
+
+- **`InvokeClaudeCode` / `InvokeCodex`** (run-bearing kinds) — the row is retired to `done`. If the row has a `run_id`, a `completed_failure` event is synthesized via `enqueue_agent_event` with `outputs={"error_message": exc.user_message}` so the pipeline run surfaces the failure immediately. The gateway then attempts the next eligible row (subject to the retire cap).
+- **`ConfigUpdate`** — the row is reverted from `claimed` back to `pending` (clearing `claimed_at`). `claim_next` returns `None` so the agent's next long-poll retries; the row is retried once the key is set or the queue ages out.
+
+### `_HYDRATION_RETIRE_CAP = 5`
+
+At most 5 rows may be retired per single `claim_next` call. If a sixth run-bearing row would need retiring, `claim_next` returns `None` rather than draining the queue indefinitely — a starvation guard when many queued commands lack credentials.
+
+### Registered hydrators (at boot)
+
+| Kind | Registered by | Behaviour |
+|---|---|---|
+| `ConfigUpdate` | `core/coding_agent.__init__` | Calls the `ApiKeySecretsProvider` IoC seam to populate `config.api_keys` with org keys. No-ops when no provider is registered. |
+| `InvokeCodex` | `plugins/codex.bootstrap()` | Raises `CredentialHydrationError` for per-user credential flows (not yet supported); passes through for API-key mode. |
+
+### Exports
+
+`CredentialHydrationError`, `register_command_hydrator`, and `clear_command_hydrators_for_tests` are exported from `core/agent_gateway.__all__`.
+
 ## Why / invariants
 
 - **`workspace_agents.lifecycle` — drain lifecycle FSM.** Two orthogonal axes track agent state: `state` (liveness: `reachable/stale/offline`) and `lifecycle` (drain: `unconfigured/active/draining/shutdown`). `lifecycle` transitions:
@@ -163,9 +196,11 @@ The `received` EventKind is non-terminal: it cancels the lease requeue on the ro
 
 ## Vocabulary
 
+- **CommandHydrator** — `Callable[[dict[str, Any], AsyncSession], Awaitable[dict[str, Any]]]`. Async callable registered per command kind that receives the persisted payload (with `_org_id` injected by the gateway) and returns the complete outbound payload. Raises `CredentialHydrationError` to signal a recoverable credential failure. Registry in `app/core/agent_gateway/hydrators.py`; consumer of the registry is `claim_next`.
+- **CredentialHydrationError** — exception raised by a `CommandHydrator` when it cannot retrieve credentials for the row. `user_message: str` carries the user-facing failure text that the gateway embeds in the synthesized `completed_failure` event for run-bearing kinds.
 - **AgentConfig.otlp_token** — `SecretStr | None` end-to-end in Python. `.get_secret_value()` is called only at the JSON wire-encode boundary via a `field_serializer(when_used="json")` on the field — `str()`, `repr()`, and `model_dump()` (Python mode) all show `**********`. The wire JSON carries the raw token so the agent can pass it to its OTLP exporter.
-- **AgentConfig.api_keys** — `dict[str, SecretStr]` end-to-end in Python (provider_id → credential). Same serializer discipline as `otlp_token`: `model_dump(mode="python")` keeps `SecretStr` wrappers; `model_dump(mode="json")` unwraps via `@field_serializer("api_keys", when_used="json")`. The Go agent receives a flat `{"anthropic": "<raw_token>", ...}` JSON object and injects each entry as an env var (`"anthropic"` → `ANTHROPIC_API_KEY`) when spawning the Claude Code subprocess. Populated by `_build_config_update_dto` via the registered `ApiKeySecretsProvider` IoC seam.
-- **ApiKeySecretsProvider IoC seam** — `api_key_provider.py` holds a single-slot registry for an async callable `(org_id, *, session) -> dict[str, SecretStr]`. Registered by `core/coding_agent` at import time (`_register_api_key_secrets_provider(build_api_key_secrets_for_org)`). `agent_gateway` calls `get_api_key_secrets_provider()` inside `_build_config_update_dto` without importing `core/api_keys` or `core/coding_agent` — the IoC seam keeps the `agent_gateway → coding_agent` edge absent. Public exports: `register_api_key_secrets_provider`, `get_api_key_secrets_provider`, `clear_api_key_secrets_provider`.
+- **AgentConfig.api_keys** — `dict[str, SecretStr]` end-to-end in Python (provider_id → credential). Same serializer discipline as `otlp_token`: `model_dump(mode="python")` keeps `SecretStr` wrappers; `model_dump(mode="json")` unwraps via `@field_serializer("api_keys", when_used="json")`. The Go agent receives a flat `{"anthropic": "<raw_token>", ...}` JSON object and injects each entry as an env var (`"anthropic"` → `ANTHROPIC_API_KEY`) when spawning the Claude Code subprocess. Always `{}` in the persisted `agent_commands.payload`; populated at claim time by the `ConfigUpdate` command hydrator (see § Claim-time credential hydration above). `_build_agent_config` never calls the `ApiKeySecretsProvider` — credentials are not embedded at enqueue time.
+- **ApiKeySecretsProvider IoC seam** — `api_key_provider.py` holds a single-slot registry for an async callable `(org_id, *, session) -> dict[str, SecretStr]`. Registered by `core/coding_agent` at import time (`_register_api_key_secrets_provider(build_api_key_secrets_for_org)`). The `ConfigUpdate` command hydrator (in `core/coding_agent/api_keys.py`) calls `get_api_key_secrets_provider()` at claim time, keeping the `agent_gateway → coding_agent` import edge absent. Public exports: `register_api_key_secrets_provider`, `get_api_key_secrets_provider`, `clear_api_key_secrets_provider`.
 - **`enqueue_config_update_for_all_org_agents(org_id, *, session)`** — selects all active `WorkspaceAgentRow` rows for the org and calls `enqueue_config_update_for_agent` for each. Called by `core/coding_agent` via a `core/api_keys.register_on_change` callback so agents receive fresh `api_keys` immediately after every `set()` or `clear()`.
 - **AgentCommand** — discriminated union: `ProvisionWorkspace | WriteFiles | RefreshWorkspaceAuth | InvokeClaudeCode | InvokeCodex | CleanupWorkspace | ConfigUpdate | Shutdown | CancelShutdown`.
 - **AgentEvent** — `progress` or `received` (non-terminal) or `completed_{success|failure|skipped}` (terminal). `received` cancels the lease requeue. `artifact` (`Artifact | None`, `{body: str}`) and `artifact_error` (`str | None`) carry the agent-collected `$TMPDIR/<command_id>.md` content on `InvokeClaudeCode` and `InvokeCodex` terminal events — `record_agent_event` merges both into the `outputs` dict forwarded to `HANDLE_AGENT_EVENT` (not yet read by anything downstream). `failure_reason` (`str | None`, the agent's detailed failure text, e.g. `skill not found: <path>`) is forwarded into the same `outputs` dict as `error_message` when the sink enrichment left it unset — the run engine persists `outputs["error_message"]` as the stage/run failure_reason, so the agent's reason survives to the DB instead of collapsing to the bare outcome label.

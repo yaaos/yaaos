@@ -30,6 +30,11 @@ from app.core.agent_gateway.bearers import (
     revoke_all_for_org,
     set_bearer_verify_for_tests,
 )
+from app.core.agent_gateway.hydrators import (
+    CredentialHydrationError,
+    clear_command_hydrators_for_tests,
+    register_command_hydrator,
+)
 from app.core.agent_gateway.org_arn_lookup import (
     OrgArnRef,
     lookup_org_by_arn,
@@ -148,6 +153,7 @@ __all__ = [
     "ClaimRequest",
     "CleanupWorkspaceCommand",
     "ConfigUpdateCommand",
+    "CredentialHydrationError",
     "DispatchContext",
     "GatewayError",
     "HeartbeatRequest",
@@ -181,6 +187,7 @@ __all__ = [
     "cancel_shutdown_agents",
     "claim_next",
     "clear_api_key_secrets_provider",
+    "clear_command_hydrators_for_tests",
     "clear_run_sink",
     "compute_agent_liveness_transitions",
     "connection_status_for_org",
@@ -210,6 +217,7 @@ __all__ = [
     "record_workspace_event",
     "register_agent_event_consumer",
     "register_api_key_secrets_provider",
+    "register_command_hydrator",
     "register_org_arn_lookup",
     "register_report_sink",
     "register_run_sink",
