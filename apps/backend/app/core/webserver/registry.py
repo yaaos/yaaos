@@ -59,7 +59,13 @@ def register_routes(spec: RouteSpec) -> None:
             f"{spec.module_name}: url_prefix must start with '/api/' and not end with '/' (got {prefix!r})"
         )
     for claimed, claimant in _claimed_prefixes.items():
-        if prefix == claimed or prefix.startswith(claimed + "/") or claimed.startswith(prefix + "/"):
+        # Reject exact duplicates and the case where a new *parent* prefix would
+        # shadow routes of an already-registered more-specific prefix (e.g. adding
+        # "/api/user" after "/api/user/oauth" is already claimed). A new *child*
+        # prefix ("/api/user/oauth" under existing "/api/user") is fine — FastAPI
+        # routes by specificity and a child-module's routes take precedence over the
+        # parent for their sub-paths, which is the intended behaviour.
+        if prefix == claimed or claimed.startswith(prefix + "/"):
             raise ValueError(
                 f"{spec.module_name}: prefix {prefix!r} overlaps with {claimed!r} (owned by {claimant!r})"
             )

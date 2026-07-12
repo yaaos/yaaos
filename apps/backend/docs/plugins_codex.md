@@ -11,7 +11,8 @@ Does NOT own: workspace mechanics, agent dispatch, run-lifecycle tables, or API 
 ## Public interface
 
 - `CodexPlugin` — the `CodingAgentPlugin` implementation; registered at import time via `bootstrap()`.
-- Bootstrap side effects: `register_plugin(CodexPlugin())` + `api_keys.register_validator("openai", validate_openai_key)` + `register_command_hydrator("InvokeCodex", _codex_command_hydrator)`. The `InvokeCodex` hydrator raises `CredentialHydrationError` for per-user credential flows (not yet supported in this mode); passes through unchanged for API-key mode (credentials arrive via `ConfigUpdate` `api_keys`).
+- `build_auth_json(credential: UserOAuthCredential) -> SecretStr` — builds the `chatgptAuthTokens` JSON payload used by the Codex CLI's `CODEX_HOME/auth.json`. Returns a `SecretStr` so the plaintext never appears in logs.
+- Bootstrap side effects: `register_plugin(CodexPlugin())` + `api_keys.register_validator("openai", validate_openai_key)` + `register_command_hydrator("InvokeCodex", _codex_command_hydrator)` + `register_user_oauth_app(UserOAuthApp(...))`. The `InvokeCodex` hydrator raises `CredentialHydrationError` for per-user credential flows (not yet supported in this mode); passes through unchanged for API-key mode (credentials arrive via `ConfigUpdate` `api_keys`).
 
 ## Module architecture
 
@@ -35,9 +36,26 @@ None — the plugin is stateless; all state lives in `core/coding_agent` tables.
 
 No tables. No persistent state.
 
+## UserOAuthApp registration
+
+`bootstrap()` registers a `UserOAuthApp` (from `core/oauth`) with:
+
+- `provider_id = "codex"`, `display_name = "Codex (ChatGPT)"`
+- `flow = "device_code"` — RFC-8628 public client (no `client_secret`)
+- `device_authorize_url = {YAAOS_CODEX_OAUTH_BASE_URL}/oauth/v2/device/code`
+- `token_url = {YAAOS_CODEX_OAUTH_BASE_URL}/oauth/v2/token`
+- `client_id = "openai-api-chatgpt"`, `default_scopes = ("openid", "profile", "email")`
+- `expiry_source = "jwt_exp"`, `capture_id_token = True`
+- `account_id_extractor` — reads `sub` (or `account_id`) from the id_token JWT payload
+
+`YAAOS_CODEX_OAUTH_BASE_URL` defaults to `https://auth.openai.com`; override in test compose to point at the fake-openai peer.
+
+`build_auth_json(credential)` serializes the `chatgptAuthTokens` shape required by the Codex CLI. The `refresh_token` field is always empty — the backend owns the refresh cycle via `ensure_fresh_access_token`.
+
 ## How it's tested
 
-- `app/plugins/codex/test/test_parse_result_method.py` — `CodexPlugin.parse_result` unit: `item.completed` → output text extracted; usage from `turn.completed`; missing fields return empty.
-- `app/plugins/codex/test/test_parse_activity_line.py` — `CodexPlugin.parse_activity_line` unit: assistant_message → `kind="assistant_message"`; `turn.completed` → `kind="result"`; blank/unrecognized → `None`.
-- `app/plugins/codex/test/test_validate_settings.py` — `CodexPlugin.validate_settings` unit: empty dict accepted; unknown key raises `ValueError`.
+- `app/plugins/codex/test/test_parse_result_method.py` — `CodexPlugin.parse_result` unit.
+- `app/plugins/codex/test/test_parse_activity_line.py` — `CodexPlugin.parse_activity_line` unit.
+- `app/plugins/codex/test/test_validate_settings.py` — `CodexPlugin.validate_settings` unit.
+- `app/plugins/codex/test/test_auth_json.py` — `build_auth_json` unit: `SecretStr` wrapping, exact `chatgptAuthTokens` shape, `None` id_token / account_id → empty strings.
 - `app/core/coding_agent/test/test_skills_bundle.py` (codex renderer tests) — paths emit `.codex/` prefix; `AGENTS.md` contains delegation-authorization vocabulary; agent TOMLs include defensive restatement + correct TOML structure.

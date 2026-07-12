@@ -171,6 +171,12 @@ class Settings(BaseSettings):
     # unset so dev/test only need one key. Production must set this.
     yaaos_totp_master_key: SecretStr = SecretStr("")
 
+    # Codex (OpenAI) OAuth base URL — overridden in the test stack to point
+    # at the local fake-openai peer. Production default is the real OpenAI
+    # auth service. The device-authorize and token endpoints are derived from
+    # this base.
+    yaaos_codex_oauth_base_url: str = "https://auth.openai.com"
+
     # Linear OAuth + hosted MCP. Defaults point at the real upstreams;
     # the test compose overrides to fake-linear hostnames.
     yaaos_oauth_linear_client_id: str = ""

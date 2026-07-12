@@ -37,9 +37,15 @@ const BASE_USER = {
   ],
 };
 
+// Default empty connections — override per-test when testing the connections section.
+const EMPTY_CONNECTIONS = { connections: [] };
+
 describe("DetailsPage (MSW)", () => {
   beforeEach(() => {
-    server.use(http.get("/api/user/me", () => HttpResponse.json(BASE_USER)));
+    server.use(
+      http.get("/api/user/me", () => HttpResponse.json(BASE_USER)),
+      http.get("/api/user/oauth/connections", () => HttpResponse.json(EMPTY_CONNECTIONS)),
+    );
   });
 
   it("renders display name, per-org handles, emails, GitHub connect CTA", async () => {
@@ -65,5 +71,54 @@ describe("DetailsPage (MSW)", () => {
       expect(screen.getByTestId("github-username")).toHaveTextContent("@octocat"),
     );
     expect(screen.getByTestId("github-clear")).toBeInTheDocument();
+  });
+
+  it("renders connections section with a not-connected card", async () => {
+    server.use(
+      http.get("/api/user/oauth/connections", () =>
+        HttpResponse.json({
+          connections: [
+            {
+              provider_id: "codex",
+              display_name: "Codex (ChatGPT)",
+              connect_hint: "Authorize yaaos in ChatGPT settings.",
+              status: "not_connected",
+              external_account_id: null,
+              connected_at: null,
+              needs_reauth_reason: null,
+            },
+          ],
+        }),
+      ),
+    );
+    render(wrap(<DetailsPage />));
+    await waitFor(() => expect(screen.getByTestId("connections-section")).toBeInTheDocument());
+    expect(screen.getByTestId("connection-row-codex")).toBeInTheDocument();
+    expect(screen.getByTestId("connection-connect-codex")).toBeInTheDocument();
+  });
+
+  it("renders connected card with Disconnect button", async () => {
+    server.use(
+      http.get("/api/user/oauth/connections", () =>
+        HttpResponse.json({
+          connections: [
+            {
+              provider_id: "codex",
+              display_name: "Codex (ChatGPT)",
+              connect_hint: "Authorize yaaos in ChatGPT settings.",
+              status: "connected",
+              external_account_id: "chatgpt-acct-123",
+              connected_at: new Date().toISOString(),
+              needs_reauth_reason: null,
+            },
+          ],
+        }),
+      ),
+    );
+    render(wrap(<DetailsPage />));
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-disconnect-codex")).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/chatgpt-acct-123/)).toBeInTheDocument();
   });
 });

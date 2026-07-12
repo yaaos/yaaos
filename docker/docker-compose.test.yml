@@ -57,6 +57,18 @@ services:
       timeout: 2s
       retries: 30
 
+  fake-openai:
+    build:
+      context: ..
+      dockerfile: apps/fake-openai/Dockerfile
+    ports:
+      - "58086:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/__test/status').status == 200 else 1)\""]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
   redis:
     image: redis:7-alpine
     ports:
@@ -144,6 +156,9 @@ services:
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
       YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"
       YAAOS_CATCHUP_DELAY_SECONDS: "0"
+      # Codex OAuth device-auth: point at the fake-openai peer so e2e specs
+      # exercise the full connect flow without hitting auth.openai.com.
+      YAAOS_CODEX_OAUTH_BASE_URL: http://fake-openai:8080
     depends_on:
       postgres:
         condition: service_healthy
@@ -154,6 +169,8 @@ services:
       fake-linear:
         condition: service_started
       fake-notion:
+        condition: service_started
+      fake-openai:
         condition: service_started
     ports:
       - "58080:8080"
@@ -202,6 +219,7 @@ services:
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
       YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"
       YAAOS_CATCHUP_DELAY_SECONDS: "0"
+      YAAOS_CODEX_OAUTH_BASE_URL: http://fake-openai:8080
     depends_on:
       postgres:
         condition: service_healthy

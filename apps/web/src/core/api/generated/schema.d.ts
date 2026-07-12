@@ -1692,6 +1692,87 @@ export interface paths {
         patch: operations["patch_user_me_api_user_me_patch"];
         trace?: never;
     };
+    "/api/user/oauth/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Connections
+         * @description List all registered OAuth apps with the caller's connection status.
+         */
+        get: operations["list_connections_api_user_oauth_connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/oauth/{provider_id}/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect Connection Route
+         * @description Remove the stored connection. Delete-only — never calls a revoke endpoint.
+         */
+        delete: operations["disconnect_connection_route_api_user_oauth__provider_id__connection_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/oauth/{provider_id}/device-auth/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll Device Auth Route
+         * @description Poll the device-auth handshake. POST — a successful poll stores tokens and
+         *     writes audit rows (state changes must not be GET requests).
+         */
+        post: operations["poll_device_auth_route_api_user_oauth__provider_id__device_auth_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/oauth/{provider_id}/device-auth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Device Auth Route
+         * @description Begin a device-auth handshake for `provider_id`.
+         */
+        post: operations["start_device_auth_route_api_user_oauth__provider_id__device_auth_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent/commands/claim": {
         parameters: {
             query?: never;
@@ -3489,12 +3570,60 @@ export interface components {
             /** Results */
             results: components["schemas"]["ShutdownResult"][];
         };
+        /** _ConnectionView */
+        _ConnectionView: {
+            /** Connect Hint */
+            connect_hint: string;
+            /** Connected At */
+            connected_at: string | null;
+            /** Display Name */
+            display_name: string;
+            /** External Account Id */
+            external_account_id: string | null;
+            /** Needs Reauth Reason */
+            needs_reauth_reason: string | null;
+            /** Provider Id */
+            provider_id: string;
+            /** Status */
+            status: string;
+        };
+        /** _ConnectionsResponse */
+        _ConnectionsResponse: {
+            /** Connections */
+            connections: components["schemas"]["_ConnectionView"][];
+        };
         /** _CreateOrgRequest */
         _CreateOrgRequest: {
             /** Name */
             name: string;
             /** Slug */
             slug: string;
+        };
+        /** _DeviceAuthPollResponse */
+        _DeviceAuthPollResponse: {
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number | null;
+            /** Status */
+            status: string;
+        };
+        /** _DeviceAuthStartResponse */
+        _DeviceAuthStartResponse: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number;
+            /** User Code */
+            user_code: string;
+            /** Verification Url */
+            verification_url: string;
+        };
+        /** _DisconnectResponse */
+        _DisconnectResponse: {
+            /** Removed */
+            removed: boolean;
         };
         /** _MarkReadFilter */
         _MarkReadFilter: {
@@ -6953,6 +7082,136 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["_UserMeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_connections_api_user_oauth_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_ConnectionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_connection_route_api_user_oauth__provider_id__connection_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_DisconnectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_device_auth_route_api_user_oauth__provider_id__device_auth_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_DeviceAuthPollResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_device_auth_route_api_user_oauth__provider_id__device_auth_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_DeviceAuthStartResponse"];
                 };
             };
             /** @description Validation Error */

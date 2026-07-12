@@ -3690,6 +3690,87 @@
         "title": "_BulkShutdownResponse",
         "type": "object"
       },
+      "_ConnectionView": {
+        "properties": {
+          "connect_hint": {
+            "title": "Connect Hint",
+            "type": "string"
+          },
+          "connected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connected At"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "external_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Account Id"
+          },
+          "needs_reauth_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Reauth Reason"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_id",
+          "display_name",
+          "connect_hint",
+          "status",
+          "external_account_id",
+          "connected_at",
+          "needs_reauth_reason"
+        ],
+        "title": "_ConnectionView",
+        "type": "object"
+      },
+      "_ConnectionsResponse": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/_ConnectionView"
+            },
+            "title": "Connections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "title": "_ConnectionsResponse",
+        "type": "object"
+      },
       "_CreateOrgRequest": {
         "properties": {
           "name": {
@@ -3710,6 +3791,73 @@
           "slug"
         ],
         "title": "_CreateOrgRequest",
+        "type": "object"
+      },
+      "_DeviceAuthPollResponse": {
+        "properties": {
+          "poll_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Interval Seconds"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "poll_interval_seconds"
+        ],
+        "title": "_DeviceAuthPollResponse",
+        "type": "object"
+      },
+      "_DeviceAuthStartResponse": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "poll_interval_seconds": {
+            "title": "Poll Interval Seconds",
+            "type": "integer"
+          },
+          "user_code": {
+            "title": "User Code",
+            "type": "string"
+          },
+          "verification_url": {
+            "title": "Verification Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verification_url",
+          "user_code",
+          "expires_at",
+          "poll_interval_seconds"
+        ],
+        "title": "_DeviceAuthStartResponse",
+        "type": "object"
+      },
+      "_DisconnectResponse": {
+        "properties": {
+          "removed": {
+            "title": "Removed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "removed"
+        ],
+        "title": "_DisconnectResponse",
         "type": "object"
       },
       "_MarkReadFilter": {
@@ -10825,6 +10973,233 @@
         "summary": "Patch User Me",
         "tags": [
           "user"
+        ]
+      }
+    },
+    "/api/user/oauth/connections": {
+      "get": {
+        "description": "List all registered OAuth apps with the caller's connection status.",
+        "operationId": "list_connections_api_user_oauth_connections_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ConnectionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Connections",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/user/oauth/{provider_id}/connection": {
+      "delete": {
+        "description": "Remove the stored connection. Delete-only — never calls a revoke endpoint.",
+        "operationId": "disconnect_connection_route_api_user_oauth__provider_id__connection_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DisconnectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disconnect Connection Route",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/user/oauth/{provider_id}/device-auth/poll": {
+      "post": {
+        "description": "Poll the device-auth handshake. POST — a successful poll stores tokens and\nwrites audit rows (state changes must not be GET requests).",
+        "operationId": "poll_device_auth_route_api_user_oauth__provider_id__device_auth_poll_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DeviceAuthPollResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Poll Device Auth Route",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/user/oauth/{provider_id}/device-auth/start": {
+      "post": {
+        "description": "Begin a device-auth handshake for `provider_id`.",
+        "operationId": "start_device_auth_route_api_user_oauth__provider_id__device_auth_start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DeviceAuthStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Device Auth Route",
+        "tags": [
+          "oauth"
         ]
       }
     },

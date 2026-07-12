@@ -554,11 +554,70 @@ async def _codex_command_hydrator(
 def bootstrap() -> None:
     from app.core.agent_gateway import register_command_hydrator  # noqa: PLC0415
     from app.core.api_keys import register_validator as _api_keys_register_validator  # noqa: PLC0415
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.oauth import (  # noqa: PLC0415
+        Tokens,
+        UserOAuthApp,
+        register_user_oauth_app,
+    )
     from app.plugins.codex.api_key_validator import validate_openai_key  # noqa: PLC0415
 
     register_plugin(_plugin)
     _api_keys_register_validator("openai", validate_openai_key)
     register_command_hydrator("InvokeCodex", _codex_command_hydrator)
+
+    # Register the Codex UserOAuthApp (public client — no client_secret).
+    # Endpoints derive from `yaaos_codex_oauth_base_url` so the test stack
+    # can override them without touching this file.
+    settings = get_settings()
+    base_url = settings.yaaos_codex_oauth_base_url.rstrip("/")
+
+    def _chatgpt_account_id(tokens: Tokens) -> str | None:
+        """Extract ChatGPT account id from the id_token JWT sub claim."""
+        if tokens.id_token is None:
+            return None
+        try:
+            import base64  # noqa: PLC0415
+            import json as _json  # noqa: PLC0415
+
+            raw = tokens.id_token.get_secret_value()
+            parts = raw.split(".")
+            if len(parts) != 3:
+                return None
+            padding = 4 - len(parts[1]) % 4
+            payload = base64.urlsafe_b64decode(parts[1] + "=" * (padding % 4))
+            data = _json.loads(payload)
+            return data.get("sub") or data.get("account_id")
+        except Exception:
+            return None
+
+    try:
+        register_user_oauth_app(
+            UserOAuthApp(
+                provider_id="codex",
+                display_name="Codex (ChatGPT)",
+                connect_hint=(
+                    "Before connecting, enable device-code authorization in your "
+                    "ChatGPT settings under Settings → Security → Third-party app "
+                    "authorization (Device-code flow)."
+                ),
+                flow="device_code",
+                device_authorize_url=f"{base_url}/oauth/v2/device/code",
+                token_url=f"{base_url}/oauth/v2/token",
+                client_id="openai-api-chatgpt",
+                client_secret=None,  # Public client
+                default_scopes=("openid", "profile", "email"),
+                token_auth_style="form",
+                scope_separator=" ",
+                expiry_source="jwt_exp",
+                capture_id_token=True,
+                account_id_extractor=_chatgpt_account_id,
+                refresh_after_seconds=345600,  # 4 days
+            )
+        )
+    except ValueError:
+        # Already registered (bootstrap called twice in tests) — safe to skip.
+        pass
 
 
 def get_plugin() -> CodexPlugin:
