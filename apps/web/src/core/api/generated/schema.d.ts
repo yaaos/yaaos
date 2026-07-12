@@ -3449,6 +3449,8 @@ export interface components {
          * @description One repo intake→pipeline binding.
          */
         TriggerBinding: {
+            /** Created By */
+            created_by?: string | null;
             /**
              * Id
              * Format: uuid

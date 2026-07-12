@@ -80,7 +80,7 @@ Unit tests in `app/plugins/claude_code/test/`:
 - `test_stream_parsing.py` — `_parse_stream_events` + `_parse_usage` + `_render_activity_log` private helpers: well-formed streams, garbage interleaved with valid JSON, partial streams (timeout case).
 - `test_build_invocation_method.py` — `compile_invocation`: any skill name compiles, prompt renders the stage-invocation-context fields (input, PR pointers, strict-JSON-output directive), missing required context keys raise `CodingAgentError`.
 - `test_settings_schema.py` — settings round-trip on `{mcp_proxy_ids}`.
-- `test_defaults_endpoint.py` — asserts `GET /api/claude_code/defaults` returns 404 (route removed), `GET /api/coding-agents` rows carry `display_name`/`models`/`efforts` from the plugin, and `GET /api/coding-agents/available` lists registered plugins.
+- `test_defaults_endpoint.py` — asserts `GET /api/claude_code/defaults` returns 404 (the plugin exposes no HTTP surface), `GET /api/coding-agents` rows carry `display_name`/`models`/`efforts` from the plugin, and `GET /api/coding-agents/available` lists registered plugins.
 - `test_set_claude_code_plugin_for_tests.py` — `set_claude_code_plugin_for_tests` swaps and restores the singleton for the block.
 
 `set_claude_code_plugin_for_tests` (exported from `app.plugins.claude_code`) is the test seam for swapping the singleton `ClaudeCodePlugin` instance.
