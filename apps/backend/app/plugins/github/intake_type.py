@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import Actor, audit_for_ticket, audit_for_webhook_event
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.core.identity import resolve_github_attribution
 from app.core.intake import (
     IntakeOutcome,
     IntakeRejectedError,
@@ -89,27 +90,6 @@ class _PrTicketPrep(NamedTuple):
     vcs_pr: Any | None
     repo_full: str
     upserted_pr_id: UUID | None
-
-
-async def _resolve_attribution(github_username: str, *, org_id: UUID, session: AsyncSession) -> UUID | None:
-    """Resolve a GitHub username to a single active org-member user ID.
-
-    Returns ``None`` when the username is blank, resolves to zero yaaos users,
-    resolves to multiple yaaos users (collision), or the single resolved user
-    is not an active member of ``org_id``.  Callers treat ``None`` as
-    "attribution unavailable" — per-user-mode stages will fail with a clear
-    user-facing reason at dispatch time.
-    """
-    from app.core.identity import find_user_ids_by_github_username  # noqa: PLC0415
-    from app.core.tenancy import list_active_member_ids  # noqa: PLC0415
-
-    if not github_username:
-        return None
-    user_ids = await find_user_ids_by_github_username(github_username, session=session)
-    if len(user_ids) != 1:
-        return None
-    member_ids = set(await list_active_member_ids(session, org_id))
-    return user_ids[0] if user_ids[0] in member_ids else None
 
 
 class GithubIntakeType:
@@ -414,7 +394,9 @@ class GithubIntakeType:
             pr_base_sha=vcs_pr.base_sha,
             pr_head_sha=vcs_pr.head_sha,
         )
-        triggered_by_user_id = await _resolve_attribution(vcs_pr.author_login, org_id=org_id, session=session)
+        triggered_by_user_id = await resolve_github_attribution(
+            vcs_pr.author_login, org_id=org_id, ticket_id=prep.ticket_id, session=session
+        )
         started = 0
         for binding in bindings:
             try:
@@ -487,8 +469,11 @@ class GithubIntakeType:
                     pr_base_sha=fresh.base_sha,
                     pr_head_sha=fresh.head_sha,
                 )
-                triggered_by_user_id = await _resolve_attribution(
-                    fresh.author_login, org_id=org_id, session=s
+                triggered_by_user_id = await resolve_github_attribution(
+                    fresh.author_login,
+                    org_id=org_id,
+                    ticket_id=existing_pr.ticket_id,
+                    session=s,
                 )
                 started = 0
                 for binding in bindings:

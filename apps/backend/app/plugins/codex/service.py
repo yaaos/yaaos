@@ -353,13 +353,16 @@ class CodexPlugin:
         """Validate and normalize a raw settings dict.
 
         Accepted keys: `auth_mode` (one of `"api_key"`, `"per_user"`).
-        Raises `ValueError` for unknown keys or invalid values.
+        A missing `auth_mode` normalizes to `"api_key"` — the same default
+        the credential provider applies at dispatch time — so a plain
+        install with empty settings succeeds. Raises `ValueError` for
+        unknown keys or invalid values (including an explicit `None`).
         """
         allowed_keys = {"auth_mode"}
         unknown = set(settings.keys()) - allowed_keys
         if unknown:
             raise ValueError(f"unexpected codex settings keys: {sorted(unknown)}")
-        auth_mode = settings.get("auth_mode")
+        auth_mode = settings.get("auth_mode", "api_key")
         if auth_mode not in ("api_key", "per_user"):
             raise ValueError(f"codex auth_mode must be 'api_key' or 'per_user', got {auth_mode!r}")
         return {"auth_mode": auth_mode}
@@ -676,6 +679,27 @@ async def _codex_command_hydrator(
     return output
 
 
+async def _codex_connection_relevant(user_id: UUID, session: Any) -> bool:  # AsyncSession
+    """Relevance predicate for the codex `UserOAuthApp` Connections card.
+
+    True iff the user belongs to at least one org with a codex install whose
+    `auth_mode` setting is `"per_user"` — the only mode where a per-user
+    ChatGPT connection is used. Otherwise the card is irrelevant to this user
+    (see `core/oauth.list_visible_user_oauth_apps`, which still shows it when
+    the user already has a connection row).
+    """
+    from app.core.coding_agent import list_coding_agents  # noqa: PLC0415
+    from app.core.tenancy import list_memberships_for_user  # noqa: PLC0415
+
+    memberships = await list_memberships_for_user(session, user_id)
+    for membership in memberships:
+        installs = await list_coding_agents(session, membership.org_id)
+        codex_install = next((i for i in installs if i.plugin_id == "codex"), None)
+        if codex_install is not None and codex_install.settings.get("auth_mode") == "per_user":
+            return True
+    return False
+
+
 def bootstrap() -> None:
     from app.core.agent_gateway import register_command_hydrator  # noqa: PLC0415
     from app.core.api_keys import register_validator as _api_keys_register_validator  # noqa: PLC0415
@@ -739,6 +763,7 @@ def bootstrap() -> None:
                 capture_id_token=True,
                 account_id_extractor=_chatgpt_account_id,
                 refresh_after_seconds=345600,  # 4 days
+                relevance_fn=_codex_connection_relevant,
             )
         )
     except ValueError:

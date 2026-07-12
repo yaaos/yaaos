@@ -51,7 +51,7 @@ depends_on = ["app.core.auth", "app.core.database", "app.core.identity", "app.co
 
 [[modules]]
 path = "app.core.oauth"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.identity", "app.core.notifications", "app.core.secrets", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.observability"
@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pr_review"
-depends_on = ["app.core.api_keys", "app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.llm", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.domain.findings", "app.domain.pipelines", "app.domain.repos", "app.domain.tickets"]
+depends_on = ["app.core.api_keys", "app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.llm", "app.core.tasks", "app.core.vcs", "app.domain.findings", "app.domain.pipelines", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.repos"
@@ -147,11 +147,11 @@ depends_on = ["app.core.api_keys", "app.core.coding_agent", "app.core.config", "
 
 [[modules]]
 path = "app.plugins.codex"
-depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.coding_agent", "app.core.config", "app.core.oauth", "app.domain.pipelines"]
+depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.coding_agent", "app.core.config", "app.core.oauth", "app.core.tenancy", "app.domain.pipelines"]
 
 [[modules]]
 path = "app.plugins.github"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.sessions", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.domain.actions", "app.domain.findings", "app.domain.orgs", "app.domain.pipelines", "app.domain.pr_review", "app.domain.repos", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.sessions", "app.core.vcs", "app.core.webserver", "app.domain.actions", "app.domain.findings", "app.domain.orgs", "app.domain.pipelines", "app.domain.pr_review", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.plugins.linear"
@@ -496,6 +496,7 @@ expose = [
   "mint_session",
   "register_provider",
   "require_session",
+  "resolve_github_attribution",
   "revoke_all_sessions_for_user",
   "revoke_session",
   "rotate_session",
@@ -574,6 +575,7 @@ expose = [
   "get_user_connection",
   "get_user_oauth_app",
   "list_user_oauth_apps",
+  "list_visible_user_oauth_apps",
   "poll_device_auth",
   "refresh_access_token",
   "refresh_due_connections",

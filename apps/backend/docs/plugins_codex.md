@@ -21,7 +21,7 @@ Does NOT own: workspace mechanics, agent dispatch, run-lifecycle tables, or API 
 1. **Skill invocation.** `compile_invocation(invocation)` builds `InvokeCodingAgent` with `argv=["codex", "--model", model, "--quiet", skill_path]`, empty env, empty stdin. The `output_schema_json` field flows through `InvokeCodingAgent` → `InvokeCodexCommand.OutputSchemaJSON`; the Go agent writes it as `$TMPDIR/<command_id>-schema.json` and appends `--output-schema <path>` to argv before spawning.
 2. **Result parsing.** `parse_result(terminal_event_payload)` reads `stdout` from the terminal AgentEvent outputs; parses JSONL looking for `item.completed` (role=`assistant`) events — the last such event's first `output_text` item is the result text. A `turn.completed` event carries `usage`.
 3. **Activity streaming.** `parse_activity_line(line)` decodes one JSONL frame: `item.completed` (assistant_message role) → `ActivityEvent(kind="assistant_message", message=<text>)`; `turn.completed` → `ActivityEvent(kind="result", message="turn completed")`; unrecognized or blank → `None`.
-4. **Settings validation.** `validate_settings(settings)` accepts an empty dict; rejects any unknown keys with `ValueError`.
+4. **Settings validation.** `validate_settings(settings)` accepts one key, `auth_mode` (`"api_key"` or `"per_user"`); a missing `auth_mode` normalizes to `"api_key"` (the same default the credential provider applies), so an empty dict is a valid install. Unknown keys or invalid values raise `ValueError`.
 5. **API key validation.** `validate_openai_key(key: SecretStr) -> bool` posts `GET https://api.openai.com/v1/models` with the key as bearer token; returns `True` on 200, `False` on 401/403, re-raises on other errors.
 6. **Skills-bundle rendering.** `render_skill_bundle(skills, agents)` produces a codex-native bundle layout:
    - Each skill → `.codex/skills/<name>/SKILL.md` (reconstructed markdown with frontmatter) + extra files (`.claude/` prefix remapped to `.codex/`).
@@ -47,6 +47,7 @@ No tables. No persistent state.
 - `client_id = "openai-api-chatgpt"`, `default_scopes = ("openid", "profile", "email")`
 - `expiry_source = "jwt_exp"`, `capture_id_token = True`
 - `account_id_extractor` — reads `sub` (or `account_id`) from the id_token JWT payload
+- `relevance_fn = _codex_connection_relevant` — the codex card is visible on a user's Connections page iff at least one org the user belongs to has a codex install with `settings.auth_mode == "per_user"` (per `core/oauth.list_visible_user_oauth_apps`'s visibility rule, an existing connection row keeps the card visible even after the org switches back to `api_key` mode)
 
 `YAAOS_CODEX_OAUTH_BASE_URL` defaults to `https://auth.openai.com`; override in test compose to point at the fake-openai peer.
 
@@ -74,3 +75,4 @@ Two functions registered at bootstrap handle per-user credential flows:
 - `app/core/coding_agent/test/test_skills_bundle.py` (codex renderer tests) — paths emit `.codex/` prefix; `AGENTS.md` contains delegation-authorization vocabulary; agent TOMLs include defensive restatement + correct TOML structure.
 - `app/plugins/codex/test/test_credential_provider_service.py` (`@pytest.mark.service`) — `_codex_credential_provider`: `api_key` mode with no key raises `CredentialUnavailableError`; with key returns `CommandCredentialSpec(credential_user_id=None)`; `per_user` mode with `user_id=None` raises; no connection raises; connected fresh token returns `CommandCredentialSpec(credential_user_id=user_id)`; `needs_reauth` connection raises.
 - `app/plugins/codex/test/test_claim_hydrator_service.py` (`@pytest.mark.service`) — `_codex_command_hydrator`: `api_key` mode adds no `auth_json`; `per_user` connected injects `auth_json` as `SecretStr` with correct `chatgptAuthTokens` shape and preserves `credential_user_id`; no connection raises `CredentialHydrationError`; `needs_reauth` raises `CredentialHydrationError`.
+- `app/plugins/codex/test/test_connection_relevance_service.py` (`@pytest.mark.service`) — `_codex_connection_relevant`: no codex install is irrelevant; `api_key` mode is irrelevant; `per_user` mode is relevant; switching back to `api_key` becomes irrelevant again.

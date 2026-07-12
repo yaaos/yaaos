@@ -1701,7 +1701,7 @@ export interface paths {
         };
         /**
          * List Connections
-         * @description List all registered OAuth apps with the caller's connection status.
+         * @description List OAuth apps relevant to the caller with their connection status.
          */
         get: operations["list_connections_api_user_oauth_connections_get"];
         put?: never;

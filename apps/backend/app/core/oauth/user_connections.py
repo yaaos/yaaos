@@ -29,6 +29,8 @@ from typing import Any, Literal
 from uuid import UUID
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, SecretStr
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -36,7 +38,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor
 from app.core.audit_log import audit as _audit_write
+from app.core.auth import org_id_var
 from app.core.database import session as db_session
+from app.core.notifications import create as _notification_create
 from app.core.oauth.models import UserOAuthConnectionRow, UserOAuthDeviceSessionRow
 from app.core.oauth.service import (
     OAuthError,
@@ -47,6 +51,7 @@ from app.core.oauth.service import (
 )
 from app.core.secrets import decrypt, encrypt
 from app.core.tasks import scheduled
+from app.core.tenancy import list_memberships_for_user
 
 log = structlog.get_logger("core.oauth.user_connections")
 
@@ -151,6 +156,11 @@ class UserOAuthApp:
         default=None, hash=False, compare=False
     )
     token_fn: Callable[..., Awaitable[Tokens]] | None = field(default=None, hash=False, compare=False)
+    # Relevance predicate — "should this provider appear on this user's Connections
+    # page?" None means always visible. See `list_visible_user_oauth_apps`.
+    relevance_fn: Callable[[UUID, AsyncSession], Awaitable[bool]] | None = field(
+        default=None, hash=False, compare=False
+    )
 
 
 # Module-private registry — same shape as core/api_keys validator registry.
@@ -174,6 +184,28 @@ def get_user_oauth_app(provider_id: str) -> UserOAuthApp:
 
 def list_user_oauth_apps() -> list[UserOAuthApp]:
     return list(_APPS.values())
+
+
+async def list_visible_user_oauth_apps(user_id: UUID, *, session: AsyncSession) -> list[UserOAuthApp]:
+    """Return registered apps relevant to this user's Connections page.
+
+    An app is visible when any of the following holds:
+    - it has no `relevance_fn` (always visible), or
+    - the user already has a connection row for it (connected or needs_reauth —
+      keeps the card reachable for disconnect after an org switches away from it), or
+    - `relevance_fn(user_id, session)` returns True.
+    """
+    visible: list[UserOAuthApp] = []
+    for app in _APPS.values():
+        if app.relevance_fn is None:
+            visible.append(app)
+            continue
+        if await get_user_connection(user_id, app.provider_id, session=session) is not None:
+            visible.append(app)
+            continue
+        if await app.relevance_fn(user_id, session):
+            visible.append(app)
+    return visible
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +633,50 @@ async def disconnect_user_connection(
     return True
 
 
+async def _notify_needs_reauth(s: AsyncSession, *, user_id: UUID, provider_id: str, reason: str) -> None:
+    """Create a user notification for a connected → needs_reauth flip.
+
+    Best-effort — never raises: the flip's commit must not be lost to a
+    notification failure. Org attribution: the current org context when set
+    (dispatch/claim paths), else the user's first membership org (scheduler
+    path); skipped with a WARN when the user has no membership.
+    """
+    try:
+        app = get_user_oauth_app(provider_id)
+        org_id = org_id_var.get()
+        if org_id is None:
+            memberships = await list_memberships_for_user(s, user_id)
+            org_id = memberships[0].org_id if memberships else None
+        if org_id is None:
+            log.warning(
+                "oauth.needs_reauth_notification_skipped",
+                user_id=str(user_id),
+                provider_id=provider_id,
+                skip_reason="user has no org membership",
+            )
+            return
+        await _notification_create(
+            user_id=user_id,
+            org_id=org_id,
+            type="oauth_connection_needs_reauth",
+            title=f"{app.display_name} connection needs re-authorization",
+            body=(
+                f"{reason}. Runs that use this connection will fail until you "
+                "reconnect under User settings → Details → Connections."
+            ),
+            session=s,
+        )
+    except Exception as exc:
+        span = trace.get_current_span()
+        span.record_exception(exc)
+        span.set_status(StatusCode.ERROR, "needs_reauth_notification_failed")
+        log.exception(
+            "oauth.needs_reauth_notification_failed",
+            user_id=str(user_id),
+            provider_id=provider_id,
+        )
+
+
 async def ensure_fresh_access_token(
     user_id: UUID,
     provider_id: str,
@@ -727,6 +803,7 @@ async def ensure_fresh_access_token(
                         updated_at=datetime.now(UTC),
                     )
                 )
+                await _notify_needs_reauth(s, user_id=user_id, provider_id=provider_id, reason=reason)
                 await s.commit()
                 raise ConnectionNeedsReauthError(
                     f"OAuth connection requires re-authorization ({exc.error_code})"
@@ -863,6 +940,9 @@ async def _do_refresh_due_connections() -> int:
                                 needs_reauth_reason=reason,
                                 updated_at=datetime.now(UTC),
                             )
+                        )
+                        await _notify_needs_reauth(
+                            s, user_id=row.user_id, provider_id=provider_id, reason=reason
                         )
                         await s.commit()
                         log.info(

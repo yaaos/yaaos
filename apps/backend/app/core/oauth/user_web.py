@@ -31,7 +31,7 @@ from app.core.oauth.user_connections import (
     disconnect_user_connection,
     get_user_connection,
     get_user_oauth_app,
-    list_user_oauth_apps,
+    list_visible_user_oauth_apps,
     poll_device_auth,
     start_device_auth,
 )
@@ -95,11 +95,11 @@ class _DisconnectResponse(BaseModel):
 
 @router.get("/connections", dependencies=[Depends(require_session)])
 async def list_connections() -> _ConnectionsResponse:
-    """List all registered OAuth apps with the caller's connection status."""
+    """List OAuth apps relevant to the caller with their connection status."""
     user_id = _require_user_id()
-    apps = list_user_oauth_apps()
     views: list[_ConnectionView] = []
     async with db_session() as s:
+        apps = await list_visible_user_oauth_apps(user_id, session=s)
         for app in apps:
             conn = await get_user_connection(user_id, app.provider_id, session=s)
             if conn is None:

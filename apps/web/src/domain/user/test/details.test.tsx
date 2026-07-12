@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import type React from "react";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -143,9 +143,38 @@ describe("DetailsPage (MSW)", () => {
     render(wrap(<DetailsPage />));
     await waitFor(() => expect(screen.getByTestId("connections-section")).toBeInTheDocument());
     expect(screen.getByTestId("connection-row-codex")).toBeInTheDocument();
-    // Reconnect button shown (not connected)
-    expect(screen.getByTestId("connection-connect-codex")).toBeInTheDocument();
+    // Reconnect button shown (not connected), labeled for re-authorization
+    expect(screen.getByTestId("connection-connect-codex")).toHaveTextContent("Reconnect");
     // Reason text surfaced to the user
     expect(screen.getByText(/invalid_grant/)).toBeInTheDocument();
+  });
+
+  it("shows inline error text when starting device auth fails", async () => {
+    server.use(
+      http.get("/api/user/oauth/connections", () =>
+        HttpResponse.json({
+          connections: [
+            {
+              provider_id: "codex",
+              display_name: "Codex (ChatGPT)",
+              connect_hint: "Authorize yaaos in ChatGPT settings.",
+              status: "not_connected",
+              external_account_id: null,
+              connected_at: null,
+              needs_reauth_reason: null,
+            },
+          ],
+        }),
+      ),
+      http.post("/api/user/oauth/codex/device-auth/start", () =>
+        HttpResponse.json({ detail: "device_auth_failed" }, { status: 502 }),
+      ),
+    );
+    render(wrap(<DetailsPage />));
+    await waitFor(() => expect(screen.getByTestId("connection-connect-codex")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("connection-connect-codex"));
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-connect-err-codex")).toBeInTheDocument(),
+    );
   });
 });

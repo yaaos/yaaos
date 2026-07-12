@@ -14,8 +14,9 @@
 
 **`user_connections.py` subsystem** — per-user device-code OAuth connections:
 
-- `UserOAuthApp` — frozen dataclass, one per registered provider. Carries device-authorize + token URLs, client credentials, scope list, expiry-source policy, and optional `account_id_extractor`. Providers register at plugin bootstrap via `register_user_oauth_app`.
+- `UserOAuthApp` — frozen dataclass, one per registered provider. Carries device-authorize + token URLs, client credentials, scope list, expiry-source policy, optional `account_id_extractor`, and optional `relevance_fn` (async `(user_id, session) -> bool` predicate gating Connections-page visibility; `None` means always visible). Providers register at plugin bootstrap via `register_user_oauth_app`.
 - `register_user_oauth_app` / `get_user_oauth_app` / `list_user_oauth_apps` — registry CRUD.
+- `list_visible_user_oauth_apps(user_id, *, session)` — the apps a user's Connections page should show: every app with no `relevance_fn`, plus any app the user already has a connection row for (connected or needs_reauth — keeps the card reachable for disconnect after an org switches away from it), plus any app whose `relevance_fn(user_id, session)` returns `True`. `core/oauth/user_web.py`'s `GET /api/user/oauth/connections` calls this instead of `list_user_oauth_apps`.
 - `UserOAuthConnection` — public view of a connection row (no token material).
 - `UserOAuthCredential` — token material for the workspace subprocess; unwrap `.access_token` only at the wire boundary.
 - `DeviceAuthStart` — result of `start_device_auth`; drives the connect dialog.
@@ -52,6 +53,8 @@ Rotation MUST commit before control returns: the provider invalidates the old re
 - `error_code ∈ {"invalid_grant", "refresh_token_reused", "access_denied"}` → terminal. Row flips to `status="needs_reauth"` with `needs_reauth_reason`, committed immediately, then `ConnectionNeedsReauthError` is raised. Never retried.
 - All other errors (5xx, transport, unknown) → transient. Row stays `connected`, error re-raised. The scheduler retries on the next hourly pass.
 
+**Needs-reauth user notification** — every `connected → needs_reauth` flip (consumer path and scheduler path) creates a [`core/notifications`](core_notifications.md) row (`type="oauth_connection_needs_reauth"`) for the affected user in the flip's transaction, pointing them at User settings → Details → Connections to reconnect. Org attribution: the current org context when set (dispatch/claim paths), else the user's first membership org (scheduler path). Best-effort — `_notify_needs_reauth` never raises (records on the span + logs), so a notification failure can't block the flip's commit. Edge-triggered: an already-`needs_reauth` row raises before reaching the flip, so repeat failures don't re-notify.
+
 **Proactive rotation scheduler** — `refresh_due_connections` (`@scheduled("user_oauth_token_refresh", "0 * * * *")`) sweeps each registered provider for connected rows where `last_refresh_at < now - refresh_after_seconds`. Each due row is refreshed in its own transaction with `FOR UPDATE` + `last_refresh_at` re-check (prevents double-refresh if a concurrent consumer call ran first). Terminal failures flip one row without blocking siblings. `app/worker.py` imports `app.core.oauth` to register the schedule.
 
 **Audit fanout** — `poll_device_auth` (on grant) and `disconnect_user_connection` emit one `oauth_connection.connected` / `oauth_connection.disconnected` audit row per org the user belongs to, matching the membership-fanout pattern from `core/sessions`.
@@ -79,6 +82,7 @@ All routes require a valid session (`require_session`). No org scope — user-sc
 ## How it's tested
 
 - `app/core/oauth/test/test_user_connections_service.py` — 12 `@pytest.mark.service` tests covering start/poll/grant/deny/expire/disconnect flows. Uses `UserOAuthApp.device_authorize_fn` / `token_fn` DI seams (no network, no `patch`).
-- `app/core/oauth/test/test_refresh_lifecycle_service.py` — 12 `@pytest.mark.service` tests covering `ensure_fresh_access_token` (freshness gate, rotation, re-check invariant, terminal → `needs_reauth`, transient stays connected) and `_do_refresh_due_connections` (due/non-due rows, terminal failure isolation, device-session purge). Same DI-seam pattern.
+- `app/core/oauth/test/test_connection_visibility_service.py` — `@pytest.mark.service` tests for `list_visible_user_oauth_apps`: no `relevance_fn` stays visible, `relevance_fn=False` hides, `relevance_fn=True` shows, and an irrelevant app with an existing connection row stays visible.
+- `app/core/oauth/test/test_refresh_lifecycle_service.py` — 14 `@pytest.mark.service` tests covering `ensure_fresh_access_token` (freshness gate, rotation, re-check invariant, terminal → `needs_reauth`, transient stays connected), `_do_refresh_due_connections` (due/non-due rows, terminal failure isolation, device-session purge), and the needs-reauth user notification on both flip paths. Same DI-seam pattern.
 - `app/plugins/codex/test/test_auth_json.py` — 4 unit tests for `build_auth_json` shape + `SecretStr` wrapping.
 - `apps/e2e/tests/oauth-connect.spec.ts` — browser connect/disconnect flow against the `fake-openai` peer.

@@ -24,14 +24,19 @@ def test_per_user_mode_accepted() -> None:
     assert result == {"auth_mode": "per_user"}
 
 
-def test_empty_settings_raises() -> None:
-    with pytest.raises(ValueError):
-        _plugin().validate_settings({})
+def test_empty_settings_defaults_to_api_key() -> None:
+    result = _plugin().validate_settings({})
+    assert result == {"auth_mode": "api_key"}
 
 
 def test_invalid_auth_mode_raises() -> None:
     with pytest.raises(ValueError):
         _plugin().validate_settings({"auth_mode": "oauth"})
+
+
+def test_explicit_none_auth_mode_raises() -> None:
+    with pytest.raises(ValueError):
+        _plugin().validate_settings({"auth_mode": None})
 
 
 def test_unknown_key_raises() -> None:

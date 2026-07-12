@@ -38,6 +38,7 @@ from app.core.api_keys import get as api_key_get
 from app.core.audit_log import Actor, ActorKind, audit_for_pr
 from app.core.auth import org_context
 from app.core.database import session as db_session
+from app.core.identity import resolve_github_attribution
 from app.core.intake import parse_yaaos_command
 from app.core.tasks import TaskRef, enqueue, task
 from app.core.vcs import approve_pr, has_active_approval, post_comment_reply
@@ -75,9 +76,6 @@ _ACCEPTANCE_REPLY = "Dismissing this finding based on your feedback."
 async def _start_re_review(
     org_id: UUID, ticket_id: UUID, *, author_login: str, session: AsyncSession
 ) -> None:
-    from app.core.identity import find_user_ids_by_github_username  # noqa: PLC0415
-    from app.core.tenancy import list_active_member_ids  # noqa: PLC0415
-
     ticket = await get_ticket(ticket_id, org_id=org_id)
     bindings = await find_bindings(org_id, ticket.repo_external_id, "github:pr_opened", session=session)
     if not bindings:
@@ -95,13 +93,9 @@ async def _start_re_review(
         pr_base_sha=pr_base_sha,
         pr_head_sha=pr_head_sha,
     )
-    triggered_by_user_id: UUID | None = None
-    if author_login:
-        user_ids = await find_user_ids_by_github_username(author_login, session=session)
-        if len(user_ids) == 1:
-            member_ids = set(await list_active_member_ids(session, org_id))
-            if user_ids[0] in member_ids:
-                triggered_by_user_id = user_ids[0]
+    triggered_by_user_id = await resolve_github_attribution(
+        author_login, org_id=org_id, ticket_id=ticket_id, session=session
+    )
     for binding in bindings:
         await start_run(
             org_id=org_id,
@@ -249,9 +243,6 @@ async def _render_batch(comments: list[PRCommentRow], *, session: AsyncSession) 
 
 async def maybe_start_batch_run(org_id: UUID, ticket_id: UUID, *, session: AsyncSession) -> None:
     """No run in flight AND waiting comments exist → claim + batch + start_run."""
-    from app.core.identity import find_user_ids_by_github_username  # noqa: PLC0415
-    from app.core.tenancy import list_active_member_ids  # noqa: PLC0415
-
     if await has_run_in_flight(ticket_id, session=session):
         return
 
@@ -286,13 +277,9 @@ async def maybe_start_batch_run(org_id: UUID, ticket_id: UUID, *, session: Async
     triggered_by_user_id: UUID | None = None
     if ticket.pr_id is not None:
         pr = await get_pull_request(ticket.pr_id, org_id=org_id)
-        author_login = pr.author_login
-        if author_login:
-            user_ids = await find_user_ids_by_github_username(author_login, session=session)
-            if len(user_ids) == 1:
-                member_ids = set(await list_active_member_ids(session, org_id))
-                if user_ids[0] in member_ids:
-                    triggered_by_user_id = user_ids[0]
+        triggered_by_user_id = await resolve_github_attribution(
+            pr.author_login, org_id=org_id, ticket_id=ticket_id, session=session
+        )
 
     kickoff = Kickoff(
         intake_point_id="github:pr_comment",

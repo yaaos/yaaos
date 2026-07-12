@@ -10990,7 +10990,7 @@
     },
     "/api/user/oauth/connections": {
       "get": {
-        "description": "List all registered OAuth apps with the caller's connection status.",
+        "description": "List OAuth apps relevant to the caller with their connection status.",
         "operationId": "list_connections_api_user_oauth_connections_get",
         "parameters": [
           {

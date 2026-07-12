@@ -1,9 +1,9 @@
 /**
- * Component/MSW tests for CodexSettings — the page is the OpenAI API key card.
+ * Component/MSW tests for CodexSettings — auth-mode card + OpenAI API key card.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import type React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -77,5 +77,45 @@ describe("CodexSettings (MSW)", () => {
     server.use(http.get("/api/coding-agents", () => HttpResponse.json([])));
     render(wrap(<CodexSettings pluginId="codex" />));
     await waitFor(() => expect(screen.getByTestId("codex-not-installed")).toBeInTheDocument());
+  });
+
+  it("renders the auth-mode card with api_key selected when settings carry no auth_mode", async () => {
+    render(wrap(<CodexSettings pluginId="codex" />));
+    await waitFor(() => expect(screen.getByTestId("codex-auth-mode")).toBeInTheDocument());
+    expect(screen.getByTestId("codex-auth-mode-api-key")).toHaveAttribute("data-state", "checked");
+    expect(screen.getByTestId("codex-auth-mode-per-user")).toHaveAttribute(
+      "data-state",
+      "unchecked",
+    );
+  });
+
+  it("renders per_user selected and hides the OpenAI key card", async () => {
+    server.use(
+      http.get("/api/coding-agents", () =>
+        HttpResponse.json([{ ...INSTALL, settings: { auth_mode: "per_user" } }]),
+      ),
+    );
+    render(wrap(<CodexSettings pluginId="codex" />));
+    await waitFor(() => expect(screen.getByTestId("codex-auth-mode")).toBeInTheDocument());
+    expect(screen.getByTestId("codex-auth-mode-per-user")).toHaveAttribute("data-state", "checked");
+    expect(screen.queryByTestId("codex-key-not-set")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("codex-key-input")).not.toBeInTheDocument();
+  });
+
+  it("PATCHes the new auth_mode on selection and shows Saved.", async () => {
+    let patched: unknown = null;
+    server.use(
+      http.patch("/api/coding-agents/codex", async ({ request }) => {
+        patched = await request.json();
+        return HttpResponse.json({ ...INSTALL, settings: { auth_mode: "per_user" } });
+      }),
+    );
+    render(wrap(<CodexSettings pluginId="codex" />));
+    await waitFor(() => expect(screen.getByTestId("codex-auth-mode")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("codex-auth-mode-per-user"));
+    await waitFor(() =>
+      expect(screen.getByTestId("codex-auth-mode-status")).toHaveTextContent("Saved."),
+    );
+    expect(patched).toEqual({ settings: { auth_mode: "per_user" } });
   });
 });

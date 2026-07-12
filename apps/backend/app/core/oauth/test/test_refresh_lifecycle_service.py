@@ -301,6 +301,29 @@ async def test_ensure_fresh_invalid_grant_flips_needs_reauth_and_raises(
 
 
 @pytest.mark.asyncio
+async def test_ensure_fresh_terminal_failure_notifies_user(
+    db_session: AsyncSession, user_and_org: tuple[UUID, UUID]
+) -> None:
+    """A connected → needs_reauth flip creates a notification for the user,
+    attributed to the user's membership org when no org context is set."""
+    from app.core.notifications import list_for_user  # noqa: PLC0415
+    from app.core.oauth.service import OAuthError  # noqa: PLC0415
+
+    user_id, org_id = user_and_org
+    await _seed_connected(db_session, user_id)
+    _STUB.token_result = OAuthError("bad grant", error_code="invalid_grant")
+
+    with pytest.raises(ConnectionNeedsReauthError):
+        await ensure_fresh_access_token(user_id, _TEST_PROVIDER_ID, min_remaining_seconds=7200)
+
+    notifs = await list_for_user(db_session, user_id=user_id, types=["oauth_connection_needs_reauth"])
+    assert len(notifs) == 1
+    assert notifs[0].org_id == org_id
+    assert "Refresh Test Provider" in notifs[0].title
+    assert "Connections" in notifs[0].body
+
+
+@pytest.mark.asyncio
 async def test_ensure_fresh_needs_reauth_row_raises_immediately(
     db_session: AsyncSession, user_id: UUID
 ) -> None:
@@ -451,6 +474,35 @@ async def test_refresh_due_connections_terminal_failure_flips_needs_reauth(
     ).scalar_one()
     assert row.status == "needs_reauth"
     assert "invalid_grant" in (row.needs_reauth_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_refresh_due_connections_terminal_failure_notifies_user(
+    db_session: AsyncSession, user_and_org: tuple[UUID, UUID]
+) -> None:
+    """The scheduler's needs_reauth flip also creates a notification for the user."""
+    from app.core.notifications import list_for_user  # noqa: PLC0415
+    from app.core.oauth.service import OAuthError  # noqa: PLC0415
+
+    user_id, org_id = user_and_org
+    await _seed_connected(db_session, user_id)
+    await db_session.execute(
+        update(UserOAuthConnectionRow)
+        .where(
+            UserOAuthConnectionRow.user_id == user_id,
+            UserOAuthConnectionRow.provider_id == _TEST_PROVIDER_ID,
+        )
+        .values(last_refresh_at=datetime.now(UTC) - timedelta(days=10))
+    )
+    await db_session.commit()
+
+    _STUB.token_result = OAuthError("bad grant", error_code="invalid_grant")
+
+    await _do_refresh_due_connections()
+
+    notifs = await list_for_user(db_session, user_id=user_id, types=["oauth_connection_needs_reauth"])
+    assert len(notifs) == 1
+    assert notifs[0].org_id == org_id
 
 
 @pytest.mark.asyncio

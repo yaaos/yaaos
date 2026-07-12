@@ -339,47 +339,57 @@ function ConnectionCard({ connection }: { connection: OAuthConnectionView }) {
 
   return (
     <div
-      className="flex items-center justify-between gap-3 rounded-md border border-border p-3"
+      className="flex flex-col gap-1 rounded-md border border-border p-3"
       data-testid={`connection-row-${connection.provider_id}`}
     >
-      <div className="flex flex-col gap-0.5">
-        <span className="text-sm font-medium">{connection.display_name}</span>
-        {isConnected && connection.external_account_id && (
-          <span className="text-muted-foreground text-xs">
-            Connected: {connection.external_account_id}
-          </span>
-        )}
-        {needsReauth && (
-          <span className="text-destructive text-xs">
-            {connection.needs_reauth_reason || "Re-authorization required."}
-          </span>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        {isConnected ? (
-          <>
-            <Badge variant="secondary">Connected</Badge>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">{connection.display_name}</span>
+          {isConnected && connection.external_account_id && (
+            <span className="text-muted-foreground text-xs">
+              Connected: {connection.external_account_id}
+            </span>
+          )}
+          {needsReauth && (
+            <span className="text-destructive text-xs">
+              {connection.needs_reauth_reason || "Re-authorization required."}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {isConnected ? (
+            <>
+              <Badge variant="secondary">Connected</Badge>
+              <Button
+                variant="destructive"
+                size="sm"
+                data-testid={`connection-disconnect-${connection.provider_id}`}
+                disabled={disconnectMutation.isPending}
+                onClick={() => setDisconnectOpen(true)}
+              >
+                Disconnect
+              </Button>
+            </>
+          ) : (
             <Button
-              variant="destructive"
               size="sm"
-              data-testid={`connection-disconnect-${connection.provider_id}`}
-              disabled={disconnectMutation.isPending}
-              onClick={() => setDisconnectOpen(true)}
+              data-testid={`connection-connect-${connection.provider_id}`}
+              disabled={startMutation.isPending}
+              onClick={handleConnect}
             >
-              Disconnect
+              {startMutation.isPending ? "Starting…" : needsReauth ? "Reconnect" : "Connect"}
             </Button>
-          </>
-        ) : (
-          <Button
-            size="sm"
-            data-testid={`connection-connect-${connection.provider_id}`}
-            disabled={startMutation.isPending}
-            onClick={handleConnect}
-          >
-            {startMutation.isPending ? "Starting…" : "Connect"}
-          </Button>
-        )}
+          )}
+        </div>
       </div>
+      {startMutation.isError && (
+        <p
+          className="mt-2 text-xs text-destructive"
+          data-testid={`connection-connect-err-${connection.provider_id}`}
+        >
+          {(startMutation.error as Error)?.message || "Couldn't start the connection."}
+        </p>
+      )}
 
       {/* Device-auth dialog */}
       <Dialog
