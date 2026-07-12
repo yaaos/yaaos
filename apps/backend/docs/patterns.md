@@ -333,7 +333,7 @@ Three layers gate every AgentCommand enqueue in the dispatch path:
 
 - **Layer 1 (`enqueue_command`)** — raw primitive in `core/agent_gateway`. Only `core/workspace.dispatch_provision` (which has no workspace row yet) and `dispatch_via_workspace` call it directly.
 - **Layer 2 (`dispatch_via_workspace`)** — `core/workspace/dispatch.py`. Loads the workspace row, calls `enqueue_command`, pins to the owning agent, optionally claims. `dispatch_cleanup` and `dispatch_auth_refresh` route here with `claim_workspace=False`.
-- **Layer 3 (`coding_agent.dispatch_invocation`)** — `core/coding_agent/service.py`. Builds the `InvokeClaudeCodeCommand` from a high-level `Invocation`, calls Layer 2 with `claim_workspace=True`, inserts a `coding_agent_runs` row. `domain/pipelines`' skill-stage dispatch routes here.
+- **Layer 3 (`coding_agent.dispatch_invocation`)** — `core/coding_agent/service.py`. Builds the plugin-specific command (`InvokeClaudeCodeCommand` for `claude_code`, `InvokeCodexCommand` for `codex`) from a high-level `Invocation`, calls Layer 2 with `claim_workspace=True`, inserts a `coding_agent_runs` row. `domain/pipelines`' skill-stage dispatch routes here.
 
 `apps/backend/.semgrep/dispatch_helper_discipline.yaml` enforces this: direct calls to `enqueue_command`, `pin_command_to_agent`, `try_claim`, or `create_run` inside any `app/domain/*/commands/*.py` file fail CI. Canary: `app/core/workspace/test/test_dispatch_discipline_semgrep_canary.py`.
 
@@ -612,7 +612,7 @@ Dockerfile CMDs are exec-form `["python", "apps/backend/app/web.py"]` / `["pytho
 3. Import webserver registry — `app.core.webserver` *before any module registers routes*.
 4. Core modules with plugin Protocols — `app.core.audit_log`, `app.core.coding_agent`, `app.core.vcs`, `app.core.workspace`.
 5. Domain modules in dependency order — types first (lessons), then leaf domain modules, then dependents.
-6. Plugins — `claude_code`, `github`.
+6. Plugins — `claude_code`, `codex`, `github`.
 7. Test-mode wrapping (conditional) — when `YAAOS_CODING_AGENT_STUB=1`, import `app.testing.stub_*` and call `wrap_all_registered_*()`.
 8. Build the FastAPI app — `webserver.create_app()`.
 9. Test-mode HTTP surface (conditional, non-prod only) — `webserver.mount_testing_endpoints(app, settings)` (production-safety gate; raises if `is_production`), then `e2e_setup.mount(app)` (direct `app.include_router` call — registers `/api/testing/*` routes immediately so they appear in `app.routes` before the liveness check). `core/webserver` cannot import `app.testing` (layering: `core < testing`), so the actual registration happens here in the composition root.

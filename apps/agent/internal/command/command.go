@@ -106,6 +106,18 @@ func Decode(raw []byte) (Command, error) {
 			return nil, fmt.Errorf("command: decode InvokeClaudeCode: %w", err)
 		}
 		return &InvokeClaudeCodeCommand{Proto: v}, nil
+	case protocol.KindInvokeCodex:
+		var v protocol.InvokeCodexCommand
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, fmt.Errorf("command: decode InvokeCodex: %w", err)
+		}
+		// Wrap auth_json as a secret so the plaintext never leaks into
+		// logs or error messages. Zero the proto field immediately after
+		// so the in-memory struct never retains cleartext beyond this site.
+		// MarshalWire restores it from the secret for the IPC hop.
+		authJSON := secretFrom(v.AuthJSON)
+		v.AuthJSON = ""
+		return &InvokeCodexCommand{Proto: v, AuthJSON: authJSON}, nil
 	case protocol.KindCleanupWorkspace:
 		var v protocol.CleanupWorkspaceCommand
 		if err := json.Unmarshal(raw, &v); err != nil {

@@ -54,6 +54,7 @@ _SCHEMA_TO_CLASS: dict[str, tuple[str, set[str]]] = {
     "WriteFilesCommand": ("WriteFilesCommand", set()),
     "RefreshWorkspaceAuthCommand": ("RefreshWorkspaceAuthCommand", set()),
     "InvokeClaudeCodeCommand": ("InvokeClaudeCodeCommand", set()),
+    "InvokeCodexCommand": ("InvokeCodexCommand", set()),
     "CleanupWorkspaceCommand": ("CleanupWorkspaceCommand", set()),
     "PushBranchCommand": ("PushBranchCommand", set()),
     "AgentConfig": ("AgentConfig", set()),

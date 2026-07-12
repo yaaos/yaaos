@@ -25,6 +25,7 @@ class AgentCommandKind(StrEnum):
     WRITE_FILES = "WriteFiles"
     REFRESH_WORKSPACE_AUTH = "RefreshWorkspaceAuth"
     INVOKE_CLAUDE_CODE = "InvokeClaudeCode"
+    INVOKE_CODEX = "InvokeCodex"
     CLEANUP_WORKSPACE = "CleanupWorkspace"
     PUSH_BRANCH = "PushBranch"
     CONFIG_UPDATE = "ConfigUpdate"
@@ -176,6 +177,73 @@ class InvokeClaudeCodeFields(BaseModel):
     skill_path: str
 
 
+# ── InvokeCodex ─────────────────────────────────────────────────────────────
+
+
+class InvokeCodexLimits(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    wallclock_seconds: int = Field(ge=1)
+
+
+class InvokeCodexCommand(_CommandBase):
+    """Command that runs the OpenAI Codex CLI inside the workspace.
+
+    `invocation` carries the exec block (argv, stdin, env) produced by
+    `CodexPlugin.compile_invocation`. `auth_json` is the Codex auth JSON
+    content written to `.yaaos-codex-home/auth.json` (0600) in the workspace
+    by the Go agent's RunCodex handler, providing per-user API keys in
+    `per_user` mode. In `api_key` mode the org-level CODEX_API_KEY env var
+    (delivered via ConfigUpdate.api_keys["openai"]) is sufficient and
+    `auth_json` is None. `output_schema_json` is written to
+    `$TMPDIR/<command_id>-schema.json` and `--output-schema <path>` appended
+    to argv by the Go agent before spawning; None means no schema constraint.
+    """
+
+    kind: Literal[AgentCommandKind.INVOKE_CODEX] = AgentCommandKind.INVOKE_CODEX
+    invocation: dict[str, Any]
+    limits: InvokeCodexLimits
+    result_spec: dict[str, Any] = Field(default_factory=dict)
+    # skill_path: checkout-relative path the agent stats before spawning.
+    # Convention: `.codex/skills/<skill_name>/SKILL.md`.
+    skill_path: str
+    credential_user_id: UUID | None = None
+    output_schema_json: str | None = None
+    # Per-user auth JSON content written to `.yaaos-codex-home/auth.json`
+    # inside the workspace. Treated as a secret — Python mode stays redacted;
+    # wire JSON unwraps so the agent receives the real value. None in api_key mode.
+    auth_json: SecretStr | None = None
+
+    @field_serializer("auth_json", when_used="json")
+    def _serialize_auth_json(self, v: SecretStr | None) -> str | None:
+        """Unwrap auth_json at the JSON wire-encode boundary only.
+
+        Python mode (model_dump) keeps SecretStr so logs stay redacted.
+        Wire JSON unwraps to plaintext so the agent receives the actual JSON.
+        """
+        return v.get_secret_value() if v is not None else None
+
+
+class InvokeCodexFields(BaseModel):
+    """Kind-specific payload fields for an `InvokeCodex` command.
+
+    No envelope keys — see `InvokeClaudeCodeFields` for the pattern.
+    `model_dump(mode="json")` yields the flat keys the Go agent expects.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    invocation: dict[str, Any]
+    limits: dict[str, Any]
+    result_spec: dict[str, Any] = Field(default_factory=dict)
+    skill_path: str
+    credential_user_id: UUID | None = None
+    output_schema_json: str | None = None
+    # No `auth_json` — this is the enqueue/persisted variant. Credentials never
+    # ride the persisted `agent_commands.payload`; they are injected fresh into
+    # the claim-response `InvokeCodexCommand` at claim time (see the claim-time
+    # hydrator). Keeping the field off this type makes credentials-at-rest
+    # structurally impossible for the persisted payload.
+
+
 class AgentConfig(BaseModel):
     """Runtime configuration delivered to the agent via ConfigUpdateCommand.
 
@@ -282,6 +350,7 @@ AgentCommand = Annotated[
     | WriteFilesCommand
     | RefreshWorkspaceAuthCommand
     | InvokeClaudeCodeCommand
+    | InvokeCodexCommand
     | CleanupWorkspaceCommand
     | PushBranchCommand
     | ConfigUpdateCommand

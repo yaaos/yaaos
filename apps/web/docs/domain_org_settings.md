@@ -20,11 +20,11 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 ## Coding Agents list
 
-`CodingAgentsSettingsPage` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` + `useAvailablePlugins` (both `useSuspenseQuery`). "Add coding agent" opens a picker card that lists all registered plugins (from `GET /api/coding-agents/available`) — each plugin gets its own row with an "Add" button disabled when already installed. Currently the only available plugin is `claude_code`.
+`CodingAgentsSettingsPage` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` + `useAvailablePlugins` (both `useSuspenseQuery`). "Add coding agent" opens a picker card that lists all registered plugins (from `GET /api/coding-agents/available`) — each plugin gets its own row with an "Add" button disabled when already installed. First-party plugins: `claude_code`, `codex`.
 
 ## Coding Agent detail
 
-`coding_agents/CodingAgentSettingsPage.tsx` dispatches to a per-plugin component via `coding_agents/plugin_registry.ts`. `claude_code` is the only registered plugin.
+`coding_agents/CodingAgentSettingsPage.tsx` dispatches to a per-plugin component via `coding_agents/plugin_registry.ts`. First-party plugins: `claude_code`, `codex`.
 
 `ClaudeCodeSettings` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` (`useSuspenseQuery`).
 
@@ -34,11 +34,17 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 3. **`AnthropicKeyCard`** — Anthropic API key. Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
 4. **`DangerZone`** — `ConfirmModal` → `useUninstallCodingAgent`.
 
+`CodexSettings` renders under `<ErrorBoundary>` + `<Suspense>`; data from `useCodingAgents` (`useSuspenseQuery`).
+
+`CodexSettings.tsx` composition (top → bottom):
+1. **Not-installed guard** — if `codex` has no install row, shows a plain text message (no uninstall needed).
+2. **`OpenAIKeyCard`** — OpenAI API key (provider `openai`). Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
+
 Skill selection never appears here — a pipeline stage's `skill_name` picks the skill (see [domain_pipeline_settings.md](domain_pipeline_settings.md)).
 
 ## Forms
 
-All input forms across the settings pages use `react-hook-form` + Zod (`zodResolver`). shadcn `form.tsx` primitives (`Form`, `FormField`, `FormItem`, `FormControl`, `FormMessage`) carry validation messages automatically. Affected pages: `AuthSettingsPage` (session-timeout), `WorkspacesSettingsPage` (ARN + region), `ApiKeysSettingsPage` (API key per provider card), `ClaudeCodeSettings` (Anthropic key card + agent-config Save), `IntegrationsSettingsPage` (allowlist add). Simple action buttons (toggle enabled, disconnect) are not wrapped in RHF forms.
+All input forms across the settings pages use `react-hook-form` + Zod (`zodResolver`). shadcn `form.tsx` primitives (`Form`, `FormField`, `FormItem`, `FormControl`, `FormMessage`) carry validation messages automatically. Affected pages: `AuthSettingsPage` (session-timeout), `WorkspacesSettingsPage` (ARN + region), `ApiKeysSettingsPage` (API key per provider card), `ClaudeCodeSettings` (Anthropic key card + agent-config Save), `CodexSettings` (OpenAI key card), `IntegrationsSettingsPage` (allowlist add). Simple action buttons (toggle enabled, disconnect) are not wrapped in RHF forms.
 
 ## Workspaces page
 
@@ -64,7 +70,7 @@ Router imports each page directly by path; no barrel.
 
 Private (not in `public/`): `queries.ts` (root + each sub-folder), `AuditPage.tsx`, `MembersPage.tsx`, `SsoConfigPage.tsx`, `coding_agents/plugin_registry.ts`, `coding_agents/plugins/**`. `OrgSettingsLayout` itself lives in `shared/components/public/layout/org-settings-layout.tsx` — graduated there once `domain/pipeline_settings` needed the same shell (see [components.md](components.md)).
 
-`CodingAgentSettingsPage` carries the `import "../../coding_agents/plugins/claude_code"` side-effect that registers the plugin before the first `getPluginSettingsComponent` call.
+`CodingAgentSettingsPage` carries `import "../../coding_agents/plugins/claude_code"` and `import "../../coding_agents/plugins/codex"` side-effects that register both plugins before the first `getPluginSettingsComponent` call.
 
 ## Tests
 
@@ -72,7 +78,8 @@ All settings tests use MSW to intercept HTTP rather than `vi.mock("../queries")`
 
 - `coding_agents/test/coding_agents.test.tsx` — component/MSW: empty state, Add card with claude_code disabled when already installed, install flow, Remove confirmation, settings link.
 - `coding_agents/test/plugin_registry.test.tsx` — unit: dispatch to registered vs. unknown plugin.
-- `coding_agents/plugins/claude_code/test/claude_code_settings.test.tsx` — component/MSW: renders one input per repo, Save fires PUT with `encodeURIComponent`-encoded path (regression guard for the `%2F`-before-routing bug), empty state when no repos connected.
+- `coding_agents/plugins/claude_code/test/claude_code_settings.test.tsx` — component/MSW: API key not-set/configured states; danger-zone uninstall.
+- `coding_agents/plugins/codex/test/codex_settings.test.tsx` — component/MSW: OpenAI key not-set/configured states; not-installed guard.
 - `api_keys/test/api-keys.test.tsx` — component/MSW: not_set / configured / rotate states; save / test / clear flows.
 - `integrations/test/integrations.test.tsx` — component/MSW: connect flow, allowlist, enabled toggle, disconnect.
 - `vcs/test/vcs.test.tsx` — component/MSW: Connect GitHub card, connected, needs-setup, unprovisioned states; remove confirmation.

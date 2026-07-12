@@ -490,6 +490,10 @@ func (hangingForeverOps) RunClaude(ctx context.Context, _ *protocol.InvokeClaude
 	<-ctx.Done()
 	return command.InvokeResult{}, ctx.Err()
 }
+func (hangingForeverOps) RunCodex(ctx context.Context, _ *command.InvokeCodexCommand) (command.InvokeResult, error) {
+	<-ctx.Done()
+	return command.InvokeResult{}, ctx.Err()
+}
 func (hangingForeverOps) Cleanup(ctx context.Context, _ *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	<-ctx.Done()
 	return command.CleanupResult{}, ctx.Err()

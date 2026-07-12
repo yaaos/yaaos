@@ -55,6 +55,11 @@ func (f *fakeWorkspaceOps) RunClaude(ctx context.Context, cmd *protocol.InvokeCl
 	return f.invokeResult, f.invokeErr
 }
 
+func (f *fakeWorkspaceOps) RunCodex(_ context.Context, cmd *command.InvokeCodexCommand) (command.InvokeResult, error) {
+	f.invokeCalled = true
+	return f.invokeResult, f.invokeErr
+}
+
 func (f *fakeWorkspaceOps) Cleanup(ctx context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	f.cleanupCalled = true
 	return f.cleanupResult, f.cleanupErr
@@ -256,6 +261,43 @@ func TestInvokeClaudeCodeCommand_Execute(t *testing.T) {
 	}
 	if wire["duration_ms"] != int64(500) {
 		t.Errorf("wire[duration_ms] = %v, want 500", wire["duration_ms"])
+	}
+}
+
+// ── InvokeCodexCommand.Execute ────────────────────────────────────────────────
+
+func TestInvokeCodexCommand_Execute(t *testing.T) {
+	ops := &fakeWorkspaceOps{
+		invokeResult: command.InvokeResult{
+			WorkspaceID: "ws-codex",
+			ExecResult: command.ExecResult{
+				ExitCode: 0,
+				Stdout:   `{"type":"turn.completed"}`,
+				Duration: 200 * time.Millisecond,
+			},
+		},
+	}
+	cmd := &command.InvokeCodexCommand{
+		Proto: protocol.InvokeCodexCommand{
+			CommandHeader: protocol.CommandHeader{
+				CommandID:   "cmd-codex",
+				WorkspaceID: "ws-codex",
+				Kind:        protocol.KindInvokeCodex,
+			},
+			Limits: protocol.InvokeCodexLimits{WallclockSeconds: 30},
+		},
+	}
+	res, err := cmd.Execute(context.Background(), ops)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !ops.invokeCalled {
+		t.Error("RunCodex not called")
+	}
+	wire := res.ToWire()
+	assertWireKey(t, wire, "workspace_id", "ws-codex")
+	if wire["exit_code"] != 0 {
+		t.Errorf("wire[exit_code] = %v, want 0", wire["exit_code"])
 	}
 }
 

@@ -129,7 +129,7 @@ Terse, bullets, no code snippets, no `Decisions` section, link don't repeat.
 ## Org Settings shell
 
 - `OrgSettingsLayout` (`shared/components/public/layout/org-settings-layout.tsx`) is a passthrough `<div>` — no top chrome, no tab bar. Per-page role gating in each settings page. Shared across `domain/org_settings` and `domain/pipeline_settings` (rule-of-three graduation — see [components.md](components.md)).
-- Coding-agent plugin settings dispatch through `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`. First-party plugins register at module load via side-effect import (`claude_code`); unregistered plugins get the built-in placeholder.
+- Coding-agent plugin settings dispatch through `apps/web/src/domain/org_settings/coding_agents/plugin_registry.ts`. First-party plugins register at module load via side-effect import (`claude_code`, `codex`); unregistered plugins get the built-in placeholder.
 - VCS empty-state: "Connect GitHub" card — single CTA fires `useStartGithubInstall`. Coding Agents install card: "Add Claude Code" button — installs directly via `useInstallCodingAgent`.
 
 ## Dumb frontend

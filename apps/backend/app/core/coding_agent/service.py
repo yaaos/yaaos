@@ -147,8 +147,11 @@ async def dispatch_invocation(
         `WorkspaceClaimFailed` — workspace busy or inactive.
     """
     from app.core.agent_gateway import (  # noqa: PLC0415
+        AgentCommandKind,
         InvokeClaudeCodeCommand,
         InvokeClaudeCodeLimits,
+        InvokeCodexCommand,
+        InvokeCodexLimits,
     )
     from app.core.coding_agent.run_service import create_run  # noqa: PLC0415
     from app.core.workspace import (  # noqa: PLC0415
@@ -171,25 +174,40 @@ async def dispatch_invocation(
     # "skill not found: <path>" when absent — zero agent policy.
     skill_path = plugin.skill_path(invocation.skill)
 
-    # Build the typed command. The Go agent reads `invocation.exec.{argv,stdin,env}`;
-    # the `exec` wrapper is required — a flat argv dict leaves `inv.Exec.Argv`
-    # empty after json.Unmarshal and causes `completed_failure`.
-    cmd = InvokeClaudeCodeCommand(
-        command_id=command_id,
-        workspace_id=workspace_id,
-        traceparent=ctx.traceparent or "",
-        invocation={
-            "exec": {
-                "argv": invocation_data.argv,
-                "stdin": invocation_data.stdin or "",
-                "env": dict(invocation_data.env),
-            }
-        },
-        mcp_servers=(),
-        limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
-        result_spec={},
-        skill_path=skill_path,
-    )
+    # Build the typed command per plugin.command_kind. The Go agent reads
+    # `invocation.exec.{argv,stdin,env}`; the `exec` wrapper is required —
+    # a flat argv dict leaves `inv.Exec.Argv` empty after json.Unmarshal.
+    invocation_body = {
+        "exec": {
+            "argv": invocation_data.argv,
+            "stdin": invocation_data.stdin or "",
+            "env": dict(invocation_data.env),
+        }
+    }
+
+    if plugin.command_kind == AgentCommandKind.INVOKE_CODEX:
+        cmd = InvokeCodexCommand(
+            command_id=command_id,
+            workspace_id=workspace_id,
+            traceparent=ctx.traceparent or "",
+            invocation=invocation_body,
+            limits=InvokeCodexLimits(wallclock_seconds=invocation_data.wallclock_seconds),
+            result_spec={},
+            skill_path=skill_path,
+            output_schema_json=invocation_data.output_schema_json,
+        )
+    else:
+        # Default: InvokeClaudeCode (and any future plugin that uses this kind).
+        cmd = InvokeClaudeCodeCommand(
+            command_id=command_id,
+            workspace_id=workspace_id,
+            traceparent=ctx.traceparent or "",
+            invocation=invocation_body,
+            mcp_servers=(),
+            limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
+            result_spec={},
+            skill_path=skill_path,
+        )
 
     # Layer 2: enqueue + pin + claim atomically.
     await dispatch_via_workspace(

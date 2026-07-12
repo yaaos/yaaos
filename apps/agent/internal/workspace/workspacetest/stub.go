@@ -38,6 +38,10 @@ func (StubHandler) RunClaude(_ context.Context, cmd *protocol.InvokeClaudeCodeCo
 	return command.InvokeResult{WorkspaceID: cmd.WorkspaceID}, nil
 }
 
+func (StubHandler) RunCodex(_ context.Context, cmd *command.InvokeCodexCommand) (command.InvokeResult, error) {
+	return command.InvokeResult{WorkspaceID: cmd.Proto.WorkspaceID}, nil
+}
+
 func (StubHandler) Cleanup(_ context.Context, cmd *protocol.CleanupWorkspaceCommand) (command.CleanupResult, error) {
 	return command.CleanupResult{WorkspaceID: cmd.WorkspaceID, Destroyed: true}, nil
 }

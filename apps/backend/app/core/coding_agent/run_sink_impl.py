@@ -1,24 +1,25 @@
 """Concrete implementation of `AgentRunSink`.
 
 Registered by `core/coding_agent.__init__` at import time.
-`handle_terminal_event` fires only on `InvokeClaudeCode` terminal events —
-all other command kinds are silently no-ops so the sink can be registered
-without per-kind checks in `agent_gateway`.
+`handle_terminal_event` fires on `InvokeClaudeCode` and `InvokeCodex`
+terminal events — all other command kinds are silently no-ops so the sink
+can be registered without per-kind checks in `agent_gateway`.
 
 On each terminal event the sink resolves the coding-agent plugin from the
-run row's `plugin_id`, calls `plugin.parse_result(outputs)` to derive a
-`RunResult`, derives `RunStatus` from the wire `event_kind`, and persists
-via `finalize_run`. Returns `{"output": result.output, "error_message":
-result.error_message}` so agent_gateway can merge those keys into the
-run outputs.
+run row's `plugin_id` (not from the command kind), calls
+`plugin.parse_result(outputs)` to derive a `RunResult`, derives `RunStatus`
+from the wire `event_kind`, and persists via `finalize_run`. Returns
+`{"output": result.output, "error_message": result.error_message}` so
+agent_gateway can merge those keys into the run outputs.
 
 `handle_progress_event` fires on every non-terminal `progress` AgentEvent
-correlated to an `InvokeClaudeCode` run: resolves the plugin the same way,
-extracts the raw stream-json line from `outputs["stream_line"]`, maps it via
-`plugin.parse_activity_line`, and publishes the normalized frame to the
-workspace-activity SSE channel. This is the one place a live frame's shape
-is decided — the channel carries the same `{kind, ts, message, detail}`
-vocabulary regardless of which plugin produced it.
+correlated to an `InvokeClaudeCode` or `InvokeCodex` run: resolves the
+plugin the same way, extracts the raw stream line from
+`outputs["stream_line"]`, maps it via `plugin.parse_activity_line`, and
+publishes the normalized frame to the workspace-activity SSE channel. This
+is the one place a live frame's shape is decided — the channel carries the
+same `{kind, ts, message, detail}` vocabulary regardless of which plugin
+produced it.
 """
 
 from __future__ import annotations
@@ -36,8 +37,10 @@ from app.core.sse import publish_workspace_activity
 
 log = structlog.get_logger("core.coding_agent.run_sink")
 
-# Only this command kind produces run rows.
-_INVOKE_CLAUDE_CODE_KIND = "InvokeClaudeCode"
+# Command kinds that produce coding-agent run rows. Both InvokeClaudeCode and
+# InvokeCodex route through the same run lifecycle — the plugin resolves from
+# the run row's plugin_id, not from the command kind.
+_INVOKE_KINDS: frozenset[str] = frozenset({"InvokeClaudeCode", "InvokeCodex"})
 
 
 class CodingAgentRunSinkImpl:
@@ -69,7 +72,7 @@ class CodingAgentRunSinkImpl:
         so `agent_gateway` can merge those keys into the run outputs.
         Returns `None` for all other command kinds.
         """
-        if command_kind != _INVOKE_CLAUDE_CODE_KIND:
+        if command_kind not in _INVOKE_KINDS:
             return None
 
         run_ref = await get_run_ref_for_command(command_id, session=session)

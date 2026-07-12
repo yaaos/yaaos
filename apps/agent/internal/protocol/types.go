@@ -21,6 +21,7 @@ const (
 	KindWriteFiles           CommandKind = "WriteFiles"
 	KindRefreshWorkspaceAuth CommandKind = "RefreshWorkspaceAuth"
 	KindInvokeClaudeCode     CommandKind = "InvokeClaudeCode"
+	KindInvokeCodex          CommandKind = "InvokeCodex"
 	KindCleanupWorkspace     CommandKind = "CleanupWorkspace"
 	KindPushBranch           CommandKind = "PushBranch"
 	KindConfigUpdate         CommandKind = "ConfigUpdate"
@@ -119,6 +120,33 @@ type InvokeClaudeCodeCommand struct {
 	// RealHandler.RunClaude stats this path before spawning claude; absent
 	// → completed_failure with failure_reason="skill not found: <path>".
 	SkillPath string `json:"skill_path"`
+}
+
+type InvokeCodexLimits struct {
+	WallclockSeconds int `json:"wallclock_seconds"`
+}
+
+// InvokeCodexCommand runs the OpenAI Codex CLI inside a workspace. The
+// agent stats SkillPath before spawning — absent → completed_failure. In
+// per_user auth mode AuthJSON is written to .yaaos-codex-home/auth.json
+// (0600) inside the checkout; in api_key mode the CODEX_API_KEY env var
+// delivered via ConfigUpdate is sufficient and AuthJSON is empty. If
+// OutputSchemaJSON is non-empty the agent writes it to
+// $TMPDIR/<command_id>-schema.json and appends --output-schema <path> to argv.
+//
+// AuthJSON is zeroed in command.Decode after wrapping as a secret.Secret.
+type InvokeCodexCommand struct {
+	CommandHeader
+	Invocation       json.RawMessage   `json:"invocation"`
+	Limits           InvokeCodexLimits `json:"limits"`
+	ResultSpec       map[string]any    `json:"result_spec,omitempty"`
+	SkillPath        string            `json:"skill_path"`
+	CredentialUserID string            `json:"credential_user_id,omitempty"`
+	OutputSchemaJSON string            `json:"output_schema_json,omitempty"`
+	// AuthJSON is the per-user Codex auth JSON content. Cleared by
+	// command.Decode after wrapping as a secret.Secret so the plaintext
+	// never leaks through logs or MarshalWire on a supervisor-side struct.
+	AuthJSON string `json:"auth_json,omitempty"`
 }
 
 type CleanupWorkspaceCommand struct {

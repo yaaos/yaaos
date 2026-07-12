@@ -59,16 +59,23 @@ class Invocation(BaseModel):
 class InvokeCodingAgent(BaseModel):
     """Concrete exec block returned by `CodingAgentPlugin.compile_invocation`.
 
-    Carries the exact argv, env overrides, optional stdin, and wallclock
-    cap the Go agent uses to spawn the Claude Code subprocess.
-    `env` carries the Anthropic API key — the accepted carve-out for
-    wire-bound exec (same contract as the `otlp_token` on ConfigUpdate).
+    Carries the exact argv, env overrides, optional stdin, wallclock cap,
+    and an optional output schema the Go agent writes to a temp file before
+    spawning the coding-agent subprocess.
+    `env` carries env overrides — the accepted carve-out for wire-bound exec
+    (same contract as `otlp_token` on ConfigUpdate).
+    `output_schema_json` is set by codex's `compile_invocation` from
+    `context["output_schema"]`; claude always leaves it None. The Go agent
+    writes it to `$TMPDIR/<command_id>-schema.json` and appends
+    `--output-schema <path>` to argv before spawning. None → no schema file,
+    no flag appended.
     """
 
     argv: list[str]
     env: Mapping[str, str]
     stdin: str | None = None
     wallclock_seconds: int
+    output_schema_json: str | None = None
 
 
 class RunStatus(StrEnum):

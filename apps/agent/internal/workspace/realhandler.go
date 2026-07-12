@@ -83,6 +83,7 @@ var tokenRedactRe = regexp.MustCompile(`x-access-token:[^@]*@`)
 // Adding a new provider here requires no other change in the agent.
 var apiKeyProviderEnvVars = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",
+	"openai":    "CODEX_API_KEY",
 	"rwx":       "RWX_ACCESS_TOKEN",
 }
 
@@ -538,6 +539,176 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 		Duration: res.Duration,
 	}
 	return result, nil
+}
+
+// codexHomeDirName is the workspace-relative dir RunCodex creates when the
+// command carries a per-user auth JSON (per_user auth mode). It is written
+// to .gitignore so credentials can never be committed accidentally.
+const codexHomeDirName = ".yaaos-codex-home"
+
+func (h *RealHandler) RunCodex(ctx context.Context, cmd *command.InvokeCodexCommand) (command.InvokeResult, error) {
+	h.mu.Lock()
+	slot, ok := h.slots[cmd.Proto.WorkspaceID]
+	h.mu.Unlock()
+	if !ok {
+		return command.InvokeResult{}, ErrUnknownWorkspace
+	}
+
+	var inv invocationExec
+	if err := json.Unmarshal(cmd.Proto.Invocation, &inv); err != nil {
+		return command.InvokeResult{}, fmt.Errorf("decode invocation: %w", err)
+	}
+	if len(inv.Exec.Argv) == 0 {
+		return command.InvokeResult{}, errors.New("invocation.exec.argv missing or empty")
+	}
+
+	// Pre-spawn: skill file must exist. Convention: `.codex/skills/<name>/SKILL.md`.
+	if cmd.Proto.SkillPath == "" {
+		return command.InvokeResult{}, errors.New("skill not found: (empty skill_path)")
+	}
+	if _, statErr := os.Stat(filepath.Join(slot.path, cmd.Proto.SkillPath)); statErr != nil {
+		return command.InvokeResult{}, fmt.Errorf("skill not found: %s", cmd.Proto.SkillPath)
+	}
+
+	// TMPDIR: workspace-local so artifact + schema files are cleaned up
+	// automatically with the workspace tempdir.
+	tmpDir := filepath.Join(slot.path, workspaceTmpDirName)
+	if err := os.MkdirAll(tmpDir, h.cfg.DirPerm); err != nil {
+		return command.InvokeResult{}, fmt.Errorf("create tmpdir: %w", err)
+	}
+
+	// Per-user auth mode: write auth.json (0600) to a workspace-local dir
+	// and point CODEX_HOME at it. Also gitignore the dir so credentials are
+	// never committed. Only written when AuthJSON is non-empty — api_key
+	// mode delivers credentials via CODEX_API_KEY env var instead.
+	argv := append([]string(nil), inv.Exec.Argv...)
+	if !cmd.AuthJSON.IsZero() {
+		authDir := filepath.Join(slot.path, codexHomeDirName)
+		if err := os.MkdirAll(authDir, h.cfg.DirPerm); err != nil {
+			return command.InvokeResult{}, fmt.Errorf("create codex home dir: %w", err)
+		}
+		authPath := filepath.Join(authDir, "auth.json")
+		if err := os.WriteFile(authPath, []byte(cmd.AuthJSON.Value()), 0o600); err != nil {
+			return command.InvokeResult{}, fmt.Errorf("write codex auth.json: %w", err)
+		}
+		// Add the codex home dir to .gitignore so credentials are never
+		// committed accidentally on named-branch work checkouts.
+		gitignorePath := filepath.Join(slot.path, ".gitignore")
+		const codexHomeEntry = "\n" + codexHomeDirName + "/\n"
+		_ = appendIfAbsent(gitignorePath, codexHomeEntry)
+		// Propagate to the subprocess — override any CODEX_HOME the parent
+		// env may carry so the subprocess uses the workspace-local dir.
+		inv.Exec.Env["CODEX_HOME"] = authDir
+	}
+
+	// Output schema: write the JSON Schema to a temp file and append the
+	// --output-schema flag so codex constrains its structured output. Only
+	// when the backend supplied a schema — nil means no constraint.
+	if cmd.Proto.OutputSchemaJSON != "" {
+		schemaPath := filepath.Join(tmpDir, cmd.Proto.CommandID+"-schema.json")
+		if err := os.WriteFile(schemaPath, []byte(cmd.Proto.OutputSchemaJSON), 0o600); err != nil {
+			return command.InvokeResult{}, fmt.Errorf("write output schema: %w", err)
+		}
+		argv = append(argv, "--output-schema", schemaPath)
+	}
+
+	// Env layering (same priority order as RunClaude).
+	env := os.Environ()
+	if h.cfg.ApiKeys != nil {
+		if apiKeys := h.cfg.ApiKeys(); apiKeys != nil {
+			for providerID, envVar := range apiKeyProviderEnvVars {
+				if sec, ok := apiKeys[providerID]; ok && !sec.IsZero() {
+					env = append(env, envVar+"="+sec.Value())
+				}
+			}
+		}
+	}
+	for k, v := range inv.Exec.Env {
+		env = append(env, k+"="+v)
+	}
+	env = append(env, "TMPDIR="+tmpDir)
+	if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
+		env = append(env, tpEnv)
+	}
+
+	emitter := EmitterFromContext(ctx)
+	var accumulated bytes.Buffer
+	_, endRun := tracing.StartSpan(ctx, "workspace.runcodex")
+	res, runErr := h.cfg.RunFunc(ctx, RunStreamingOptions{
+		Argv:  argv,
+		Stdin: []byte(inv.Exec.Stdin),
+		Env:   env,
+		Dir:   slot.path,
+		OnStdoutLine: func(line []byte) {
+			accumulated.Write(line)
+			accumulated.WriteByte('\n')
+			emitter.Progress(map[string]any{
+				"workspace_id": cmd.Proto.WorkspaceID,
+				"stream_line":  string(line),
+			})
+		},
+	})
+	endRun(runErr)
+	if res != nil {
+		res.Stdout = accumulated.Bytes()
+	}
+
+	artifactBody, artifactErr := readArtifact(tmpDir, cmd.Proto.CommandID)
+	pushErr := maybePushOriginHead(ctx, slot.path)
+
+	result := command.InvokeResult{
+		WorkspaceID:   cmd.Proto.WorkspaceID,
+		Artifact:      artifactBody,
+		ArtifactError: artifactErr,
+	}
+
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) && res != nil {
+			return result, fmt.Errorf(
+				"codex exit %d: stderr=%s stdout_tail=%s",
+				res.ExitCode,
+				excerptHead(res.Stderr, claudeErrStderrCap),
+				excerptTail(res.Stdout, claudeErrStdoutTailCap),
+			)
+		}
+		return result, fmt.Errorf("codex subprocess: %w", runErr)
+	}
+	if pushErr != nil {
+		return result, fmt.Errorf("git push: %w", pushErr)
+	}
+
+	result.ExecResult = command.ExecResult{
+		ExitCode: res.ExitCode,
+		Stdout:   string(res.Stdout),
+		Stderr:   string(res.Stderr),
+		Duration: res.Duration,
+	}
+	return result, nil
+}
+
+// appendIfAbsent appends `entry` to the file at `path` unless the entry
+// (trimmed) already appears in the file. Creates the file if absent.
+// Best-effort: returns nil on any I/O error so a gitignore miss never
+// fails a command.
+func appendIfAbsent(path, entry string) error {
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil
+	}
+	needle := strings.TrimSpace(entry)
+	for _, line := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(line) == needle {
+			return nil // already present
+		}
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	_, _ = f.WriteString(entry)
+	return nil
 }
 
 // readArtifact reads `$TMPDIR/<command_id>.md`, enforcing artifactMaxBytes.

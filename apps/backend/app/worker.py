@@ -53,6 +53,7 @@ def main() -> int:
     import app.domain.mcp_proxy.service  # noqa: PLC0415
     import app.domain.orgs.invitation_sweeper  # noqa: PLC0415
     import app.plugins.claude_code  # noqa: PLC0415
+    import app.plugins.codex  # noqa: PLC0415
     import app.plugins.github  # noqa: F401, PLC0415
     from app.core.config import get_settings  # noqa: PLC0415
 

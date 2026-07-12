@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
+	"github.com/yaaos/agent/internal/secret"
 )
 
 // Per-kind default timeouts, owned by the command type.
@@ -15,6 +16,7 @@ const (
 	defaultRefreshWorkspaceAuthTimeout = 30 * time.Second
 	defaultCleanupWorkspaceTimeout     = 30 * time.Second
 	defaultInvokeClaudeCodeTimeout     = 15 * time.Minute
+	defaultInvokeCodexTimeout          = 15 * time.Minute
 	defaultPushBranchTimeout           = 120 * time.Second
 )
 
@@ -138,6 +140,57 @@ func (c *InvokeClaudeCodeCommand) MarshalWire() ([]byte, error) { return json.Ma
 
 // SetTraceparent implements Command.
 func (c *InvokeClaudeCodeCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }
+
+// ── InvokeCodexCommand ────────────────────────────────────────────────────────
+
+// InvokeCodexCommand runs the OpenAI Codex CLI inside the workspace.
+// AuthJSON is a secret.Secret (never a plain string at this layer) so the
+// per-user auth payload stays redacted in logs and error messages.
+// Proto.AuthJSON is zeroed in command.Decode after the secret is created —
+// MarshalWire restores it from the secret for the IPC hop to the workspace
+// child process.
+type InvokeCodexCommand struct {
+	Proto protocol.InvokeCodexCommand
+	// AuthJSON holds the per-user Codex auth JSON (per_user mode only). Empty
+	// secret when the org uses api_key mode — the CODEX_API_KEY env var
+	// delivered via ConfigUpdate is sufficient in that case.
+	AuthJSON secret.Secret
+}
+
+// Header implements Command.
+func (c *InvokeCodexCommand) Header() protocol.CommandHeader {
+	return c.Proto.CommandHeader
+}
+
+// Timeout implements Command. Reads Limits.WallclockSeconds from the wire;
+// the control plane sets this per invocation so the agent never caps a
+// legitimately long run. Falls back to 15 m if the field is absent or zero.
+func (c *InvokeCodexCommand) Timeout() time.Duration {
+	if c.Proto.Limits.WallclockSeconds > 0 {
+		return time.Duration(c.Proto.Limits.WallclockSeconds) * time.Second
+	}
+	return defaultInvokeCodexTimeout
+}
+
+// Execute calls ops.RunCodex and returns an InvokeResult.
+func (c *InvokeCodexCommand) Execute(ctx context.Context, ops WorkspaceOps) (Result, error) {
+	return ops.RunCodex(ctx, c)
+}
+
+// MarshalWire returns the flat JSON representation of this command.
+// Restores AuthJSON from the wrapped secret for the IPC hop — the workspace
+// child process needs the plaintext to write .yaaos-codex-home/auth.json.
+// Proto.AuthJSON is re-zeroed after marshal so the in-memory supervisor-side
+// struct never retains plaintext.
+func (c *InvokeCodexCommand) MarshalWire() ([]byte, error) {
+	c.Proto.AuthJSON = c.AuthJSON.Value()
+	data, err := json.Marshal(c.Proto)
+	c.Proto.AuthJSON = "" // re-zero after marshal
+	return data, err
+}
+
+// SetTraceparent implements Command.
+func (c *InvokeCodexCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }
 
 // ── CleanupWorkspaceCommand ───────────────────────────────────────────────────
 

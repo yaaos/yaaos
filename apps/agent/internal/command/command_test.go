@@ -293,6 +293,132 @@ func TestDecodeRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("InvokeCodex_with_wallclock", func(t *testing.T) {
+		raw := mustMarshal(t, map[string]any{
+			"command_id":   "cmd-cx",
+			"workspace_id": "ws-cx",
+			"traceparent":  "tp-cx",
+			"kind":         "InvokeCodex",
+			"invocation":   json.RawMessage(`{"exec":{"argv":["codex","exec"],"stdin":"","env":{}}}`),
+			"limits": map[string]any{
+				"wallclock_seconds": 90,
+			},
+			"skill_path": ".codex/skills/myskill/SKILL.md",
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		hdr := cmd.Header()
+		assertHeader(t, hdr, "cmd-cx", "ws-cx", "tp-cx", protocol.KindInvokeCodex)
+		assertTimeout(t, cmd.Timeout(), 90*time.Second)
+		if _, ok := cmd.(*command.InvokeCodexCommand); !ok {
+			t.Errorf("expected *command.InvokeCodexCommand, got %T", cmd)
+		}
+	})
+
+	t.Run("InvokeCodex_fallback_timeout", func(t *testing.T) {
+		raw := mustMarshal(t, map[string]any{
+			"command_id":   "cmd-cxf",
+			"workspace_id": "ws-cxf",
+			"traceparent":  "tp-cxf",
+			"kind":         "InvokeCodex",
+			"invocation":   json.RawMessage(`{"exec":{"argv":["codex"],"stdin":"","env":{}}}`),
+			"limits": map[string]any{
+				"wallclock_seconds": 0,
+			},
+			"skill_path": ".codex/skills/s/SKILL.md",
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		// wallclock_seconds=0 → fallback 15m
+		assertTimeout(t, cmd.Timeout(), 15*time.Minute)
+	})
+
+	t.Run("InvokeCodex_auth_json_wraps_and_zeroes_proto", func(t *testing.T) {
+		// auth_json must be wrapped as a secret in command.InvokeCodexCommand
+		// and zeroed in the proto field so the plaintext never lives on the
+		// supervisor-side proto struct.
+		raw := mustMarshal(t, map[string]any{
+			"command_id":   "cmd-cxa",
+			"workspace_id": "ws-cxa",
+			"traceparent":  "tp-cxa",
+			"kind":         "InvokeCodex",
+			"invocation":   json.RawMessage(`{"exec":{"argv":["codex"],"stdin":"","env":{}}}`),
+			"limits":       map[string]any{"wallclock_seconds": 60},
+			"skill_path":   ".codex/skills/s/SKILL.md",
+			"auth_json":    `{"token":"secret-tok"}`,
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		cx, ok := cmd.(*command.InvokeCodexCommand)
+		if !ok {
+			t.Fatalf("expected *command.InvokeCodexCommand, got %T", cmd)
+		}
+		// Proto field must be zeroed after wrapping.
+		if cx.Proto.AuthJSON != "" {
+			t.Errorf("Proto.AuthJSON should be zeroed after Decode, got %q", cx.Proto.AuthJSON)
+		}
+		// Secret wraps the actual value.
+		if got := cx.AuthJSON.Value(); got != `{"token":"secret-tok"}` {
+			t.Errorf("AuthJSON.Value() = %q, want {\"token\":\"secret-tok\"}", got)
+		}
+	})
+
+	t.Run("InvokeCodex_MarshalWire_restores_auth_json", func(t *testing.T) {
+		// MarshalWire must restore auth_json from the secret so the workspace
+		// child process receives it after the IPC hop. Proto.AuthJSON is
+		// re-zeroed after marshal.
+		raw := mustMarshal(t, map[string]any{
+			"command_id":   "cmd-cxm",
+			"workspace_id": "ws-cxm",
+			"traceparent":  "tp-cxm",
+			"kind":         "InvokeCodex",
+			"invocation":   json.RawMessage(`{"exec":{"argv":["codex"],"stdin":"","env":{}}}`),
+			"limits":       map[string]any{"wallclock_seconds": 60},
+			"skill_path":   ".codex/skills/s/SKILL.md",
+			"auth_json":    `{"token":"wire-tok"}`,
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		cx := cmd.(*command.InvokeCodexCommand)
+
+		wire, err := cx.MarshalWire()
+		if err != nil {
+			t.Fatalf("MarshalWire: %v", err)
+		}
+		// After MarshalWire, Proto.AuthJSON must be re-zeroed.
+		if cx.Proto.AuthJSON != "" {
+			t.Errorf("Proto.AuthJSON should be zeroed after MarshalWire, got %q", cx.Proto.AuthJSON)
+		}
+		// The serialized bytes must contain the auth_json value.
+		if !strings.Contains(string(wire), `"auth_json"`) {
+			t.Errorf("MarshalWire output missing auth_json field: %s", wire)
+		}
+		if !strings.Contains(string(wire), "wire-tok") {
+			t.Errorf("MarshalWire output missing auth_json value: %s", wire)
+		}
+		// Decoding the wire bytes in the workspace child must produce the
+		// correct InvokeCodexCommand with the secret populated.
+		cmd2, err := command.Decode(wire)
+		if err != nil {
+			t.Fatalf("Decode wire: %v", err)
+		}
+		cx2, ok := cmd2.(*command.InvokeCodexCommand)
+		if !ok {
+			t.Fatalf("re-decoded type = %T, want *command.InvokeCodexCommand", cmd2)
+		}
+		if got := cx2.AuthJSON.Value(); got != `{"token":"wire-tok"}` {
+			t.Errorf("re-decoded AuthJSON.Value() = %q, want wire-tok", got)
+		}
+	})
+
 	t.Run("completion_token survives decode", func(t *testing.T) {
 		raw := mustMarshal(t, map[string]any{
 			"command_id":       "cmd-tok",
@@ -420,6 +546,7 @@ func TestSetTraceparent_AllKinds(t *testing.T) {
 		&command.WriteFilesCommand{},
 		&command.RefreshWorkspaceAuthCommand{},
 		&command.InvokeClaudeCodeCommand{},
+		&command.InvokeCodexCommand{},
 		&command.CleanupWorkspaceCommand{},
 		&command.PushBranchCommand{},
 		&command.ConfigUpdateCommand{},
