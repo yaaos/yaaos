@@ -118,11 +118,10 @@ Mechanical exit order: skill-stat (pre-spawn) → TMPDIR set (pre-spawn) → sub
 `RunCodex` in `realhandler.go` mirrors `RunClaude`'s pre/post scaffolding but calls the OpenAI Codex CLI:
 
 - **Pre-spawn skill check.** Same stat logic as `RunClaude` — `InvokeCodexCommand.Proto.SkillPath` (convention `.codex/skills/<skill_name>/SKILL.md`) is stat'd before any subprocess.
-- **Per-user auth.** When `InvokeCodexCommand.Proto.CredentialUserID` is non-empty, `RunCodex` writes `InvokeCodexCommand.AuthJSON.Value()` to `<workspaceDir>/.yaaos-codex-home/auth.json` (mode 0600) and sets `CODEX_HOME=<workspaceDir>/.yaaos-codex-home`. The directory is appended to `.gitignore` to prevent credential leak. API-key mode omits this step and relies on `CODEX_API_KEY` injected by `ExecSpawn`.
 - **Output schema.** When `InvokeCodexCommand.Proto.OutputSchemaJSON` is non-empty, `RunCodex` writes it to `$TMPDIR/<command_id>-schema.json` and appends `--output-schema <path>` to the codex argv.
 - **Artifact collection + exit-push.** Same mechanics as `RunClaude` — artifact at `$TMPDIR/<command_id>.md`, 2 MiB cap, conditional push via `maybePushOriginHead`.
 
-The `InvokeCodexCommand.AuthJSON` field is a `secret.Secret`; `Decode` wraps the wire plaintext on arrival and zeros `Proto.AuthJSON` immediately. `MarshalWire` restores the plaintext for the IPC hop to the workspace child, then re-zeros. The workspace child is the only site that calls `.Value()`.
+Credentials are the `CODEX_API_KEY` env var injected by `ExecSpawn` — no per-command secret rides `InvokeCodexCommand`.
 
 ### API key credential delivery
 

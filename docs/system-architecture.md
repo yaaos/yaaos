@@ -93,9 +93,9 @@ Three concepts span all apps:
 
 ### Test stack
 
-`docker-compose.test.yml`: Postgres + `apps/fake-github` + `apps/fake-openai` + backend with `GITHUB_API_BASE_URL=http://fake-github:8080`, `YAAOS_CODEX_OAUTH_BASE_URL=http://fake-openai:8080`, and `YAAOS_CODING_AGENT_STUB=1`. Plugins stubbed via `app/testing/`. E2E specs drive preconditions via `POST /api/testing/reset` + `seed/*`.
+`docker-compose.test.yml`: Postgres + `apps/fake-github` + `apps/fake-oauth-provider` + backend with `GITHUB_API_BASE_URL=http://fake-github:8080`, `YAAOS_OAUTH_TEST_PROVIDER_BASE_URL=http://fake-oauth-provider:8080`, and `YAAOS_CODING_AGENT_STUB=1`. Plugins stubbed via `app/testing/`. E2E specs drive preconditions via `POST /api/testing/reset` + `seed/*`.
 
-`apps/fake-openai/` implements the RFC-8628 device-auth endpoints (`POST /oauth/v2/device/code`, `POST /oauth/v2/token`) for e2e specs exercising the OAuth user-connection flow. `POST /__test/grant` grants all pending sessions; `POST /__test/reset` clears state.
+`apps/fake-oauth-provider/` implements the RFC-8628 device-auth endpoints (`POST /device/code`, `POST /token`) for e2e specs exercising the OAuth user-connection flow, registered in test mode by the `oauth_test` plugin's `"test"` device-code provider. `POST /__test/grant` grants all pending sessions; `POST /__test/reset` clears state.
 
 ### Periodic work
 

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/yaaos/agent/internal/protocol"
-	"github.com/yaaos/agent/internal/secret"
 )
 
 // Per-kind default timeouts, owned by the command type.
@@ -144,17 +143,10 @@ func (c *InvokeClaudeCodeCommand) SetTraceparent(tp string) { c.Proto.Traceparen
 // ── InvokeCodexCommand ────────────────────────────────────────────────────────
 
 // InvokeCodexCommand runs the OpenAI Codex CLI inside the workspace.
-// AuthJSON is a secret.Secret (never a plain string at this layer) so the
-// per-user auth payload stays redacted in logs and error messages.
-// Proto.AuthJSON is zeroed in command.Decode after the secret is created —
-// MarshalWire restores it from the secret for the IPC hop to the workspace
-// child process.
+// Credentials arrive via the CODEX_API_KEY env var delivered on ConfigUpdate
+// — no per-command secret rides this type.
 type InvokeCodexCommand struct {
 	Proto protocol.InvokeCodexCommand
-	// AuthJSON holds the per-user Codex auth JSON (per_user mode only). Empty
-	// secret when the org uses api_key mode — the CODEX_API_KEY env var
-	// delivered via ConfigUpdate is sufficient in that case.
-	AuthJSON secret.Secret
 }
 
 // Header implements Command.
@@ -178,16 +170,7 @@ func (c *InvokeCodexCommand) Execute(ctx context.Context, ops WorkspaceOps) (Res
 }
 
 // MarshalWire returns the flat JSON representation of this command.
-// Restores AuthJSON from the wrapped secret for the IPC hop — the workspace
-// child process needs the plaintext to write .yaaos-codex-home/auth.json.
-// Proto.AuthJSON is re-zeroed after marshal so the in-memory supervisor-side
-// struct never retains plaintext.
-func (c *InvokeCodexCommand) MarshalWire() ([]byte, error) {
-	c.Proto.AuthJSON = c.AuthJSON.Value()
-	data, err := json.Marshal(c.Proto)
-	c.Proto.AuthJSON = "" // re-zero after marshal
-	return data, err
-}
+func (c *InvokeCodexCommand) MarshalWire() ([]byte, error) { return json.Marshal(c.Proto) }
 
 // SetTraceparent implements Command.
 func (c *InvokeCodexCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }

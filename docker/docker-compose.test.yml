@@ -57,10 +57,10 @@ services:
       timeout: 2s
       retries: 30
 
-  fake-openai:
+  fake-oauth-provider:
     build:
       context: ..
-      dockerfile: apps/fake-openai/Dockerfile
+      dockerfile: apps/fake-oauth-provider/Dockerfile
     ports:
       - "58086:8080"
     healthcheck:
@@ -156,9 +156,10 @@ services:
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
       YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"
       YAAOS_CATCHUP_DELAY_SECONDS: "0"
-      # Codex OAuth device-auth: point at the fake-openai peer so e2e specs
-      # exercise the full connect flow without hitting auth.openai.com.
-      YAAOS_CODEX_OAUTH_BASE_URL: http://fake-openai:8080
+      # Test-only device-code OAuth provider: point at the fake-oauth-provider
+      # peer so e2e specs exercise the full connect flow via oauth_test's
+      # "test" provider registration without hitting any real vendor.
+      YAAOS_OAUTH_TEST_PROVIDER_BASE_URL: http://fake-oauth-provider:8080
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,7 +171,7 @@ services:
         condition: service_started
       fake-notion:
         condition: service_started
-      fake-openai:
+      fake-oauth-provider:
         condition: service_started
     ports:
       - "58080:8080"
@@ -219,7 +220,9 @@ services:
       YAAOS_REAPER_INTERVAL_SECONDS: "1"
       YAAOS_HEARTBEAT_INTERVAL_SECONDS: "1"
       YAAOS_CATCHUP_DELAY_SECONDS: "0"
-      YAAOS_CODEX_OAUTH_BASE_URL: http://fake-openai:8080
+      # Matches the web service's setting — the worker's oauth_test bootstrap
+      # + refresh scheduler must resolve the same fake-oauth-provider peer.
+      YAAOS_OAUTH_TEST_PROVIDER_BASE_URL: http://fake-oauth-provider:8080
     depends_on:
       postgres:
         condition: service_healthy

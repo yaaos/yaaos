@@ -7,8 +7,7 @@ before building the outbound `AgentCommand` DTO.
 
 Credential values inside the hydrated payload MUST be `SecretStr` — they are
 unwrapped only at the claim response's JSON encode boundary via the
-`@field_serializer(when_used="json")` pattern used by `AgentConfig.api_keys`
-and `InvokeCodexCommand.auth_json`.
+`@field_serializer(when_used="json")` pattern used by `AgentConfig.api_keys`.
 
 Canonical import direction:
   core/coding_agent → core/agent_gateway  (registers ConfigUpdate hydrator)

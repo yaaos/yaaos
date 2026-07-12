@@ -255,8 +255,8 @@ async def test_endpoint_rejects_invalid_settings(seeded) -> None:
 
 
 @pytest.mark.asyncio
-async def test_endpoint_codex_install_empty_settings_defaults_api_key(seeded) -> None:
-    """Installing codex with empty settings succeeds and normalizes to api_key mode.
+async def test_endpoint_codex_install_empty_settings_succeeds(seeded) -> None:
+    """Installing codex with empty settings succeeds — codex has no per-org auth setting.
 
     Binds the real CodexPlugin (not the stub) so validation actually runs.
     """
@@ -280,7 +280,7 @@ async def test_endpoint_codex_install_empty_settings_defaults_api_key(seeded) ->
                 },
             )
         assert r.status_code == 200, r.text
-        assert r.json()["settings"] == {"auth_mode": "api_key"}
+        assert r.json()["settings"] == {}
 
 
 @pytest.mark.asyncio

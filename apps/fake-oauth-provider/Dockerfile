@@ -1,11 +1,11 @@
-# Minimal fake-openai image for the test stack.
+# Minimal fake-oauth-provider image for the test stack.
 FROM python:3.12-slim-bookworm
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
-COPY apps/fake-openai/pyproject.toml ./pyproject.toml
-COPY apps/fake-openai/app ./app
+COPY apps/fake-oauth-provider/pyproject.toml ./pyproject.toml
+COPY apps/fake-oauth-provider/app ./app
 
 ENV UV_LINK_MODE=copy
 

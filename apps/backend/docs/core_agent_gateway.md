@@ -99,7 +99,7 @@ The span is a child of whatever span is current at the call site (typically an `
 
 **Envelope-wins integrity guarantee:** the merge order ensures callers cannot supply counterfeit identity fields. The persisted flat JSONB key set is identical to the pre-typed layout; `_row_to_command` and the Go agent's `command.Decode` are unaffected.
 
-**`InvokeClaudeCodeFields`** (`core/agent_gateway/types.py`) is the typed model for `InvokeClaudeCode` kind-specific fields: `invocation`, `mcp_servers`, `limits`, `result_spec`, `skill_path`. **`InvokeCodexFields`** is the corresponding model for `InvokeCodex`: `invocation`, `limits`, `result_spec`, `skill_path`, `credential_user_id`, `output_schema_json`. Both are exported from `core/agent_gateway.__all__`; the companion Command and Limits types remain available for deserialization.
+**`InvokeClaudeCodeFields`** (`core/agent_gateway/types.py`) is the typed model for `InvokeClaudeCode` kind-specific fields: `invocation`, `mcp_servers`, `limits`, `result_spec`, `skill_path`. **`InvokeCodexFields`** is the corresponding model for `InvokeCodex`: `invocation`, `limits`, `result_spec`, `skill_path`, `output_schema_json`. Both are exported from `core/agent_gateway.__all__`; the companion Command and Limits types remain available for deserialization.
 
 Service tests: `test/test_dispatch_service.py` (typed `enqueue_command`); `test/test_enqueue_command_payload_service.py` (typed-fields `enqueue_command_payload`); `test/test_typed_payload_fields_service.py` (round-trip, key-set, envelope-wins).
 

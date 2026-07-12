@@ -22,7 +22,10 @@
 //                            of `os.Environ()`, injects API key secrets from
 //                            the last ConfigUpdate (e.g.
 //                            ANTHROPIC_API_KEY), sets a workspace-local
-//                            TMPDIR, adds TRACEPARENT for span linkage,
+//                            TMPDIR (via overrideEnv, so it replaces any
+//                            TMPDIR inherited from the agent's own
+//                            environment rather than shadowing it), adds
+//                            TRACEPARENT for span linkage,
 //                            dispatches via the configured `RunFunc`
 //                            (production default: `RunStreaming`) with
 //                            the workspace tempdir as cwd. After exit —
@@ -133,6 +136,25 @@ func excerptTail(b []byte, limit int) string {
 		return string(b)
 	}
 	return "...[truncated head]" + string(b[len(b)-limit:])
+}
+
+// overrideEnv returns env with every existing "key=..." entry removed and a
+// single "key=val" entry appended. Unlike a bare append, this guarantees
+// exactly one entry for key regardless of how many times it already appears
+// in env (e.g. inherited from os.Environ() plus a wire-supplied override) —
+// callers that read the first match (as some libc getenv-style consumers do)
+// and callers that read the last match both see the same value. Order of
+// unrelated entries is preserved.
+func overrideEnv(env []string, key, val string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, prefix+val)
 }
 
 // RealHandlerConfig customizes the production handler's behaviour. Zero
@@ -443,7 +465,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	for k, v := range inv.Exec.Env {
 		env = append(env, k+"="+v)
 	}
-	env = append(env, "TMPDIR="+tmpDir)
+	env = overrideEnv(env, "TMPDIR", tmpDir)
 	if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
 		env = append(env, tpEnv)
 	}
@@ -541,11 +563,6 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	return result, nil
 }
 
-// codexHomeDirName is the workspace-relative dir RunCodex creates when the
-// command carries a per-user auth JSON (per_user auth mode). It is written
-// to .gitignore so credentials can never be committed accidentally.
-const codexHomeDirName = ".yaaos-codex-home"
-
 func (h *RealHandler) RunCodex(ctx context.Context, cmd *command.InvokeCodexCommand) (command.InvokeResult, error) {
 	h.mu.Lock()
 	slot, ok := h.slots[cmd.Proto.WorkspaceID]
@@ -577,29 +594,7 @@ func (h *RealHandler) RunCodex(ctx context.Context, cmd *command.InvokeCodexComm
 		return command.InvokeResult{}, fmt.Errorf("create tmpdir: %w", err)
 	}
 
-	// Per-user auth mode: write auth.json (0600) to a workspace-local dir
-	// and point CODEX_HOME at it. Also gitignore the dir so credentials are
-	// never committed. Only written when AuthJSON is non-empty — api_key
-	// mode delivers credentials via CODEX_API_KEY env var instead.
 	argv := append([]string(nil), inv.Exec.Argv...)
-	if !cmd.AuthJSON.IsZero() {
-		authDir := filepath.Join(slot.path, codexHomeDirName)
-		if err := os.MkdirAll(authDir, h.cfg.DirPerm); err != nil {
-			return command.InvokeResult{}, fmt.Errorf("create codex home dir: %w", err)
-		}
-		authPath := filepath.Join(authDir, "auth.json")
-		if err := os.WriteFile(authPath, []byte(cmd.AuthJSON.Value()), 0o600); err != nil {
-			return command.InvokeResult{}, fmt.Errorf("write codex auth.json: %w", err)
-		}
-		// Add the codex home dir to .gitignore so credentials are never
-		// committed accidentally on named-branch work checkouts.
-		gitignorePath := filepath.Join(slot.path, ".gitignore")
-		const codexHomeEntry = "\n" + codexHomeDirName + "/\n"
-		_ = appendIfAbsent(gitignorePath, codexHomeEntry)
-		// Propagate to the subprocess — override any CODEX_HOME the parent
-		// env may carry so the subprocess uses the workspace-local dir.
-		inv.Exec.Env["CODEX_HOME"] = authDir
-	}
 
 	// Output schema: write the JSON Schema to a temp file and append the
 	// --output-schema flag so codex constrains its structured output. Only
@@ -626,7 +621,7 @@ func (h *RealHandler) RunCodex(ctx context.Context, cmd *command.InvokeCodexComm
 	for k, v := range inv.Exec.Env {
 		env = append(env, k+"="+v)
 	}
-	env = append(env, "TMPDIR="+tmpDir)
+	env = overrideEnv(env, "TMPDIR", tmpDir)
 	if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
 		env = append(env, tpEnv)
 	}
@@ -685,30 +680,6 @@ func (h *RealHandler) RunCodex(ctx context.Context, cmd *command.InvokeCodexComm
 		Duration: res.Duration,
 	}
 	return result, nil
-}
-
-// appendIfAbsent appends `entry` to the file at `path` unless the entry
-// (trimmed) already appears in the file. Creates the file if absent.
-// Best-effort: returns nil on any I/O error so a gitignore miss never
-// fails a command.
-func appendIfAbsent(path, entry string) error {
-	existing, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return nil
-	}
-	needle := strings.TrimSpace(entry)
-	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(line) == needle {
-			return nil // already present
-		}
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = f.Close() }()
-	_, _ = f.WriteString(entry)
-	return nil
 }
 
 // readArtifact reads `$TMPDIR/<command_id>.md`, enforcing artifactMaxBytes.

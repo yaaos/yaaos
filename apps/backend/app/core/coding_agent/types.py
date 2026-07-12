@@ -360,11 +360,12 @@ class CredentialUnavailableError(CodingAgentError):
 class CommandCredentialSpec(BaseModel, frozen=True):
     """Result returned by a credential provider.
 
-    ``credential_user_id`` is ``None`` in API-key mode (credentials arrive via
-    the ConfigUpdate ``api_keys`` map, not the claim-time hydrator) and
-    non-``None`` in per-user mode (the hydrator fetches a fresh user token at
-    claim time and writes it to the workspace's auth store before the subprocess
-    launches).
+    ``credential_user_id`` is a generic seam for a future provider whose
+    credentials are resolved per-user at claim time (fetched fresh and
+    written to the workspace's auth store before the subprocess launches).
+    No shipped provider currently sets it — every registered provider
+    (including Codex's) returns ``None``, since credentials arrive via the
+    ConfigUpdate ``api_keys`` map instead.
     """
 
     credential_user_id: UUID | None

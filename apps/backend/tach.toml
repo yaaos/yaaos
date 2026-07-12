@@ -147,7 +147,7 @@ depends_on = ["app.core.api_keys", "app.core.coding_agent", "app.core.config", "
 
 [[modules]]
 path = "app.plugins.codex"
-depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.coding_agent", "app.core.config", "app.core.oauth", "app.core.tenancy", "app.domain.pipelines"]
+depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.coding_agent", "app.domain.pipelines"]
 
 [[modules]]
 path = "app.plugins.github"
@@ -163,7 +163,7 @@ depends_on = ["app.core.config", "app.core.oauth", "app.domain.integrations"]
 
 [[modules]]
 path = "app.plugins.oauth_test"
-depends_on = ["app.core.config", "app.core.identity"]
+depends_on = ["app.core.config", "app.core.identity", "app.core.oauth"]
 
 [[modules]]
 path = "app.plugins.rwx"

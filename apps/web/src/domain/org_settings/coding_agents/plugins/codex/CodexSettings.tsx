@@ -4,16 +4,11 @@ import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormMessage } from "@shared/components/ui/form";
 import { Input } from "@shared/components/ui/input";
-import { RadioGroup, RadioGroupItem } from "@shared/components/ui/radio-group";
 import { Suspense, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import {
-  type CodingAgentInstall,
-  useCodingAgents,
-  useUpdateCodingAgentSettings,
-} from "../../queries";
+import { type CodingAgentInstall, useCodingAgents } from "../../queries";
 import {
   useClearOpenAIKey,
   useOpenAIKeyStatus,
@@ -24,9 +19,9 @@ import {
 /**
  * Bespoke settings UI for the `codex` coding-agent plugin.
  *
- * Renders:
- *  - Authentication card (auth_mode — org API key vs. per-user ChatGPT login).
- *  - OpenAI API key card (provider=openai — test/save/rotate/clear).
+ * Renders the OpenAI API key card (provider=openai — test/save/rotate/clear).
+ * Codex has no per-org auth setting — the org's OpenAI API key is the only
+ * credential source.
  */
 export function CodexSettings({ pluginId }: { pluginId: string }) {
   return (
@@ -59,79 +54,10 @@ function CodexContent({ pluginId }: { pluginId: string }) {
     );
   }
 
-  const authMode = install.settings.auth_mode === "per_user" ? "per_user" : "api_key";
-
   return (
     <div className="flex flex-col gap-4">
-      <AuthModeCard install={install} authMode={authMode} />
-      {authMode === "api_key" && <OpenAIKeyCard />}
+      <OpenAIKeyCard />
     </div>
-  );
-}
-
-// ── Authentication card ───────────────────────────────────────────────────────
-
-function AuthModeCard({
-  install,
-  authMode,
-}: {
-  install: CodingAgentInstall;
-  authMode: "api_key" | "per_user";
-}) {
-  const update = useUpdateCodingAgentSettings(install.plugin_id);
-
-  return (
-    <section className="rounded-lg border border-border bg-card">
-      <header className="border-b border-border px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-[13.5px] font-semibold">Authentication</h3>
-          <span className="text-muted-foreground text-xs" data-testid="codex-auth-mode-status">
-            {update.isPending ? "Saving…" : update.isSuccess ? "Saved." : ""}
-          </span>
-        </div>
-      </header>
-      <div className="px-4 py-4">
-        <RadioGroup
-          value={authMode}
-          disabled={update.isPending}
-          onValueChange={(value) => update.mutate({ auth_mode: value })}
-          data-testid="codex-auth-mode"
-        >
-          <div className="flex items-start gap-2">
-            <RadioGroupItem
-              value="api_key"
-              id="codex-auth-api-key"
-              data-testid="codex-auth-mode-api-key"
-            />
-            <label htmlFor="codex-auth-api-key" className="cursor-pointer">
-              <span className="block text-sm font-medium">Org API key</span>
-              <span className="text-muted-foreground block text-xs">
-                Runs authenticate with the org's OpenAI API key.
-              </span>
-            </label>
-          </div>
-          <div className="flex items-start gap-2">
-            <RadioGroupItem
-              value="per_user"
-              id="codex-auth-per-user"
-              data-testid="codex-auth-mode-per-user"
-            />
-            <label htmlFor="codex-auth-per-user" className="cursor-pointer">
-              <span className="block text-sm font-medium">Per-user ChatGPT login</span>
-              <span className="text-muted-foreground block text-xs">
-                Runs authenticate as the requesting user. Each user connects ChatGPT under User
-                settings → Details → Connections.
-              </span>
-            </label>
-          </div>
-        </RadioGroup>
-        {update.isError && (
-          <p className="mt-2 text-xs text-destructive" data-testid="codex-auth-mode-err">
-            {(update.error as Error)?.message || "Failed to save."}
-          </p>
-        )}
-      </div>
-    </section>
   );
 }
 

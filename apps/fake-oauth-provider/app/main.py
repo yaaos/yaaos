@@ -1,7 +1,8 @@
-"""Minimal fake OpenAI Auth service for e2e tests.
+"""Minimal fake RFC-8628 device-auth OAuth provider for e2e tests.
 
-Implements the RFC-8628 device-authorization endpoints used by the codex
-OAuth user-connection flow:
+Implements the RFC-8628 device-authorization endpoints used by
+`core/oauth`'s device-code user-connection flow (exercised in test mode by
+the `oauth_test` plugin's `"test"` provider registration):
 
   POST /device/code   — device-authorize
   POST /token         — token (returns pending until /__test/grant is called)
@@ -13,21 +14,20 @@ State is per device_code (in-memory). One /__test/ route:
 
 from __future__ import annotations
 
-import os
 import time
 import uuid
 from typing import Any
 
 import jwt as pyjwt  # PyJWT
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form
 from fastapi.responses import JSONResponse
 
-app = FastAPI(title="fake-openai")
+app = FastAPI(title="fake-oauth-provider")
 
 # In-memory state: {device_code: {"granted": bool, "user_code": str}}
 _sessions: dict[str, dict[str, Any]] = {}
 
-FAKE_ACCOUNT_ID = "chatgpt-fake-account-id"
+FAKE_ACCOUNT_ID = "fake-oauth-account-id"
 
 
 def _make_jwt(subject: str) -> str:

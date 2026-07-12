@@ -46,18 +46,6 @@ export function useInstallCodingAgent() {
   });
 }
 
-export function useUpdateCodingAgentSettings(pluginId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (settings: Record<string, unknown>) =>
-      apiFetch<CodingAgentInstall>(`/api/coding-agents/${encodeURIComponent(pluginId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ settings }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["coding-agents"] }),
-  });
-}
-
 export function useUninstallCodingAgent() {
   const qc = useQueryClient();
   return useMutation({

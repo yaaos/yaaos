@@ -1365,6 +1365,47 @@ func tmpDirFromEnv(env []string) string {
 	return ""
 }
 
+// TestOverrideEnv_ReplacesInheritedDuplicate_PreservesOthers guards the fix
+// for the TMPDIR-duplicate-append bug: when the agent process itself
+// inherits TMPDIR (true on macOS/dev), appending "TMPDIR=<workspace>" on top
+// of os.Environ() left two TMPDIR entries, and a first-match reader (like
+// tmpDirFromEnv above, or the subprocess's own libc) would resolve the
+// wrong, inherited value instead of the workspace-local one. overrideEnv
+// must collapse any existing TMPDIR entries into exactly one, set to the
+// override value, while leaving unrelated entries untouched.
+func TestOverrideEnv_ReplacesInheritedDuplicate_PreservesOthers(t *testing.T) {
+	env := []string{"PATH=/usr/bin", "TMPDIR=/inherited", "HOME=/home/agent"}
+
+	got := overrideEnv(env, "TMPDIR", "/workspace/tmp")
+
+	var tmpDirs []string
+	for _, kv := range got {
+		if rest, ok := strings.CutPrefix(kv, "TMPDIR="); ok {
+			tmpDirs = append(tmpDirs, rest)
+		}
+	}
+	if len(tmpDirs) != 1 {
+		t.Fatalf("want exactly 1 TMPDIR entry, got %d: %v", len(tmpDirs), got)
+	}
+	if tmpDirs[0] != "/workspace/tmp" {
+		t.Errorf("TMPDIR: want %q got %q", "/workspace/tmp", tmpDirs[0])
+	}
+
+	wantOthers := []string{"PATH=/usr/bin", "HOME=/home/agent"}
+	for _, want := range wantOthers {
+		found := false
+		for _, kv := range got {
+			if kv == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("want unrelated entry %q preserved, got %v", want, got)
+		}
+	}
+}
+
 func TestRealHandler_RunClaude_Artifact_PresentUnderCap(t *testing.T) {
 	const cmdID = "c-inv"
 	const body = "# Requirements\ndone"

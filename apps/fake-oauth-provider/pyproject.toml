@@ -1,7 +1,7 @@
 [project]
-name = "yaaos-fake-openai"
+name = "yaaos-fake-oauth-provider"
 version = "0.0.1"
-description = "Test-only fake OpenAI Auth service for yaaos e2e tests"
+description = "Test-only fake RFC-8628 device-auth OAuth provider for yaaos e2e tests"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

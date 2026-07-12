@@ -29,9 +29,9 @@
 - `disconnect_user_connection(user_id, provider_id, *, actor, session)` — deletes row + emits audit; returns `bool` (False when not found).
 - `ConnectionMissingError`, `ConnectionNeedsReauthError` — raised by `ensure_fresh_access_token`.
 
-Does NOT own: audit fanout logic (uses `core/audit_log.audit`), or vendor-specific `auth_json` construction (plugin-owned via `build_auth_json`).
+Does NOT own: audit fanout logic (uses `core/audit_log.audit`).
 
-Consumers: `plugins/codex` (registers `UserOAuthApp`, implements `build_auth_json`), `core/oauth/web.py` (HTTP routes), `domain/integrations` + `plugins/github` (authorization-code flow primitives).
+Consumers: `plugins/oauth_test` (test-mode-only device-code `UserOAuthApp` registration exercised by the e2e connect/disconnect flow — no production registrant today), `core/oauth/web.py` (HTTP routes), `domain/integrations` + `plugins/github` (authorization-code flow primitives).
 
 ## Why / invariants
 
@@ -39,7 +39,7 @@ Consumers: `plugins/codex` (registers `UserOAuthApp`, implements `build_auth_jso
 
 **`ProviderConfig` lives here** because `exchange_code` consumes it. `domain/integrations.types` re-exports it for plugin authors.
 
-**Device-code public client** — `UserOAuthApp.client_secret = None` means `_post_device_authorize` and `_post_token` send only `client_id` (no secret) per RFC-8628 public-client rules. Codex uses this mode.
+**Device-code public client** — `UserOAuthApp.client_secret = None` means `_post_device_authorize` and `_post_token` send only `client_id` (no secret) per RFC-8628 public-client rules. The test-only `oauth_test` registrant uses this mode.
 
 **Token storage** — all token fields are Fernet-encrypted (`core/secrets`) before persistence. `UserOAuthConnection` carries no token material. `ensure_fresh_access_token` decrypts on the way out and wraps in `UserOAuthCredential` (`SecretStr` fields).
 
@@ -84,5 +84,4 @@ All routes require a valid session (`require_session`). No org scope — user-sc
 - `app/core/oauth/test/test_user_connections_service.py` — 12 `@pytest.mark.service` tests covering start/poll/grant/deny/expire/disconnect flows. Uses `UserOAuthApp.device_authorize_fn` / `token_fn` DI seams (no network, no `patch`).
 - `app/core/oauth/test/test_connection_visibility_service.py` — `@pytest.mark.service` tests for `list_visible_user_oauth_apps`: no `relevance_fn` stays visible, `relevance_fn=False` hides, `relevance_fn=True` shows, and an irrelevant app with an existing connection row stays visible.
 - `app/core/oauth/test/test_refresh_lifecycle_service.py` — 14 `@pytest.mark.service` tests covering `ensure_fresh_access_token` (freshness gate, rotation, re-check invariant, terminal → `needs_reauth`, transient stays connected), `_do_refresh_due_connections` (due/non-due rows, terminal failure isolation, device-session purge), and the needs-reauth user notification on both flip paths. Same DI-seam pattern.
-- `app/plugins/codex/test/test_auth_json.py` — 4 unit tests for `build_auth_json` shape + `SecretStr` wrapping.
-- `apps/e2e/tests/oauth-connect.spec.ts` — browser connect/disconnect flow against the `fake-openai` peer.
+- `apps/e2e/tests/oauth-connect.spec.ts` — browser connect/disconnect flow against the `fake-oauth-provider` peer, exercising the `oauth_test` plugin's `"test"` device-code provider.

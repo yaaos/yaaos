@@ -89,7 +89,6 @@ def _minimal_invoke_codex_payload(
     command_id: UUID,
     workspace_id: UUID,
     run_id: UUID,
-    credential_user_id: UUID | None = None,
 ) -> dict:
     """Return a minimal payload dict for an InvokeCodex AgentCommandRow.
 
@@ -113,7 +112,6 @@ def _minimal_invoke_codex_payload(
             "stdin": "test prompt",
         },
         "output_schema_json": None,
-        "credential_user_id": str(credential_user_id) if credential_user_id else None,
     }
 
 
@@ -124,7 +122,6 @@ async def _insert_invoke_codex_row(
     agent_id: UUID,
     workspace_id: UUID,
     run_id: UUID,
-    credential_user_id: UUID | None = None,
 ) -> AgentCommandRow:
     """Insert a pending InvokeCodex AgentCommandRow directly for testing."""
     command_id = uuid7()
@@ -132,7 +129,6 @@ async def _insert_invoke_codex_row(
         command_id=command_id,
         workspace_id=workspace_id,
         run_id=run_id,
-        credential_user_id=credential_user_id,
     )
     row = AgentCommandRow(
         id=command_id,
@@ -277,8 +273,8 @@ async def test_no_hydrator_passes_payload_verbatim(db_session) -> None:
 
 @pytest.mark.service
 async def test_invoke_codex_api_key_mode_shape_validates(db_session) -> None:
-    """InvokeCodex api-key mode (credential_user_id=None): correct `invocation`
-    dict shape → Pydantic validates and claim_next returns InvokeCodexCommand.
+    """InvokeCodex api-key mode: correct `invocation` dict shape → Pydantic
+    validates and claim_next returns InvokeCodexCommand.
 
     This test locks the wire shape: `argv`/`env`/`stdin` must be nested under
     `invocation`, not at the payload top level.
@@ -297,7 +293,6 @@ async def test_invoke_codex_api_key_mode_shape_validates(db_session) -> None:
         agent_id=agent_id,
         workspace_id=workspace_id,
         run_id=run_id,
-        credential_user_id=None,  # api_key mode — no hydrator needed
     )
     await db_session.flush()
 
@@ -319,7 +314,6 @@ async def test_invoke_codex_api_key_mode_shape_validates(db_session) -> None:
         "env": {},
         "stdin": "test prompt",
     }, f"Unexpected invocation dict: {cmd.invocation!r}"
-    assert cmd.credential_user_id is None
     assert cmd.skill_path == ".codex/skills/test/SKILL.md"
 
 

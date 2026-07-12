@@ -22,8 +22,6 @@ type WorkspaceOps interface {
 	WriteFiles(ctx context.Context, cmd *protocol.WriteFilesCommand) (WriteFilesResult, error)
 	RefreshAuth(ctx context.Context, cmd *protocol.RefreshWorkspaceAuthCommand) (RefreshResult, error)
 	RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeCodeCommand) (InvokeResult, error)
-	// RunCodex takes the command-layer type (not the raw proto) so the
-	// secret-wrapped AuthJSON is accessible without carrying plaintext.
 	RunCodex(ctx context.Context, cmd *InvokeCodexCommand) (InvokeResult, error)
 	Cleanup(ctx context.Context, cmd *protocol.CleanupWorkspaceCommand) (CleanupResult, error)
 	PushBranch(ctx context.Context, cmd *protocol.PushBranchCommand) (PushBranchResult, error)

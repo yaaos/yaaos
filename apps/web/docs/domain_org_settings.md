@@ -38,8 +38,7 @@ Tab visibility is role-gated: admin sees all tabs; builder sees Members only (`t
 
 `CodexSettings.tsx` composition (top → bottom):
 1. **Not-installed guard** — if `codex` has no install row, shows a plain text message (no uninstall needed).
-2. **`AuthModeCard`** — radio selector for the install's `auth_mode` setting: `api_key` (org OpenAI key) vs `per_user` (each user's ChatGPT connection from User settings → Details → Connections). Selection PATCHes `/api/coding-agents/codex` via `useUpdateCodingAgentSettings`; inline Saving…/Saved. status. An install row without `auth_mode` renders as `api_key` — the backend's default.
-3. **`OpenAIKeyCard`** — OpenAI API key (provider `openai`). Rendered only in `api_key` mode — irrelevant (and hidden) under `per_user`. Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
+2. **`OpenAIKeyCard`** — OpenAI API key (provider `openai`), rendered unconditionally — Codex has no per-org auth setting, the org's OpenAI API key is the only credential source. Write-only: post-save shows `Configured ✓ · last set <ts>` with Test/Rotate/Clear; plaintext never read back.
 
 Skill selection never appears here — a pipeline stage's `skill_name` picks the skill (see [domain_pipeline_settings.md](domain_pipeline_settings.md)).
 
@@ -80,7 +79,7 @@ All settings tests use MSW to intercept HTTP rather than `vi.mock("../queries")`
 - `coding_agents/test/coding_agents.test.tsx` — component/MSW: empty state, Add card with claude_code disabled when already installed, install flow, Remove confirmation, settings link.
 - `coding_agents/test/plugin_registry.test.tsx` — unit: dispatch to registered vs. unknown plugin.
 - `coding_agents/plugins/claude_code/test/claude_code_settings.test.tsx` — component/MSW: API key not-set/configured states; danger-zone uninstall.
-- `coding_agents/plugins/codex/test/codex_settings.test.tsx` — component/MSW: OpenAI key not-set/configured states; not-installed guard; auth-mode default/per_user render + PATCH-on-select.
+- `coding_agents/plugins/codex/test/codex_settings.test.tsx` — component/MSW: OpenAI key not-set/configured states; not-installed guard; key card renders unconditionally regardless of install settings.
 - `api_keys/test/api-keys.test.tsx` — component/MSW: not_set / configured / rotate states; save / test / clear flows.
 - `integrations/test/integrations.test.tsx` — component/MSW: connect flow, allowlist, enabled toggle, disconnect.
 - `vcs/test/vcs.test.tsx` — component/MSW: Connect GitHub card, connected, needs-setup, unprovisioned states; remove confirmation.

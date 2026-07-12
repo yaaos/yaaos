@@ -212,17 +212,17 @@ async def dispatch_invocation(
         # Resolve credentials via the registered provider (if any).  The
         # provider raises CredentialUnavailableError when it cannot supply a
         # usable credential; callers (the run engine) catch that and fail the
-        # stage with the provider's user_message.
-        credential_user_id: UUID | None = None
+        # stage with the provider's user_message. The returned spec carries
+        # no field on the wire command — Codex has no per-command credential
+        # to propagate; the provider call is purely a dispatch-time gate.
         provider = _credential_providers.get(plugin.plugin_id)
         if provider is not None:
-            spec: CommandCredentialSpec = await provider(
+            await provider(
                 org_id=owner.org_id,
                 user_id=ctx.user_id,
                 wallclock_seconds=invocation_data.wallclock_seconds,
                 session=session,
             )
-            credential_user_id = spec.credential_user_id
 
         cmd = InvokeCodexCommand(
             command_id=command_id,
@@ -233,7 +233,6 @@ async def dispatch_invocation(
             result_spec={},
             skill_path=skill_path,
             output_schema_json=invocation_data.output_schema_json,
-            credential_user_id=credential_user_id,
         )
     else:
         # Default: InvokeClaudeCode (and any future plugin that uses this kind).

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.identity import ProviderProfile, get_provider
+from app.core.oauth import get_user_oauth_app
 from app.plugins.oauth_test import set_next_profile
 
 
@@ -42,3 +43,15 @@ async def test_exchange_code_without_staged_profile_raises() -> None:
     p = get_provider("test")
     with pytest.raises(RuntimeError):
         await p.exchange_code(code="x", redirect_uri="http://test/cb")
+
+
+def test_device_code_user_oauth_app_is_registered() -> None:
+    """oauth_test registers a device-code UserOAuthApp under provider_id='test'
+    so the generic device-code connect/disconnect flow stays e2e-tested."""
+    app = get_user_oauth_app("test")
+    assert app.provider_id == "test"
+    assert app.flow == "device_code"
+    assert app.client_secret is None
+    assert app.relevance_fn is None
+    assert app.device_authorize_url.endswith("/device/code")
+    assert app.token_url.endswith("/token")

@@ -42,7 +42,7 @@
 - `AgentCommand` (the interface here) is unrelated to the now-deleted `protocol.AgentCommand` union struct. Same term, different concept.
 - `ProvisionResult.Path` carries the workspace path the supervisor registry keys on; don't rename it.
 - `InvokeResult.ToWire()` includes both `stdout` (full, for the backend's CodeReview parser) and `stdout_excerpt` (display-friendly, truncated at 16 KiB). Both keys are load-bearing — the backend reads `stdout`, operators read `stdout_excerpt`.
-- `secret.Secret` fields (`AgentConfig.OTLPToken`, `InvokeCodexCommand.AuthJSON`) print as `[REDACTED]` under all fmt/json paths. Use `.Value()` only at the consuming site (OTLP-exporter for the token; workspace child for `AuthJSON`).
+- `secret.Secret` fields (e.g. `AgentConfig.OTLPToken`) print as `[REDACTED]` under all fmt/json paths. Use `.Value()` only at the consuming site (OTLP-exporter for the token).
 - When embedding a `WorkspaceCommand` to override `Timeout()` in tests, `MarshalWire()` is inherited automatically via embedding — no need to reimplement it.
 
 ## Vocabulary

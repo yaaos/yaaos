@@ -79,9 +79,9 @@ describe("DetailsPage (MSW)", () => {
         HttpResponse.json({
           connections: [
             {
-              provider_id: "codex",
-              display_name: "Codex (ChatGPT)",
-              connect_hint: "Authorize yaaos in ChatGPT settings.",
+              provider_id: "example",
+              display_name: "Example Provider",
+              connect_hint: "Authorize yaaos in the Example Provider settings.",
               status: "not_connected",
               external_account_id: null,
               connected_at: null,
@@ -93,8 +93,8 @@ describe("DetailsPage (MSW)", () => {
     );
     render(wrap(<DetailsPage />));
     await waitFor(() => expect(screen.getByTestId("connections-section")).toBeInTheDocument());
-    expect(screen.getByTestId("connection-row-codex")).toBeInTheDocument();
-    expect(screen.getByTestId("connection-connect-codex")).toBeInTheDocument();
+    expect(screen.getByTestId("connection-row-example")).toBeInTheDocument();
+    expect(screen.getByTestId("connection-connect-example")).toBeInTheDocument();
   });
 
   it("renders connected card with Disconnect button", async () => {
@@ -103,11 +103,11 @@ describe("DetailsPage (MSW)", () => {
         HttpResponse.json({
           connections: [
             {
-              provider_id: "codex",
-              display_name: "Codex (ChatGPT)",
-              connect_hint: "Authorize yaaos in ChatGPT settings.",
+              provider_id: "example",
+              display_name: "Example Provider",
+              connect_hint: "Authorize yaaos in the Example Provider settings.",
               status: "connected",
-              external_account_id: "chatgpt-acct-123",
+              external_account_id: "example-acct-123",
               connected_at: new Date().toISOString(),
               needs_reauth_reason: null,
             },
@@ -117,9 +117,9 @@ describe("DetailsPage (MSW)", () => {
     );
     render(wrap(<DetailsPage />));
     await waitFor(() =>
-      expect(screen.getByTestId("connection-disconnect-codex")).toBeInTheDocument(),
+      expect(screen.getByTestId("connection-disconnect-example")).toBeInTheDocument(),
     );
-    expect(screen.getByText(/chatgpt-acct-123/)).toBeInTheDocument();
+    expect(screen.getByText(/example-acct-123/)).toBeInTheDocument();
   });
 
   it("renders needs_reauth card with reason text and reconnect button", async () => {
@@ -128,9 +128,9 @@ describe("DetailsPage (MSW)", () => {
         HttpResponse.json({
           connections: [
             {
-              provider_id: "codex",
-              display_name: "Codex (ChatGPT)",
-              connect_hint: "Authorize yaaos in ChatGPT settings.",
+              provider_id: "example",
+              display_name: "Example Provider",
+              connect_hint: "Authorize yaaos in the Example Provider settings.",
               status: "needs_reauth",
               external_account_id: null,
               connected_at: null,
@@ -142,9 +142,9 @@ describe("DetailsPage (MSW)", () => {
     );
     render(wrap(<DetailsPage />));
     await waitFor(() => expect(screen.getByTestId("connections-section")).toBeInTheDocument());
-    expect(screen.getByTestId("connection-row-codex")).toBeInTheDocument();
+    expect(screen.getByTestId("connection-row-example")).toBeInTheDocument();
     // Reconnect button shown (not connected), labeled for re-authorization
-    expect(screen.getByTestId("connection-connect-codex")).toHaveTextContent("Reconnect");
+    expect(screen.getByTestId("connection-connect-example")).toHaveTextContent("Reconnect");
     // Reason text surfaced to the user
     expect(screen.getByText(/invalid_grant/)).toBeInTheDocument();
   });
@@ -155,9 +155,9 @@ describe("DetailsPage (MSW)", () => {
         HttpResponse.json({
           connections: [
             {
-              provider_id: "codex",
-              display_name: "Codex (ChatGPT)",
-              connect_hint: "Authorize yaaos in ChatGPT settings.",
+              provider_id: "example",
+              display_name: "Example Provider",
+              connect_hint: "Authorize yaaos in the Example Provider settings.",
               status: "not_connected",
               external_account_id: null,
               connected_at: null,
@@ -166,15 +166,17 @@ describe("DetailsPage (MSW)", () => {
           ],
         }),
       ),
-      http.post("/api/user/oauth/codex/device-auth/start", () =>
+      http.post("/api/user/oauth/example/device-auth/start", () =>
         HttpResponse.json({ detail: "device_auth_failed" }, { status: 502 }),
       ),
     );
     render(wrap(<DetailsPage />));
-    await waitFor(() => expect(screen.getByTestId("connection-connect-codex")).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId("connection-connect-codex"));
     await waitFor(() =>
-      expect(screen.getByTestId("connection-connect-err-codex")).toBeInTheDocument(),
+      expect(screen.getByTestId("connection-connect-example")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("connection-connect-example"));
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-connect-err-example")).toBeInTheDocument(),
     );
   });
 });
