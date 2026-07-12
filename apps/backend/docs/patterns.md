@@ -236,6 +236,8 @@ Two valid shapes for service functions:
 
 Pick shape (a) only when callers genuinely compose with sibling writes. Don't add a `session` parameter speculatively. The rule above (service modules never call `db_session()` themselves) applies only to shape (a) functions; shape (b) functions are orchestrators-in-disguise and are the exceptions that own their own session.
 
+**Rotation-commit carve-out** — a service that mutates external mutable state as a side effect of a DB write (e.g. a token-rotation call that causes the provider to invalidate the old credential server-side) MUST commit before returning, even when callers would normally own the transaction. Using shape (b) and committing internally is the correct pattern: riding a caller transaction that later rolls back would un-rotate the token on the DB side while the provider has already invalidated the old one. `core/oauth.ensure_fresh_access_token` is the canonical example.
+
 ### e2e seed paths use public APIs
 
 `app/testing/e2e_setup` chains real public service-layer calls — no `*Row` constructors, no cross-module model imports. Deliberate consequence: seeds emit the same audit rows and events as production writes, acting as a free smoke test for the full call path.

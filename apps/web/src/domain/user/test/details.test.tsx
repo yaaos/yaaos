@@ -121,4 +121,31 @@ describe("DetailsPage (MSW)", () => {
     );
     expect(screen.getByText(/chatgpt-acct-123/)).toBeInTheDocument();
   });
+
+  it("renders needs_reauth card with reason text and reconnect button", async () => {
+    server.use(
+      http.get("/api/user/oauth/connections", () =>
+        HttpResponse.json({
+          connections: [
+            {
+              provider_id: "codex",
+              display_name: "Codex (ChatGPT)",
+              connect_hint: "Authorize yaaos in ChatGPT settings.",
+              status: "needs_reauth",
+              external_account_id: null,
+              connected_at: null,
+              needs_reauth_reason: "token refresh rejected (invalid_grant)",
+            },
+          ],
+        }),
+      ),
+    );
+    render(wrap(<DetailsPage />));
+    await waitFor(() => expect(screen.getByTestId("connections-section")).toBeInTheDocument());
+    expect(screen.getByTestId("connection-row-codex")).toBeInTheDocument();
+    // Reconnect button shown (not connected)
+    expect(screen.getByTestId("connection-connect-codex")).toBeInTheDocument();
+    // Reason text surfaced to the user
+    expect(screen.getByText(/invalid_grant/)).toBeInTheDocument();
+  });
 });

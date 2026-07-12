@@ -51,7 +51,7 @@ depends_on = ["app.core.auth", "app.core.database", "app.core.identity", "app.co
 
 [[modules]]
 path = "app.core.oauth"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.tenancy", "app.core.webserver"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.identity", "app.core.secrets", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.observability"
@@ -563,12 +563,14 @@ expose = [
   "UserOAuthCredential",
   "build_authorize_url",
   "disconnect_user_connection",
+  "ensure_fresh_access_token",
   "exchange_code",
   "get_user_connection",
   "get_user_oauth_app",
   "list_user_oauth_apps",
   "poll_device_auth",
   "refresh_access_token",
+  "refresh_due_connections",
   "register_user_oauth_app",
   "start_device_auth",
 ]

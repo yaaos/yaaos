@@ -23,11 +23,12 @@
 - `start_device_auth(user_id, provider_id, *, session)` — calls the device-authorize endpoint, upserts `user_oauth_device_sessions`, returns `DeviceAuthStart`.
 - `poll_device_auth(user_id, provider_id, *, actor, session)` — one token-endpoint call; handles RFC-8628 flow signals; on grant: encrypts + upserts `user_oauth_connections`, deletes session, emits audit.
 - `get_user_connection(user_id, provider_id, *, session)` — returns `UserOAuthConnection | None`.
-- `ensure_fresh_access_token(user_id, provider_id, *, session)` — returns `UserOAuthCredential`; raises `ConnectionMissingError` / `ConnectionNeedsReauthError` when reconnect is required.
+- `ensure_fresh_access_token(user_id, provider_id, *, min_remaining_seconds)` — shape-b (opens own session, commits before returning); returns `UserOAuthCredential`; raises `ConnectionMissingError` / `ConnectionNeedsReauthError` when reconnect is required. Shape-b rationale: the provider invalidates the old refresh token server-side at the first successful call — riding a caller transaction that rolls back would brick the connection.
+- `refresh_due_connections` — `TaskRef` for the hourly `@scheduled` worker task (`user_oauth_token_refresh`). Selects connected rows older than `UserOAuthApp.refresh_after_seconds`, refreshes each in a per-row transaction, purges expired device sessions.
 - `disconnect_user_connection(user_id, provider_id, *, actor, session)` — deletes row + emits audit; returns `bool` (False when not found).
 - `ConnectionMissingError`, `ConnectionNeedsReauthError` — raised by `ensure_fresh_access_token`.
 
-Does NOT own: audit fanout logic (uses `core/audit_log.audit`), token refresh scheduling (`domain/pipelines` does the refresh loop via `per_user` skill stage paths), or vendor-specific `auth_json` construction (plugin-owned via `build_auth_json`).
+Does NOT own: audit fanout logic (uses `core/audit_log.audit`), or vendor-specific `auth_json` construction (plugin-owned via `build_auth_json`).
 
 Consumers: `plugins/codex` (registers `UserOAuthApp`, implements `build_auth_json`), `core/oauth/web.py` (HTTP routes), `domain/integrations` + `plugins/github` (authorization-code flow primitives).
 
@@ -40,6 +41,18 @@ Consumers: `plugins/codex` (registers `UserOAuthApp`, implements `build_auth_jso
 **Device-code public client** — `UserOAuthApp.client_secret = None` means `_post_device_authorize` and `_post_token` send only `client_id` (no secret) per RFC-8628 public-client rules. Codex uses this mode.
 
 **Token storage** — all token fields are Fernet-encrypted (`core/secrets`) before persistence. `UserOAuthConnection` carries no token material. `ensure_fresh_access_token` decrypts on the way out and wraps in `UserOAuthCredential` (`SecretStr` fields).
+
+**Token refresh lifecycle** — `ensure_fresh_access_token` uses a two-transaction algorithm:
+1. Fast path (non-locking `SELECT`): if `access_token_expires_at > now + min_remaining_seconds`, return immediately.
+2. Slow path (`SELECT FOR UPDATE`): re-read the row under lock, re-check freshness (a concurrent caller may have refreshed while we waited), then call the token endpoint, persist the rotated tokens, and commit atomically before returning.
+
+Rotation MUST commit before control returns: the provider invalidates the old refresh token server-side on the first successful call. Riding a caller transaction that rolls back would persist a dead token.
+
+**Terminal vs transient error classification** — on a refresh-grant `OAuthError`:
+- `error_code ∈ {"invalid_grant", "refresh_token_reused", "access_denied"}` → terminal. Row flips to `status="needs_reauth"` with `needs_reauth_reason`, committed immediately, then `ConnectionNeedsReauthError` is raised. Never retried.
+- All other errors (5xx, transport, unknown) → transient. Row stays `connected`, error re-raised. The scheduler retries on the next hourly pass.
+
+**Proactive rotation scheduler** — `refresh_due_connections` (`@scheduled("user_oauth_token_refresh", "0 * * * *")`) sweeps each registered provider for connected rows where `last_refresh_at < now - refresh_after_seconds`. Each due row is refreshed in its own transaction with `FOR UPDATE` + `last_refresh_at` re-check (prevents double-refresh if a concurrent consumer call ran first). Terminal failures flip one row without blocking siblings. `app/worker.py` imports `app.core.oauth` to register the schedule.
 
 **Audit fanout** — `poll_device_auth` (on grant) and `disconnect_user_connection` emit one `oauth_connection.connected` / `oauth_connection.disconnected` audit row per org the user belongs to, matching the membership-fanout pattern from `core/sessions`.
 
@@ -66,5 +79,6 @@ All routes require a valid session (`require_session`). No org scope — user-sc
 ## How it's tested
 
 - `app/core/oauth/test/test_user_connections_service.py` — 12 `@pytest.mark.service` tests covering start/poll/grant/deny/expire/disconnect flows. Uses `UserOAuthApp.device_authorize_fn` / `token_fn` DI seams (no network, no `patch`).
+- `app/core/oauth/test/test_refresh_lifecycle_service.py` — 12 `@pytest.mark.service` tests covering `ensure_fresh_access_token` (freshness gate, rotation, re-check invariant, terminal → `needs_reauth`, transient stays connected) and `_do_refresh_due_connections` (due/non-due rows, terminal failure isolation, device-session purge). Same DI-seam pattern.
 - `app/plugins/codex/test/test_auth_json.py` — 4 unit tests for `build_auth_json` shape + `SecretStr` wrapping.
 - `apps/e2e/tests/oauth-connect.spec.ts` — browser connect/disconnect flow against the `fake-openai` peer.

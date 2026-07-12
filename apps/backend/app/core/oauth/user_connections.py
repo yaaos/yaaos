@@ -9,8 +9,13 @@ Owns:
 - Per-user device-auth connect flow and disconnect:
     `get_user_connection`, `start_device_auth`, `poll_device_auth`,
     `disconnect_user_connection`.
+- Token refresh lifecycle:
+    `ensure_fresh_access_token` (shape-b; opens own session, commits rotation before returning),
+    `refresh_due_connections` (TaskRef for `@scheduled` hourly sweeper),
+    `_do_refresh_due_connections` (private body — call directly in tests).
 
-All write services are shape-(a): take `session: AsyncSession`, never commit.
+All shape-(a) services take `session: AsyncSession`, never commit.
+`ensure_fresh_access_token` is shape-b (rotation-commit carve-out — see patterns.md).
 """
 
 from __future__ import annotations
@@ -25,12 +30,13 @@ from uuid import UUID
 
 import structlog
 from pydantic import BaseModel, SecretStr
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit_log import Actor
 from app.core.audit_log import audit as _audit_write
+from app.core.database import session as db_session
 from app.core.oauth.models import UserOAuthConnectionRow, UserOAuthDeviceSessionRow
 from app.core.oauth.service import (
     OAuthError,
@@ -40,6 +46,7 @@ from app.core.oauth.service import (
     _post_token,
 )
 from app.core.secrets import decrypt, encrypt
+from app.core.tasks import scheduled
 
 log = structlog.get_logger("core.oauth.user_connections")
 
@@ -245,6 +252,30 @@ async def _emit_connection_audit(
             org_id=m.org_id,
             session=session,
         )
+
+
+# ---------------------------------------------------------------------------
+# Refresh lifecycle — constants and helpers
+# ---------------------------------------------------------------------------
+
+# OAuthError.error_code values that are terminal (never retry; user must reconnect).
+# Everything else (5xx, transport, unknown) is transient — leave the row connected
+# and let the next refresh pass retry.
+_TERMINAL_ERROR_CODES: frozenset[str] = frozenset({"invalid_grant", "refresh_token_reused", "access_denied"})
+
+
+def _row_to_credential(app: UserOAuthApp, row: UserOAuthConnectionRow) -> UserOAuthCredential:
+    """Decrypt + wrap a connection row into a `UserOAuthCredential` VO."""
+    access_token = decrypt(row.encrypted_access_token.encode()).decode()
+    id_token: str | None = None
+    if row.encrypted_id_token is not None:
+        id_token = decrypt(row.encrypted_id_token.encode()).decode()
+    return UserOAuthCredential(
+        access_token=SecretStr(access_token),
+        id_token=SecretStr(id_token) if id_token is not None else None,
+        external_account_id=row.external_account_id,
+        expires_at=row.access_token_expires_at,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -552,3 +583,337 @@ async def disconnect_user_connection(
         external_account_id=external_account_id,
     )
     return True
+
+
+async def ensure_fresh_access_token(
+    user_id: UUID,
+    provider_id: str,
+    *,
+    min_remaining_seconds: int = 300,
+) -> UserOAuthCredential:
+    """Return a valid credential for the connection, refreshing the token if stale.
+
+    Shape-b (opens own short DB session, commits before returning).  The caller
+    MUST NOT pass a session — rotation commits before control returns.
+
+    Rationale for shape-b: the provider invalidates the old refresh token
+    server-side on the first successful call.  If rotation rode a caller
+    transaction that later rolled back, the persisted token would be dead.
+
+    Algorithm:
+    1. Fast path (non-locking): if token has ≥ `min_remaining_seconds` of life, return.
+    2. Slow path (FOR UPDATE): re-read row under lock, re-check freshness (a
+       concurrent caller may have refreshed while we waited for the lock), then
+       call the token endpoint, persist the new tokens, and commit atomically.
+
+    Raises:
+        LookupError: provider not registered.
+        ConnectionMissingError: no row exists for (user_id, provider_id).
+        ConnectionNeedsReauthError: row is `needs_reauth`, or a terminal OAuth error
+            (`invalid_grant`, `refresh_token_reused`, `access_denied`) flips it.
+        OAuthError: transient provider error; row stays `connected`, safe to retry.
+    """
+    app = get_user_oauth_app(provider_id)
+    threshold = timedelta(seconds=min_remaining_seconds)
+    now = datetime.now(UTC)
+
+    # --- Fast path: non-locking read ---
+    async with db_session() as s:
+        row = (
+            await s.execute(
+                select(UserOAuthConnectionRow).where(
+                    UserOAuthConnectionRow.user_id == user_id,
+                    UserOAuthConnectionRow.provider_id == provider_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+        if row is None:
+            raise ConnectionMissingError(
+                f"No OAuth connection for user_id={user_id}, provider_id={provider_id!r}"
+            )
+
+        if row.status == "needs_reauth":
+            raise ConnectionNeedsReauthError(
+                f"OAuth connection requires re-authorization: {row.needs_reauth_reason}"
+            )
+
+        if row.access_token_expires_at > now + threshold:
+            # Token has enough remaining life; no lock or provider call needed.
+            return _row_to_credential(app, row)
+
+    # --- Slow path: lock, re-check, refresh ---
+    async with db_session() as s:
+        row = (
+            await s.execute(
+                select(UserOAuthConnectionRow)
+                .where(
+                    UserOAuthConnectionRow.user_id == user_id,
+                    UserOAuthConnectionRow.provider_id == provider_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+
+        if row is None:
+            raise ConnectionMissingError(
+                f"No OAuth connection for user_id={user_id}, provider_id={provider_id!r}"
+            )
+
+        if row.status == "needs_reauth":
+            raise ConnectionNeedsReauthError(
+                f"OAuth connection requires re-authorization: {row.needs_reauth_reason}"
+            )
+
+        # Re-check after acquiring lock: a concurrent caller may have already refreshed.
+        if row.access_token_expires_at > datetime.now(UTC) + threshold:
+            return _row_to_credential(app, row)
+
+        if row.encrypted_refresh_token is None:
+            # No refresh token — the provider issued access-only; user must reconnect.
+            raise ConnectionNeedsReauthError(
+                f"No refresh token available for provider_id={provider_id!r}; reconnect required"
+            )
+
+        # --- Token endpoint call ---
+        refresh_token_plaintext = decrypt(row.encrypted_refresh_token.encode()).decode()
+        spec = TokenEndpointSpec(
+            url=app.token_url,
+            client_id=app.client_id,
+            client_secret=app.client_secret,
+            token_auth_style=app.token_auth_style,
+        )
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token_plaintext,
+            "client_id": app.client_id,
+        }
+
+        _token = app.token_fn or _post_token
+        try:
+            tokens = await _token(spec, data)
+        except OAuthError as exc:
+            if exc.error_code in _TERMINAL_ERROR_CODES:
+                # Flip row to needs_reauth and COMMIT before raising.
+                # The provider has rejected the refresh token; persisting the
+                # terminal state before the exception unwinds ensures the
+                # row reflects reality even if the caller's outer work fails.
+                reason = f"token refresh rejected ({exc.error_code})"
+                await s.execute(
+                    update(UserOAuthConnectionRow)
+                    .where(
+                        UserOAuthConnectionRow.user_id == user_id,
+                        UserOAuthConnectionRow.provider_id == provider_id,
+                    )
+                    .values(
+                        status="needs_reauth",
+                        needs_reauth_reason=reason,
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+                await s.commit()
+                raise ConnectionNeedsReauthError(
+                    f"OAuth connection requires re-authorization ({exc.error_code})"
+                ) from exc
+            # Transient error — leave the row connected; caller/scheduler retries.
+            raise
+
+        # --- Persist rotated tokens ---
+        refresh_now = datetime.now(UTC)
+        expires_at = _compute_expires_at(app, tokens)
+        encrypted_access_token = encrypt(tokens.access_token.get_secret_value()).decode()
+        # Keep old refresh token when the provider doesn't rotate it.
+        encrypted_refresh_token = (
+            encrypt(tokens.refresh_token.get_secret_value()).decode()
+            if tokens.refresh_token is not None
+            else row.encrypted_refresh_token
+        )
+
+        await s.execute(
+            update(UserOAuthConnectionRow)
+            .where(
+                UserOAuthConnectionRow.user_id == user_id,
+                UserOAuthConnectionRow.provider_id == provider_id,
+            )
+            .values(
+                encrypted_access_token=encrypted_access_token,
+                encrypted_refresh_token=encrypted_refresh_token,
+                access_token_expires_at=expires_at,
+                last_refresh_at=refresh_now,
+                updated_at=refresh_now,
+            )
+        )
+        await s.commit()
+
+        id_token: str | None = None
+        if row.encrypted_id_token is not None:
+            id_token = decrypt(row.encrypted_id_token.encode()).decode()
+
+        return UserOAuthCredential(
+            access_token=tokens.access_token,
+            id_token=SecretStr(id_token) if id_token is not None else None,
+            external_account_id=row.external_account_id,
+            expires_at=expires_at,
+        )
+
+
+async def _do_refresh_due_connections() -> int:
+    """One pass of the proactive token-refresh sweeper.
+
+    For each registered provider, selects `connected` rows whose
+    `last_refresh_at` is older than the app's `refresh_after_seconds` threshold.
+    Each due row is refreshed in its own committed transaction (per-row isolation:
+    one failure does not prevent siblings from being updated).
+
+    Also purges expired `user_oauth_device_sessions` rows.
+
+    Returns the number of rows successfully refreshed.
+    """
+    refreshed = 0
+    now = datetime.now(UTC)
+
+    for provider_id, app in _APPS.items():
+        cutoff = now - timedelta(seconds=app.refresh_after_seconds)
+
+        async with db_session() as s:
+            due_rows = list(
+                (
+                    await s.execute(
+                        select(UserOAuthConnectionRow).where(
+                            UserOAuthConnectionRow.provider_id == provider_id,
+                            UserOAuthConnectionRow.status == "connected",
+                            UserOAuthConnectionRow.last_refresh_at < cutoff,
+                        )
+                    )
+                ).scalars()
+            )
+
+        for row in due_rows:
+            # Each row uses its own locking transaction for per-row isolation.
+            async with db_session() as s:
+                locked_row = (
+                    await s.execute(
+                        select(UserOAuthConnectionRow)
+                        .where(
+                            UserOAuthConnectionRow.user_id == row.user_id,
+                            UserOAuthConnectionRow.provider_id == provider_id,
+                        )
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+
+                if locked_row is None or locked_row.status != "connected":
+                    continue
+
+                # Re-check after lock: was this row refreshed by a concurrent caller?
+                if locked_row.last_refresh_at >= cutoff:
+                    continue  # already up-to-date; skip to avoid double-refresh
+
+                if locked_row.encrypted_refresh_token is None:
+                    log.info(
+                        "oauth.token_refresh.skipped_no_refresh_token",
+                        user_id=str(row.user_id),
+                        provider_id=provider_id,
+                    )
+                    continue
+
+                refresh_token_plaintext = decrypt(locked_row.encrypted_refresh_token.encode()).decode()
+                spec = TokenEndpointSpec(
+                    url=app.token_url,
+                    client_id=app.client_id,
+                    client_secret=app.client_secret,
+                    token_auth_style=app.token_auth_style,
+                )
+                data = {
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token_plaintext,
+                    "client_id": app.client_id,
+                }
+
+                _token = app.token_fn or _post_token
+                try:
+                    tokens = await _token(spec, data)
+                except OAuthError as exc:
+                    if exc.error_code in _TERMINAL_ERROR_CODES:
+                        reason = f"token refresh rejected ({exc.error_code})"
+                        await s.execute(
+                            update(UserOAuthConnectionRow)
+                            .where(
+                                UserOAuthConnectionRow.user_id == row.user_id,
+                                UserOAuthConnectionRow.provider_id == provider_id,
+                            )
+                            .values(
+                                status="needs_reauth",
+                                needs_reauth_reason=reason,
+                                updated_at=datetime.now(UTC),
+                            )
+                        )
+                        await s.commit()
+                        log.info(
+                            "oauth.token_refresh.needs_reauth",
+                            user_id=str(row.user_id),
+                            provider_id=provider_id,
+                            error_code=exc.error_code,
+                        )
+                    else:
+                        log.warning(
+                            "oauth.token_refresh.transient_error",
+                            user_id=str(row.user_id),
+                            provider_id=provider_id,
+                            error=str(exc),
+                        )
+                    continue
+                except Exception as exc:
+                    log.error(
+                        "oauth.token_refresh.unexpected_error",
+                        user_id=str(row.user_id),
+                        provider_id=provider_id,
+                        error=str(exc),
+                    )
+                    continue
+
+                refresh_now = datetime.now(UTC)
+                expires_at = _compute_expires_at(app, tokens)
+                encrypted_access_token = encrypt(tokens.access_token.get_secret_value()).decode()
+                encrypted_refresh_token = (
+                    encrypt(tokens.refresh_token.get_secret_value()).decode()
+                    if tokens.refresh_token is not None
+                    else locked_row.encrypted_refresh_token
+                )
+
+                await s.execute(
+                    update(UserOAuthConnectionRow)
+                    .where(
+                        UserOAuthConnectionRow.user_id == row.user_id,
+                        UserOAuthConnectionRow.provider_id == provider_id,
+                    )
+                    .values(
+                        encrypted_access_token=encrypted_access_token,
+                        encrypted_refresh_token=encrypted_refresh_token,
+                        access_token_expires_at=expires_at,
+                        last_refresh_at=refresh_now,
+                        updated_at=refresh_now,
+                    )
+                )
+                await s.commit()
+                refreshed += 1
+
+    # Purge expired device sessions (cross-provider; one transaction).
+    async with db_session() as s:
+        await s.execute(
+            delete(UserOAuthDeviceSessionRow).where(UserOAuthDeviceSessionRow.expires_at < datetime.now(UTC))
+        )
+        await s.commit()
+
+    return refreshed
+
+
+# Hourly proactive token rotation — cluster-safe via `core/tasks` per-tick claim.
+# Exactly one worker pod enqueues per slot. Body is idempotent (per-row FOR UPDATE
+# re-check; failed rows are not retried until the next hourly slot).
+refresh_due_connections = scheduled(
+    name="user_oauth_token_refresh",
+    cron="0 * * * *",
+    queue="default",
+    max_retries=1,
+)(_do_refresh_due_connections)
