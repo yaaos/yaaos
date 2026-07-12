@@ -10,7 +10,7 @@ settings validation; `core/coding_agent` owns dispatch and the run lifecycle.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -280,6 +280,62 @@ class CodingAgentPlugin(Protocol):
         single place the convention is declared.
         """
         ...
+
+    def render_skill_bundle(
+        self,
+        skills: Sequence[SkillSource],
+        agents: Sequence[AgentSource],
+    ) -> list[BundleFile]:
+        """Render a vendor-native skills bundle from canonical source objects.
+
+        Pure function — no IO, no session. Receives parsed `SkillSource` and
+        `AgentSource` objects (built from the `.claude/` source tree) and
+        returns the list of files that should go into the download zip.
+
+        For ``claude_code``: passthrough re-emit of the `.claude/` tree — the
+        canonical source format IS the generic input schema.
+        For ``codex``: codex-native skills under `.codex/skills/`, per-agent
+        `.codex/agents/pipeline-*.toml` definitions, and an `AGENTS.md`
+        carrying the delegation-authorization sentence.
+        """
+        ...
+
+
+class BundleFile(BaseModel, frozen=True):
+    """One file entry in a generated skills bundle.
+
+    ``path`` is repo-root-relative (forward slashes, no leading slash) and
+    becomes the zip entry path. ``content`` is the file's text content.
+    """
+
+    path: str
+    content: str
+
+
+class SkillSource(BaseModel, frozen=True):
+    """Parsed canonical skill source (from one `.claude/skills/<name>/` dir).
+
+    ``frontmatter`` is the parsed YAML header. ``body`` is the markdown body
+    after the frontmatter block. ``extra_files`` carries any non-`SKILL.md`
+    files in the skill directory, each with their repo-root-relative ``path``.
+    """
+
+    name: str
+    frontmatter: dict[str, Any]
+    body: str
+    extra_files: tuple[BundleFile, ...]
+
+
+class AgentSource(BaseModel, frozen=True):
+    """Parsed canonical agent source (from one `.claude/agents/pipeline-*.md`).
+
+    ``frontmatter`` is the parsed YAML header. ``body`` is the markdown body
+    after the frontmatter block.
+    """
+
+    name: str
+    frontmatter: dict[str, Any]
+    body: str
 
 
 class CodingAgentError(Exception):

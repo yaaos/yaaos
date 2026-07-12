@@ -13,18 +13,22 @@ Parses JSONL events from `codex exec` stdout:
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+import yaml
 
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
+    AgentSource,
+    BundleFile,
     InvokeCodingAgent,
     RunResult,
+    SkillSource,
     StageOptions,
     Usage,
     register_plugin,
@@ -396,6 +400,126 @@ class CodexPlugin:
         if rendered is None:
             return None
         return ActivityEvent(**{**rendered, "seq": 0})
+
+    def render_skill_bundle(
+        self,
+        skills: Sequence[SkillSource],
+        agents: Sequence[AgentSource],
+    ) -> list[BundleFile]:
+        """Render a codex-native skills bundle from canonical source objects.
+
+        Produces:
+        - `.codex/skills/<name>/SKILL.md` for each skill source plus any
+          extra_files. Content is the same markdown as the canonical source
+          (body and frontmatter preserved) — only the directory changes.
+        - `.codex/agents/<name>.toml` for each agent source. The TOML carries
+          the agent name, description, and the full instruction body; each
+          body is prepended with a defensive task-restatement directive
+          (mitigation for codex/codex-rs#27180, where spawned agents may
+          ignore their task envelope).
+        - `AGENTS.md` at repo root, carrying the delegation-authorization
+          sentence using the exact trigger vocabulary that codex CLI ≥ 0.142.5
+          recognises (PR #30274/#30511). Belt-and-braces alongside the per-stage
+          authorization line emitted by `compile_invocation`.
+        """
+        files: list[BundleFile] = []
+
+        for skill in skills:
+            content = _reconstruct_md_codex(skill.frontmatter, skill.body)
+            files.append(BundleFile(path=f".codex/skills/{skill.name}/SKILL.md", content=content))
+            for ef in skill.extra_files:
+                # Remap extra files from .claude/ → .codex/ tree.
+                codex_path = ef.path.replace(".claude/skills/", ".codex/skills/", 1)
+                files.append(BundleFile(path=codex_path, content=ef.content))
+
+        for agent in agents:
+            toml_content = _build_agent_toml(agent)
+            files.append(BundleFile(path=f".codex/agents/{agent.name}.toml", content=toml_content))
+
+        files.append(BundleFile(path="AGENTS.md", content=_AGENTS_MD))
+
+        return files
+
+
+# ── Codex-bundle helpers ──────────────────────────────────────────────────────
+
+# Delegation-authorization sentence for the bundle's `AGENTS.md`.
+# Uses the exact trigger vocabulary that codex CLI ≥ 0.142.5 recognises in its
+# spawn-tool guardrail (PR #30274 + #30511): "applicable AGENTS.md/skill
+# instructions" + "sub-agents, delegation, or parallel agent work".
+_AGENTS_MD = """\
+# AGENTS.md
+
+These applicable AGENTS.md instructions explicitly authorize sub-agents,
+delegation, and parallel agent work for pipeline stages that require it.
+The skill instructions for each stage define which agents to invoke and when.
+"""
+
+# Defensive restatement directive prepended to each agent's instruction body.
+# Mitigates codex/codex-rs#27180, where spawned agents occasionally ignore
+# their task envelope.  This line is the first thing the spawned agent reads,
+# prompting it to surface the deliverable before acting.
+_DEFENSIVE_RESTATEMENT = (
+    "> **Before taking any action, restate the specific deliverable from the task you received.**"
+)
+
+
+def _reconstruct_md_codex(frontmatter: dict[str, Any], body: str) -> str:
+    """Reconstruct a markdown skill file with YAML frontmatter."""
+    if frontmatter:
+        yaml_text = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True).rstrip()
+        return f"---\n{yaml_text}\n---\n\n{body}\n"
+    return f"{body}\n"
+
+
+def _toml_str(value: str) -> str:
+    """Format a Python string as a TOML basic string (double-quoted, escaped)."""
+    # Escape backslashes first, then double quotes, then control characters.
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
+
+
+def _build_agent_toml(agent: AgentSource) -> str:
+    """Build a `.codex/agents/<name>.toml` file from an `AgentSource`.
+
+    The TOML carries:
+    - `name` and `description` from the frontmatter.
+    - A `[prompt]` section with `content` = defensive restatement + body.
+
+    Uses a literal TOML multi-line string (triple single-quotes) so the body
+    markdown can be embedded verbatim without escaping special characters.
+    Only `'''` sequences in the body (which would break the literal string)
+    are substituted with `''\\'` as an escape.  This is an extremely rare
+    edge case in practice; the canonical agent bodies contain none.
+    """
+    name = agent.frontmatter.get("name") or agent.name
+    description = agent.frontmatter.get("description") or ""
+
+    # Prepend defensive restatement to the body.
+    body = f"{_DEFENSIVE_RESTATEMENT}\n\n{agent.body}".strip()
+
+    # TOML literal multi-line strings: enclosed in ''', no escaping needed
+    # except that ''' itself cannot appear inside.  Replace ''' with '' + '
+    # (split across two literal strings) to avoid the sequence.
+    safe_body = body.replace("'''", "'' '")
+
+    lines = [
+        f"name = {_toml_str(name)}",
+        f"description = {_toml_str(description)}",
+        "",
+        "[prompt]",
+        "content = '''",
+        safe_body,
+        "'''",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 _plugin = CodexPlugin()

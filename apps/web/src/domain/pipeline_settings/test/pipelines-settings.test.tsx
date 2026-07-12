@@ -108,13 +108,13 @@ describe("PipelinesSettingsPage (MSW)", () => {
     expect(await screen.findByText("No pipelines yet.")).toBeInTheDocument();
   });
 
-  it("renders a download link for the pipeline skills bundle", async () => {
+  it("renders a per-agent download link for the pipeline skills bundle", async () => {
     server.use(http.get("/api/pipelines", () => HttpResponse.json({ pipelines: [] })));
     render(wrap(<PipelinesSettingsPage />));
     await screen.findByText("No pipelines yet.");
 
-    const link = screen.getByTestId("pipelines-download-skills");
-    expect(link).toHaveAttribute("href", "/yaaos-pipeline-skills.zip");
+    const link = screen.getByTestId("pipelines-download-skills-claude_code");
+    expect(link).toHaveAttribute("href", "/api/coding-agents/claude_code/skills-bundle");
     expect(link).toHaveAttribute("download");
   });
 

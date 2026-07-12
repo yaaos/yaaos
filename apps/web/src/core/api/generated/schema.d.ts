@@ -378,6 +378,35 @@ export interface paths {
         patch: operations["update_settings_endpoint_api_coding_agents__plugin_id__patch"];
         trace?: never;
     };
+    "/api/coding-agents/{plugin_id}/skills-bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Skills Bundle Endpoint
+         * @description Return a vendor-native skills bundle ZIP for the given plugin.
+         *
+         *     The ZIP is generated at request time from the canonical `.claude/` source
+         *     tree baked into the backend image.  Entry paths are repo-root-relative so
+         *     "unzip at the repo root" installs the skills.
+         *
+         *     Errors:
+         *         404 unknown_plugin — plugin_id not registered.
+         *         500 skills_source_missing — source directory absent from the image
+         *             (deploy defect).
+         */
+        get: operations["skills_bundle_endpoint_api_coding_agents__plugin_id__skills_bundle_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/github/health": {
         parameters: {
             query?: never;
@@ -4299,6 +4328,39 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CodingAgentView"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skills_bundle_endpoint_api_coding_agents__plugin_id__skills_bundle_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                plugin_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

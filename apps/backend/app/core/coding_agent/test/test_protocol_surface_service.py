@@ -27,6 +27,10 @@ EXPECTED_ALL = frozenset(
         "ActivityEvent",
         "ActivityLog",
         "ACTIVITY_EVENT_KINDS",
+        # Skills-bundle VOs
+        "AgentSource",
+        "BundleFile",
+        "SkillSource",
         # Dispatch + query APIs
         "register_plugin",
         "replace_plugin",
@@ -36,6 +40,8 @@ EXPECTED_ALL = frozenset(
         "create_run",
         "finalize_run",
         "get_stage_activity",
+        # Bundle builder
+        "build_skills_bundle_zip",
         # Test isolation seam
         "set_coding_agents_for_tests",
         # API key secrets provider
@@ -111,6 +117,7 @@ def test_protocol_has_expected_methods() -> None:
         "validate_settings",
         "stage_options",
         "skill_path",
+        "render_skill_bundle",
     }
 
 

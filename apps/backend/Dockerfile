@@ -37,15 +37,6 @@ ENV VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
 # Source + build
 COPY apps/web ./apps/web
 
-# Pipeline skills + agent bundled into the SPA's static download
-# (apps/web/public/yaaos-pipeline-skills.zip, built by
-# apps/web/bin/build-skills-bundle.mjs as the package's `prebuild` step).
-# Copied at the repo-relative layout so the script's walk-up root
-# resolution (looks for a `.claude/skills` directory) finds them from
-# /build, matching the repo root's shape.
-COPY .claude/skills ./.claude/skills
-COPY .claude/agents ./.claude/agents
-
 RUN pnpm --filter ./apps/web build --mode production
 
 # ────────────────────────────────────────────────────────────────────────
@@ -90,6 +81,13 @@ RUN uv sync --frozen --package yaaos-backend --no-install-project 2>/dev/null \
 
 # Backend source
 COPY apps/backend ./apps/backend
+
+# Skill and agent sources for the per-vendor skills-bundle endpoint.
+# The backend reads these at request time via `build_skills_bundle_zip`;
+# the path is configured by YAAOS_SKILLS_SOURCE_DIR (consumed by Settings).
+COPY .claude/skills /app/yaaos_skills/skills
+COPY .claude/agents /app/yaaos_skills/agents
+ENV YAAOS_SKILLS_SOURCE_DIR=/app/yaaos_skills
 
 # Built SPA from stage 1
 COPY --from=web-builder /build/apps/web/dist ./apps/web/dist

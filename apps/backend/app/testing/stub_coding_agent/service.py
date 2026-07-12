@@ -23,9 +23,12 @@ import structlog
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
+    AgentSource,
+    BundleFile,
     Invocation,
     InvokeCodingAgent,
     RunResult,
+    SkillSource,
     StageOptions,
     Usage,
 )
@@ -96,6 +99,14 @@ class StubCodingAgentPlugin:
     def skill_path(self, skill_name: str) -> str:
         """Delegate to the wrapped plugin — transparent for callers."""
         return self._wrapped.skill_path(skill_name)
+
+    def render_skill_bundle(
+        self,
+        skills: list[SkillSource],
+        agents: list[AgentSource],
+    ) -> list[BundleFile]:
+        """Delegate to the wrapped plugin — transparent for bundle generation."""
+        return self._wrapped.render_skill_bundle(skills, agents)
 
     def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Return a minimal stub exec block — argv=["stub"], empty env."""

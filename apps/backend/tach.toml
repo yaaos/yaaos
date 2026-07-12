@@ -23,7 +23,7 @@ depends_on = ["app.core.audit_log", "app.core.config"]
 
 [[modules]]
 path = "app.core.coding_agent"
-depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.webserver", "app.core.workspace"]
+depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.webserver", "app.core.workspace"]
 
 [[modules]]
 path = "app.core.config"
@@ -394,6 +394,8 @@ expose = [
   "ACTIVITY_EVENT_KINDS",
   "ActivityEvent",
   "ActivityLog",
+  "AgentSource",
+  "BundleFile",
   "CodingAgentAlreadyInstalledError",
   "CodingAgentError",
   "CodingAgentInstall",
@@ -405,9 +407,11 @@ expose = [
   "PluginNotFoundError",
   "RunResult",
   "RunStatus",
+  "SkillSource",
   "StageOptions",
   "Usage",
   "build_api_key_secrets_for_org",
+  "build_skills_bundle_zip",
   "create_run",
   "dispatch_invocation",
   "finalize_run",

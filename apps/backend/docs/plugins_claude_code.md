@@ -4,7 +4,7 @@
 
 ## Scope
 
-Implements `CodingAgentPlugin` — six methods (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`, `stage_options`, `skill_path`) plus `plugin_id = "claude_code"`, `display_name = "Claude Code"`, and `command_kind = "InvokeClaudeCode"`. Owns the `claude_code_settings` table. Knows nothing about tickets, review jobs, audit log, or workspace paths. Skill selection is not this plugin's concern — a pipeline stage's own `skill_name` picks the skill (see [domain_pipelines.md](domain_pipelines.md)).
+Implements `CodingAgentPlugin` — seven methods (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`, `stage_options`, `skill_path`, `render_skill_bundle`) plus `plugin_id = "claude_code"`, `display_name = "Claude Code"`, and `command_kind = "InvokeClaudeCode"`. Owns the `claude_code_settings` table. Knows nothing about tickets, review jobs, audit log, or workspace paths. Skill selection is not this plugin's concern — a pipeline stage's own `skill_name` picks the skill (see [domain_pipelines.md](domain_pipelines.md)).
 
 The Claude Code CLI runs exclusively inside the remote WorkspaceAgent (the customer-deployed Go binary in `apps/agent/`). The backend never execs the CLI directly.
 
@@ -25,6 +25,10 @@ Returns `StageOptions(models=MODELS, efforts=EFFORTS)` — the tuple of model ID
 ### `skill_path`
 
 Returns `f".claude/skills/{skill_name}/SKILL.md"` — the conventional checkout-relative path for Claude Code skills. Called by `dispatch_invocation` when building the `skill_path` field on the enqueued command.
+
+### `render_skill_bundle`
+
+Passthrough renderer: emits the canonical `.claude/` tree as-is. Each `SkillSource` → `BundleFile(".claude/skills/{name}/SKILL.md", content)` + extra files. Each `AgentSource` → `BundleFile(".claude/agents/{name}.md", content)`. No format conversion. Called by `build_skills_bundle_zip` when building the `claude_code` skills bundle.
 
 ### `parse_result`
 

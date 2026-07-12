@@ -53,10 +53,13 @@ from app.core.coding_agent.service import (
     replace_plugin,
     set_coding_agents_for_tests,
 )
+from app.core.coding_agent.skills_bundle import build_skills_bundle_zip
 from app.core.coding_agent.types import (
     ACTIVITY_EVENT_KINDS,
     ActivityEvent,
     ActivityLog,
+    AgentSource,
+    BundleFile,
     CodingAgentError,
     CodingAgentPlugin,
     Effort,
@@ -65,6 +68,7 @@ from app.core.coding_agent.types import (
     PluginNotFoundError,
     RunResult,
     RunStatus,
+    SkillSource,
     StageOptions,
     Usage,
 )
@@ -77,6 +81,8 @@ __all__ = [
     "ACTIVITY_EVENT_KINDS",
     "ActivityEvent",
     "ActivityLog",
+    "AgentSource",
+    "BundleFile",
     "CodingAgentAlreadyInstalledError",
     "CodingAgentError",
     "CodingAgentInstall",
@@ -88,9 +94,11 @@ __all__ = [
     "PluginNotFoundError",
     "RunResult",
     "RunStatus",
+    "SkillSource",
     "StageOptions",
     "Usage",
     "build_api_key_secrets_for_org",
+    "build_skills_bundle_zip",
     "create_run",
     "dispatch_invocation",
     "finalize_run",

@@ -4,7 +4,7 @@
 
 ## Scope
 
-Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`, `stage_options`, `skill_path`, plus `display_name`/`command_kind` attributes), `StageOptions` VO (advertised model/effort lists), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), API key aggregator (`build_api_key_secrets_for_org`), per-org install state (`org_coding_agents` table, `CodingAgentInstall` VO, install/update/uninstall/list service functions, `/api/coding-agents` routes), and the `coding_agent_runs` + `coding_agent_activity` tables.
+Owns: `CodingAgentPlugin` Protocol (`compile_invocation`, `parse_result`, `parse_activity_line`, `validate_settings`, `stage_options`, `skill_path`, `render_skill_bundle`, plus `display_name`/`command_kind` attributes), `StageOptions` VO (advertised model/effort lists), skills-bundle VOs (`SkillSource`, `AgentSource`, `BundleFile`), high-level intent and exec-block types (`Invocation`, `InvokeCodingAgent`), run-result types (`RunResult`, `RunStatus`, `Usage`, `ActivityEvent`, `ActivityLog`), typed exception hierarchy (`CodingAgentError`, `PluginNotFoundError`), plugin registry (`CodingAgentRegistry`), dispatch helper (`dispatch_invocation`), skills-bundle builder (`build_skills_bundle_zip`), API key aggregator (`build_api_key_secrets_for_org`), per-org install state (`org_coding_agents` table, `CodingAgentInstall` VO, install/update/uninstall/list service functions, `/api/coding-agents` routes), and the `coding_agent_runs` + `coding_agent_activity` tables.
 
 Does NOT own: prompt assembly, skill resolution, output-format choice, or workspace mechanics — those are plugin- or caller-owned (`plugins/claude_code`, `domain/pipelines`).
 
@@ -31,6 +31,17 @@ Signatures in `app/core/coding_agent/types.py`.
 - `parse_activity_line(line: str) -> ActivityEvent | None` — pure function: decodes one raw `stream-json` output line into a normalized `ActivityEvent`. Returns `None` for blank lines or lines the plugin does not recognize. Called by `CodingAgentRunSinkImpl.handle_progress_event` on every `progress` AgentEvent's `stream_line` field to produce the `{kind, ts, message, detail}` frame published on the workspace-activity SSE channel.
 - `stage_options() -> StageOptions` — returns the plugin's advertised `{models, efforts}` tuples. The `/api/coding-agents` list endpoint attaches these to each installed-agent row so the SPA's stage editor can populate model/effort dropdowns per agent without a separate fetch.
 - `skill_path(skill_name: str) -> str` — returns the on-disk path of the named skill inside the agent's checkout (e.g. `.claude/skills/<skill_name>/SKILL.md`). `dispatch_invocation` uses this instead of hard-coding the convention so a future plugin can place skills elsewhere.
+- `render_skill_bundle(skills: Sequence[SkillSource], agents: Sequence[AgentSource]) -> list[BundleFile]` — pure function: transforms the parsed canonical skill/agent sources into the vendor-native bundle layout. `claude_code` passes through `.claude/skills/<name>/SKILL.md` + `.claude/agents/<name>.md` unchanged; `codex` re-targets to `.codex/skills/<name>/SKILL.md`, generates `.codex/agents/<name>.toml` (TOML literal multiline-string prompt, includes the defensive-restatement directive), and emits an `AGENTS.md` at the repo root with the delegation-authorization sentence required by the codex multi-agent protocol.
+
+### `build_skills_bundle_zip` and skills-bundle VOs
+
+`build_skills_bundle_zip(plugin_id: str) -> bytes` — async; reads `settings.yaaos_skills_source_dir` (baked into the backend image at `/app/yaaos_skills` in production; dev default: repo `.claude/`), loads all `pipeline-*` skill directories and `pipeline-*.md` agent files, parses YAML frontmatter from each, calls `plugin.render_skill_bundle(skills, agents)`, and packages the output into a ZIP archive (reproducible — fixed mtime `2020-01-01`). Raises `PluginNotFoundError` on an unknown plugin (→ 404); raises `FileNotFoundError` when the source directory is missing from the image (→ 500).
+
+Skills-bundle VOs (all frozen Pydantic models):
+
+- `SkillSource{name, frontmatter, body, extra_files}` — one parsed skill directory: name (from frontmatter `name` field or directory name), parsed YAML `frontmatter` dict, `body` string (content after the frontmatter block), and `extra_files` tuple of `BundleFile` for any non-`SKILL.md` files in the directory.
+- `AgentSource{name, frontmatter, body}` — one parsed agent `.md` file.
+- `BundleFile{path, content}` — one file in the output ZIP: repo-root-relative path + text content.
 
 ### `dispatch_invocation`
 
@@ -49,6 +60,7 @@ The agent stats `skill_path` before spawning claude — absent → `completed_fa
 
 ### Value objects
 
+- `SkillSource{name, frontmatter, body, extra_files}` · `AgentSource{name, frontmatter, body}` · `BundleFile{path, content}` — skills-bundle VOs; see [§ `build_skills_bundle_zip` and skills-bundle VOs](#build_skills_bundle_zip-and-skills-bundle-vos) above.
 - `StageOptions{models: tuple[str, ...], efforts: tuple[str, ...]}` — frozen Pydantic model returned by `plugin.stage_options()`. Carried on `CodingAgentView` so the SPA can populate model/effort dropdowns per installed agent without a separate fetch.
 - `Invocation{skill, model, effort, context, wallclock_seconds}` — high-level intent. Context is an opaque mapping the plugin interprets per skill.
 - `Effort = str` — plugin-specific effort level. Opaque to `core/coding_agent`.
@@ -153,6 +165,7 @@ Composite PK `(org_id, plugin_id)`. One row per installed plugin per org.
 |---|---|---|---|
 | `GET` | `/api/coding-agents` | `CODING_AGENT_READ` | Returns list of installs; each row carries `display_name`, `models`, `efforts` from the plugin. |
 | `GET` | `/api/coding-agents/available` | `CODING_AGENT_READ` | Returns all registered plugins (`plugin_id`, `display_name`); used to populate the "Add coding agent" picker. |
+| `GET` | `/api/coding-agents/{plugin_id}/skills-bundle` | `CODING_AGENT_READ` | Returns `application/zip` — the vendor-native skills bundle for the given plugin. Built on the fly by `build_skills_bundle_zip(plugin_id)`. `Content-Disposition: attachment; filename="yaaos-pipeline-skills-{plugin_id}.zip"`. 404 on unknown plugin; 500 if `YAAOS_SKILLS_SOURCE_DIR` is missing from the image. |
 | `POST` | `/api/coding-agents` | `CODING_AGENT_WRITE` | Installs a plugin; calls `plugin.validate_settings` before write; 409 on duplicate. |
 | `PATCH` | `/api/coding-agents/{plugin_id}` | `CODING_AGENT_WRITE` | Replaces settings; calls `plugin.validate_settings`; 404 when not installed. |
 | `DELETE` | `/api/coding-agents/{plugin_id}` | `CODING_AGENT_WRITE` | Uninstalls; 404 when not installed. |
@@ -165,7 +178,8 @@ Composite PK `(org_id, plugin_id)`. One row per installed plugin per org.
 ## How it's tested
 
 - `app/core/coding_agent/test/test_registry.py` — register/get/duplicate-rejection; `set_coding_agents_for_tests` isolation.
-- `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set (including `StageOptions` and install-state symbols), Protocol has exactly `compile_invocation` + `parse_result` + `parse_activity_line` + `validate_settings` + `stage_options` + `skill_path`, retired names not importable.
+- `app/core/coding_agent/test/test_protocol_surface_service.py` — asserts exact `__all__` set (including `StageOptions`, install-state symbols, skills-bundle VOs, and `build_skills_bundle_zip`), Protocol has exactly `compile_invocation` + `parse_result` + `parse_activity_line` + `validate_settings` + `stage_options` + `skill_path` + `render_skill_bundle`, retired names not importable.
+- `app/core/coding_agent/test/test_skills_bundle.py` — unit: frontmatter parsing, `_load_skill_sources` builds `SkillSource` (pipeline-* only, extra_files), `_load_agent_sources` builds `AgentSource` (pipeline-* only), `ClaudeCodePlugin.render_skill_bundle` passthrough, `CodexPlugin.render_skill_bundle` — paths, `AGENTS.md` authorization sentence, TOML defensive restatement, TOML structure. Service: `build_skills_bundle_zip` returns valid ZIP for both plugins; 404 on unknown plugin.
 - `app/core/coding_agent/test/test_coding_agents.py` — install service + `/api/coding-agents` endpoint tests: install/list, audit emission, duplicate → 409, settings update + audit, uninstall + audit, role enforcement (member → 403, unauthenticated → 401), `validate_settings` rejection → 422.
 - `app/core/coding_agent/test/test_dispatch_invocation_service.py` — service: `dispatch_invocation` returns exactly the caller-supplied `command_id` (a UUIDv7), inserts run row, resolvable via `get_run_id_for_command`, and sets `skill_path` from `plugin.skill_path(invocation.skill)` and `command_kind` from `plugin.command_kind`.
 - `app/core/coding_agent/test/test_run_lifecycle_service.py` — service: create/finalize round-trip, activity blob, `get_step_activity`.

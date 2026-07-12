@@ -5459,6 +5459,74 @@
         ]
       }
     },
+    "/api/coding-agents/{plugin_id}/skills-bundle": {
+      "get": {
+        "description": "Return a vendor-native skills bundle ZIP for the given plugin.\n\nThe ZIP is generated at request time from the canonical `.claude/` source\ntree baked into the backend image.  Entry paths are repo-root-relative so\n\"unzip at the repo root\" installs the skills.\n\nErrors:\n    404 unknown_plugin — plugin_id not registered.\n    500 skills_source_missing — source directory absent from the image\n        (deploy defect).",
+        "operationId": "skills_bundle_endpoint_api_coding_agents__plugin_id__skills_bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Skills Bundle Endpoint",
+        "tags": [
+          "coding_agent"
+        ]
+      }
+    },
     "/api/github/health": {
       "get": {
         "operationId": "health_api_github_health_get",

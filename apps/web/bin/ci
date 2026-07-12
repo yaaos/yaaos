@@ -22,11 +22,6 @@ echo "==> vitest"
 mkdir -p tmp
 pnpm exec vitest run --reporter=default --reporter=json --outputFile=./tmp/vitest.json
 
-echo "==> build-skills-bundle (yaaos-pipeline-skills.zip)"
-# Calls `vite build` directly rather than the `build` package script, so
-# the package.json `prebuild` hook never fires here — invoke explicitly.
-node bin/build-skills-bundle.mjs
-
 echo "==> vite build"
 pnpm exec vite build
 

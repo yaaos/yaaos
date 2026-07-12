@@ -11,7 +11,7 @@ is set; this file never branches on it.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -19,14 +19,18 @@ from uuid import UUID
 
 import httpx
 import structlog
+import yaml
 from pydantic import SecretStr
 
 import app.core.api_keys as _api_keys
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
+    AgentSource,
+    BundleFile,
     InvokeCodingAgent,
     RunResult,
+    SkillSource,
     StageOptions,
     Usage,
     register_plugin,
@@ -536,6 +540,40 @@ class ClaudeCodePlugin:
         if rendered is None:
             return None
         return ActivityEvent(**{**rendered, "seq": 0})
+
+    def render_skill_bundle(
+        self,
+        skills: Sequence[SkillSource],
+        agents: Sequence[AgentSource],
+    ) -> list[BundleFile]:
+        """Passthrough re-emit of the canonical `.claude/` tree.
+
+        The `.claude/` convention IS the generic input schema — one plugin's
+        format is deliberately the authoritative source form. The claude bundle
+        is a faithful reconstruction of the source files, preserving both
+        frontmatter and body without modification.
+
+        For each skill: `.claude/skills/<name>/SKILL.md` plus extra_files.
+        For each agent: `.claude/agents/<name>.md`.
+        """
+        files: list[BundleFile] = []
+        for skill in skills:
+            content = _reconstruct_md_claude(skill.frontmatter, skill.body)
+            files.append(BundleFile(path=f".claude/skills/{skill.name}/SKILL.md", content=content))
+            for ef in skill.extra_files:
+                files.append(ef)
+        for agent in agents:
+            content = _reconstruct_md_claude(agent.frontmatter, agent.body)
+            files.append(BundleFile(path=f".claude/agents/{agent.name}.md", content=content))
+        return files
+
+
+def _reconstruct_md_claude(frontmatter: dict[str, Any], body: str) -> str:
+    """Reconstruct a markdown file with YAML frontmatter from parsed parts."""
+    if frontmatter:
+        yaml_text = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True).rstrip()
+        return f"---\n{yaml_text}\n---\n\n{body}\n"
+    return f"{body}\n"
 
 
 _plugin = ClaudeCodePlugin()
