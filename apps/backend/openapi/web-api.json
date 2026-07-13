@@ -7749,7 +7749,7 @@
     },
     "/api/mcp-server/register": {
       "post": {
-        "description": "RFC 7591 dynamic client registration.  No prior auth required.\n\nBody is parsed manually so metadata violations return the RFC 7591 §3.2.2\nerror shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.\nReturns the minted `client_id` (UUID) which drives the rest of the flow.",
+        "description": "RFC 7591 dynamic client registration.  No prior auth required.\n\nRate-limited per source IP (burst + sustained windows) because the endpoint\nis unauthenticated and every accepted call creates a row.\n\nBody is parsed manually so metadata violations return the RFC 7591 §3.2.2\nerror shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.\nReturns the minted `client_id` (UUID) which drives the rest of the flow.",
         "operationId": "register_client_api_mcp_server_register_post",
         "responses": {
           "201": {

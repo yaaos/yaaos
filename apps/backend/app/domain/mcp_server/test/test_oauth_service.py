@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import itertools
 import secrets
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import httpx
 import pytest
@@ -28,21 +29,27 @@ from app.core.identity import create_user, mint_session
 from app.core.tenancy import create_membership
 from app.core.webserver import mount_specs
 from app.domain.mcp_server.auth import (
+    UNUSED_CLIENT_MAX_AGE,
     McpAuthError,
     McpPrincipal,
     _hash_token,
-    _sweep_expired_tokens,
+    _sweep_expired_tokens_and_unused_clients,
     authenticate,
     mcp_server_token_sweep,
     mint_access_token,
     mint_refresh_token,
     revoke_tokens_for_user,
 )
-from app.domain.mcp_server.models import McpAccessTokenRow, McpRefreshTokenRow
+from app.domain.mcp_server.models import (
+    McpAccessTokenRow,
+    McpOAuthClientRow,
+    McpRefreshTokenRow,
+)
 from app.domain.orgs import insert_org
 
-# Every test in this file is a service test.
-pytestmark = pytest.mark.service
+# Every test in this file is a service test. `/register` is rate-limited per
+# source IP via Redis, so the whole module needs a reachable Redis.
+pytestmark = [pytest.mark.service, pytest.mark.usefixtures("redis_or_skip")]
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +72,21 @@ def _app() -> FastAPI:
     return app
 
 
+# Each _unique_ip() call allocates one address from 10.0.0.0/8 so no test
+# shares a `/register` rate-limit window with another. Rate-limit behaviour
+# itself is covered in `test_register_rate_limit_service.py`.
+_ip_counter = itertools.count(1)
+
+
+def _unique_ip() -> str:
+    n = next(_ip_counter)
+    return f"10.{(n >> 16) & 0xFF}.{(n >> 8) & 0xFF}.{n & 0xFF}"
+
+
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=_app()), base_url="http://test")
+    """Async client whose requests carry a source IP no other client uses."""
+    transport = httpx.ASGITransport(app=_app(), client=(_unique_ip(), 12345))
+    return httpx.AsyncClient(transport=transport, base_url="http://test")
 
 
 async def _seed_user_org_session(
@@ -137,14 +157,16 @@ async def test_register_rejects_javascript_redirect_uri() -> None:
 
 @pytest.mark.asyncio
 async def test_register_rejects_http_non_localhost_and_data_uris() -> None:
-    async with _client() as c:
-        for bad_uri in ("http://evil.example/cb", "data:text/html,x", "ftp://x/cb"):
+    for bad_uri in ("http://evil.example/cb", "data:text/html,x", "ftp://x/cb"):
+        # One client (hence one source IP) per attempt: these are independent
+        # callers, not one caller bursting.
+        async with _client() as c:
             r = await c.post(
                 "/api/mcp-server/register",
                 json={"client_name": "bad", "redirect_uris": [bad_uri]},
             )
-            assert r.status_code == 400, bad_uri
-            assert r.json()["error"] == "invalid_client_metadata"
+        assert r.status_code == 400, bad_uri
+        assert r.json()["error"] == "invalid_client_metadata"
 
 
 @pytest.mark.asyncio
@@ -166,28 +188,18 @@ async def test_register_accepts_https_and_localhost_uris() -> None:
 
 @pytest.mark.asyncio
 async def test_register_caps_client_name_and_uri_counts() -> None:
-    async with _client() as c:
-        too_long_name = await c.post(
-            "/api/mcp-server/register",
-            json={"client_name": "x" * 257, "redirect_uris": ["https://example.com/cb"]},
-        )
-        unprintable_name = await c.post(
-            "/api/mcp-server/register",
-            json={"client_name": "bad\x00name", "redirect_uris": ["https://example.com/cb"]},
-        )
-        too_many_uris = await c.post(
-            "/api/mcp-server/register",
-            json={
-                "client_name": "ok",
-                "redirect_uris": [f"https://example.com/cb{i}" for i in range(6)],
-            },
-        )
-        too_long_uri = await c.post(
-            "/api/mcp-server/register",
-            json={"client_name": "ok", "redirect_uris": ["https://example.com/" + "a" * 2048]},
-        )
-    for r in (too_long_name, unprintable_name, too_many_uris, too_long_uri):
-        assert r.status_code == 400
+    bad_bodies = (
+        {"client_name": "x" * 257, "redirect_uris": ["https://example.com/cb"]},
+        {"client_name": "bad\x00name", "redirect_uris": ["https://example.com/cb"]},
+        {"client_name": "ok", "redirect_uris": [f"https://example.com/cb{i}" for i in range(6)]},
+        {"client_name": "ok", "redirect_uris": ["https://example.com/" + "a" * 2048]},
+    )
+    for body in bad_bodies:
+        # One client (hence one source IP) per attempt: these are independent
+        # callers, not one caller bursting past the per-IP registration limit.
+        async with _client() as c:
+            r = await c.post("/api/mcp-server/register", json=body)
+        assert r.status_code == 400, body
         assert r.json()["error"] == "invalid_client_metadata"
 
 
@@ -712,7 +724,7 @@ async def test_identity_delete_user_revokes_mcp_tokens(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_sweep_deletes_expired_rows(db_session) -> None:
-    """_sweep_expired_tokens removes expired access + refresh rows, leaves fresh ones."""
+    """The sweep removes expired access + refresh rows, leaves fresh ones."""
     from app.domain.mcp_server.models import McpOAuthClientRow  # noqa: PLC0415
 
     org = await insert_org(db_session, slug=f"mcp-swp-{uuid4().hex[:8]}")
@@ -763,7 +775,7 @@ async def test_sweep_deletes_expired_rows(db_session) -> None:
         row.expires_at = datetime.now(UTC) - timedelta(minutes=1)
     await db_session.commit()
 
-    await _sweep_expired_tokens()
+    await _sweep_expired_tokens_and_unused_clients()
 
     db_session.expire_all()
     acc_gone = (
@@ -785,6 +797,53 @@ async def test_sweep_deletes_expired_rows(db_session) -> None:
     assert acc_gone is None
     assert ref_gone is None
     assert fresh_still_there is not None
+
+
+def _client_row(*, name: str, age: timedelta) -> McpOAuthClientRow:
+    """A registration row aged `age` — `created_at` is set explicitly so the
+    sweep's age cutoff can be exercised without waiting."""
+    return McpOAuthClientRow(
+        client_id=uuid7(),
+        client_name=name,
+        redirect_uris=["https://example.com/cb"],
+        created_at=datetime.now(UTC) - age,
+    )
+
+
+@pytest.mark.asyncio
+async def test_sweep_prunes_old_unused_clients_only(db_session) -> None:
+    """The sweep deletes registrations older than `UNUSED_CLIENT_MAX_AGE` that no
+    code or token references — and nothing else."""
+    org = await insert_org(db_session, slug=f"mcp-prune-{uuid4().hex[:8]}")
+    user = await create_user(db_session)
+
+    old_unused = _client_row(name="old-unused", age=UNUSED_CLIENT_MAX_AGE + timedelta(days=1))
+    recent_unused = _client_row(name="recent-unused", age=timedelta(days=1))
+    old_with_token = _client_row(name="old-with-token", age=UNUSED_CLIENT_MAX_AGE + timedelta(days=30))
+    db_session.add_all([old_unused, recent_unused, old_with_token])
+    await db_session.flush()
+    old_unused_id, recent_id, old_with_token_id = (
+        old_unused.client_id,
+        recent_unused.client_id,
+        old_with_token.client_id,
+    )
+
+    # The aged client holds a live (unexpired) access token — never pruned.
+    await mint_access_token(
+        client_id=old_with_token_id,
+        user_id=user.id,
+        org_id=org.org_id,
+        session=db_session,
+    )
+    await db_session.commit()
+
+    await _sweep_expired_tokens_and_unused_clients()
+
+    db_session.expire_all()
+    survivors = set((await db_session.execute(select(McpOAuthClientRow.client_id))).scalars().all())
+    assert old_unused_id not in survivors
+    assert recent_id in survivors
+    assert old_with_token_id in survivors
 
 
 @pytest.mark.asyncio

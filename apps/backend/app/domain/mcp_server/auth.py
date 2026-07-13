@@ -10,7 +10,8 @@ pattern: `token_urlsafe(32)` returned once; sha256-stored; raw never persists.
 Access tokens: hours-scale TTL (`ACCESS_TOKEN_TTL`).
 Refresh tokens: weeks-scale TTL (`REFRESH_TOKEN_TTL`); rotated on every use.
 
-An hourly `@scheduled` task sweeps expired rows from both token tables,
+An hourly `@scheduled` task sweeps expired rows from both token tables and
+prunes never-used client registrations older than `UNUSED_CLIENT_MAX_AGE`,
 mirroring the `mcp_review_token_sweep` pattern.
 
 User-deletion revocation: `revoke_tokens_for_user(user_id, session)` deletes
@@ -34,13 +35,23 @@ from app.core.auth import Role
 from app.core.database import session as db_session
 from app.core.tasks import scheduled
 from app.core.tenancy import get_member_role
-from app.domain.mcp_server.models import McpAccessTokenRow, McpRefreshTokenRow
+from app.domain.mcp_server.models import (
+    McpAccessTokenRow,
+    McpAuthCodeRow,
+    McpOAuthClientRow,
+    McpRefreshTokenRow,
+)
 
 log = structlog.get_logger("domain.mcp_server")
 
 # Token TTLs. Access tokens are hours-scale; refresh tokens weeks-scale.
 ACCESS_TOKEN_TTL = timedelta(hours=8)
 REFRESH_TOKEN_TTL = timedelta(weeks=4)
+
+# A dynamic-client registration that never issued a code or token is pruned by
+# the sweep once it is this old — /register is unauthenticated, so abandoned
+# rows accumulate.
+UNUSED_CLIENT_MAX_AGE = timedelta(days=7)
 
 
 class McpAuthError(Exception):
@@ -216,16 +227,55 @@ async def revoke_tokens_for_user(
     await session.execute(delete(McpRefreshTokenRow).where(McpRefreshTokenRow.user_id == user_id))
 
 
-async def _sweep_expired_tokens() -> None:
-    """One pass: drop expired access + refresh token rows."""
+async def _sweep_expired_tokens_and_unused_clients() -> None:
+    """One pass: drop expired access + refresh token rows, then prune stale
+    dynamic-client registrations.
+
+    A registration that never completed an authorize leaves an `mcp_oauth_clients`
+    row behind — the endpoint is unauthenticated, so these accumulate. A client is
+    pruned only when it is older than `UNUSED_CLIENT_MAX_AGE` AND no auth code,
+    access token, or refresh token references it. A client with a live token is
+    kept regardless of age.
+
+    Token deletion runs first, so a client whose last token has expired is
+    prunable in the same pass.
+    """
     now = datetime.now(UTC)
     async with db_session() as s:
         r1 = await s.execute(delete(McpAccessTokenRow).where(McpAccessTokenRow.expires_at < now))
         r2 = await s.execute(delete(McpRefreshTokenRow).where(McpRefreshTokenRow.expires_at < now))
+
+        has_access = (
+            select(McpAccessTokenRow.token_hash)
+            .where(McpAccessTokenRow.client_id == McpOAuthClientRow.client_id)
+            .exists()
+        )
+        has_refresh = (
+            select(McpRefreshTokenRow.token_hash)
+            .where(McpRefreshTokenRow.client_id == McpOAuthClientRow.client_id)
+            .exists()
+        )
+        has_code = (
+            select(McpAuthCodeRow.code_hash)
+            .where(McpAuthCodeRow.client_id == McpOAuthClientRow.client_id)
+            .exists()
+        )
+        r3 = await s.execute(
+            delete(McpOAuthClientRow).where(
+                McpOAuthClientRow.created_at < now - UNUSED_CLIENT_MAX_AGE,
+                ~has_access,
+                ~has_refresh,
+                ~has_code,
+            )
+        )
         await s.commit()
+
     removed = int(r1.rowcount or 0) + int(r2.rowcount or 0)
     if removed:
         log.debug("mcp_server.tokens.swept", removed=removed)
+    pruned = int(r3.rowcount or 0)
+    if pruned:
+        log.debug("mcp_server.clients.pruned", pruned=pruned)
 
 
 # Hourly sweep — cluster-safe via `core/tasks` per-tick claim.
@@ -234,4 +284,4 @@ mcp_server_token_sweep = scheduled(
     cron="0 * * * *",
     queue="default",
     max_retries=1,
-)(_sweep_expired_tokens)
+)(_sweep_expired_tokens_and_unused_clients)

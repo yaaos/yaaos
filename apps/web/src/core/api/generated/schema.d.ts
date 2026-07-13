@@ -807,6 +807,9 @@ export interface paths {
          * Register Client
          * @description RFC 7591 dynamic client registration.  No prior auth required.
          *
+         *     Rate-limited per source IP (burst + sustained windows) because the endpoint
+         *     is unauthenticated and every accepted call creates a row.
+         *
          *     Body is parsed manually so metadata violations return the RFC 7591 §3.2.2
          *     error shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.
          *     Returns the minted `client_id` (UUID) which drives the rest of the flow.

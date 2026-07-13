@@ -44,10 +44,11 @@ from app.domain.mcp_server.auth import (
     rotate_refresh_token,
 )
 from app.domain.mcp_server.models import McpAuthCodeRow, McpOAuthClientRow
+from app.domain.mcp_server.rate_limit import RateLimitedError, check_register
 
 log = structlog.get_logger("domain.mcp_server.oauth")
 
-# One-time authorization code TTL (plan: 10 minutes).
+# One-time authorization code TTL.
 _AUTH_CODE_TTL = timedelta(minutes=10)
 
 # /.well-known routes — registered at the root level by the composition root.
@@ -129,10 +130,35 @@ class _RegisterRequest(BaseModel):
 async def register_client(request: Request) -> JSONResponse:
     """RFC 7591 dynamic client registration.  No prior auth required.
 
+    Rate-limited per source IP (burst + sustained windows) because the endpoint
+    is unauthenticated and every accepted call creates a row.
+
     Body is parsed manually so metadata violations return the RFC 7591 §3.2.2
     error shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.
     Returns the minted `client_id` (UUID) which drives the rest of the flow.
     """
+    source_ip = request.client.host if request.client is not None else None
+    try:
+        await check_register(source_ip=source_ip)
+    except RateLimitedError as exc:
+        log.warning(
+            "mcp_server.register.rate_limited",
+            axis=exc.axis,
+            limit=exc.limit,
+            window_seconds=exc.window_seconds,
+            source_ip=source_ip,
+        )
+        return JSONResponse(
+            {
+                "error": "too_many_requests",
+                "error_description": (
+                    f"too many client registrations from this address; retry after {exc.window_seconds}s"
+                ),
+            },
+            status_code=429,
+            headers={"Retry-After": str(exc.window_seconds)},
+        )
+
     try:
         payload = await request.json()
     except ValueError:
