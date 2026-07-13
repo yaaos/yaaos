@@ -758,10 +758,17 @@ async def delete_user(user_id: UUID) -> None:
     """Hard-delete a user row. Opens its own session and commits. Cascades at
     the DB level to emails, OAuth identities, and sessions — callers that
     need cross-module cleanup (e.g. memberships) must call those separately
-    before this."""
+    before this.
+
+    Also revokes any inbound MCP access/refresh tokens for the user, since
+    the mcp_access_tokens / mcp_refresh_tokens tables have no FK to users
+    and are not cascade-deleted at the DB level.
+    """
     from app.core.identity import delete_user as _identity_delete_user  # noqa: PLC0415
+    from app.domain.mcp_server import revoke_tokens_for_user as _revoke_mcp_tokens  # noqa: PLC0415
 
     async with db_session() as s:
+        await _revoke_mcp_tokens(user_id, session=s)
         await _identity_delete_user(s, user_id=user_id)
         await s.commit()
 

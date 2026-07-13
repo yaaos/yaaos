@@ -60,6 +60,7 @@ dependencies = [
     # domain/repos — gitignore-style glob matching for protected-code path
     # sets; stdlib fnmatch mishandles `**`.
     "pathspec>=0.12",
+    "fastmcp>=2.14.0",
 ]
 
 [project.optional-dependencies]

@@ -121,6 +121,17 @@ PUBLIC_PREFIXES: tuple[str, ...] = (
     # session middleware must not gate on `X-Yaaos-Org-Slug` or the CSRF token
     # for these routes, and the post-response guard must not fire.
     "/api/v1/",
+    # Inbound MCP server (domain/mcp_server) — OAuth AS surface + tool calls.
+    # Bearer auth is enforced inside each handler (token endpoint, tool calls);
+    # the session-cookie check for /authorize is done manually so a missing
+    # session redirects to /login rather than 401'ing. Classifying as PUBLIC
+    # prevents the middleware from requiring X-Yaaos-Org-Slug or CSRF tokens.
+    "/api/mcp-server",
+    # RFC 8414 authorization server discovery endpoint. Lives at the root
+    # level (not under /api/); classified PUBLIC so the post-response guard
+    # does not fire (the route handler sets route_security_resolved via
+    # Depends(public_route)).
+    "/.well-known/",
 )
 
 PUBLIC_EXACT: frozenset[str] = frozenset(
