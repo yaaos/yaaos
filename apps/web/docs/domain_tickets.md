@@ -7,7 +7,7 @@
 - `/tickets` — filterable list.
 - `/tickets/$ticketId` — detail: three tabs — Overview, Runs, Artifacts.
 
-Consumes: `GET /api/tickets`, `POST /api/tickets`, `GET /api/tickets/:id`, `GET /api/tickets/:id/audit`, `GET /api/pipelines`, `GET /api/pipelines/runs`, `GET /api/pipelines/runs/overview`, `POST /api/pipelines/runs/start`, `GET /api/pipelines/runs/:runId/stages/:stageExecutionId/activity`, `POST /api/pipelines/runs/:runId/cancel`, `POST /api/pipelines/runs/pauses/:pauseId/respond`, `POST /api/pipelines/runs/rerun`, `POST /api/pipelines/runs/:runId/rerun`, `GET /api/artifacts`, `GET /api/artifacts/:id`. Owns no data.
+Consumes: `GET /api/tickets`, `POST /api/tickets`, `GET /api/tickets/:id`, `GET /api/tickets/:id/audit`, `GET /api/pipelines`, `GET /api/pipelines/runs`, `GET /api/pipelines/runs/overview`, `POST /api/pipelines/runs/start`, `GET /api/pipelines/runs/:runId/stages/:stageExecutionId/activity`, `POST /api/pipelines/runs/:runId/cancel`, `POST /api/pipelines/runs/pauses/:pauseId/respond`, `POST /api/pipelines/runs/rerun`, `POST /api/pipelines/runs/:runId/rerun`, `GET /api/artifacts`, `GET /api/artifacts/:id`, `GET /api/attachments`. Owns no data.
 
 ## List page
 
@@ -34,6 +34,8 @@ Branches on `RunOverview.status`:
 - **`terminal`** — an outcome card: state + a PR link when `RunOutcome.pr_url` is set, else a mono `failure_reason`. A `failed`/`cancelled`/`killed` outcome also shows a **Re-run** action behind `ConfirmModal` ("Re-run pipeline?" / "Starts a new run from the beginning.") → `useRerunRun(ticketId)` → `POST /api/pipelines/runs/{run_id}/rerun`, targeting `RunOutcome.run_id`.
 
 The card always carries `data-testid="attention-block"` with `data-state` set to `paused` / `in_flight` / the terminal run state (`completed`/`failed`/`killed`/`cancelled`) — one selector regardless of branch.
+
+Below the run-state card, the Overview tab renders a **read-only attachments section** (`AttachmentsSection`). Renders nothing when there are no attachments. When present: an `<h3>` label + `<ul data-testid="attachments-list">` with one `<li data-testid="attachment-row-${a.id}">` per attachment showing filename, optional `produced_by_skill`, and `ago(attached_at)`. Populated by `useAttachments(ticketId)` (Suspense) → `GET /api/attachments?ticket_id=`. Live updates: `attachment_added` SSE invalidates `["attachments", ticketId]`.
 
 ### Runs tab (`runs.tsx`)
 

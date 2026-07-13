@@ -223,6 +223,8 @@ ORG_SCOPED_PREFIXES: tuple[str, ...] = (
     "/api/repos",
     # Read-only artifact bodies + version metadata (`domain/artifacts`).
     "/api/artifacts",
+    # User-supplied ticket input documents (`domain/attachments`).
+    "/api/attachments",
 )
 
 

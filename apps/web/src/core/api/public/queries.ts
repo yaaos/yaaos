@@ -524,6 +524,23 @@ export function useArtifactVersion(artifact_id: string | null) {
   });
 }
 
+// ── Attachments (ticket Overview tab) ────────────────────────────────────────
+
+export type AttachmentMetaView = components["schemas"]["AttachmentMeta"];
+
+/** Ticket-scoped attachment metadata list, newest first (no bodies). */
+export function useAttachments(ticket_id: string) {
+  return useSuspenseQuery<AttachmentMetaView[]>({
+    queryKey: ["attachments", ticket_id],
+    queryFn: async () => {
+      const resp = await apiFetch<{ attachments: AttachmentMetaView[] }>(
+        `/api/attachments?ticket_id=${ticket_id}`,
+      );
+      return resp.attachments;
+    },
+  });
+}
+
 // ── Pipeline definitions (Org Settings > Pipelines page) ────────────────────
 
 export type PipelineSummaryView = components["schemas"]["PipelineSummary"];

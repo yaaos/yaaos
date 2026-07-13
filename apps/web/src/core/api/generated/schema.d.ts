@@ -112,6 +112,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Attachments Endpoint */
+        get: operations["list_attachments_endpoint_api_attachments_get"];
+        put?: never;
+        /** Post Attachment */
+        post: operations["post_attachment_api_attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit": {
         parameters: {
             query?: never;
@@ -2282,6 +2300,39 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * AttachmentMeta
+         * @description Metadata projection — all fields except `body`. Used by list reads, SPA, and MCP.
+         */
+        AttachmentMeta: {
+            /** Artifact Type */
+            artifact_type: string | null;
+            /**
+             * Attached At
+             * Format: date-time
+             */
+            attached_at: string;
+            /**
+             * Attached By
+             * Format: uuid
+             */
+            attached_by: string;
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Note */
+            note: string | null;
+            /** Produced By Skill */
+            produced_by_skill: string | null;
+            /** Repo Commit */
+            repo_commit: string | null;
+            /** Skill Version */
+            skill_version: string | null;
+        };
         /** AuditEntryView */
         AuditEntryView: {
             /** Actor Kind */
@@ -2865,6 +2916,11 @@ export interface components {
             /** Artifacts */
             artifacts: components["schemas"]["ArtifactGroup"][];
         };
+        /** ListAttachmentsResponse */
+        ListAttachmentsResponse: {
+            /** Attachments */
+            attachments: components["schemas"]["AttachmentMeta"][];
+        };
         /** ListIntakePointsResponse */
         ListIntakePointsResponse: {
             /** Points */
@@ -3100,6 +3156,43 @@ export interface components {
             updated_at: string;
             /** Updated By Login */
             updated_by_login: string | null;
+        };
+        /** PostAttachmentRequest */
+        PostAttachmentRequest: {
+            /** Body */
+            body: string;
+            /** Filename */
+            filename: string;
+            /** Note */
+            note?: string | null;
+            /**
+             * Ticket Id
+             * Format: uuid
+             */
+            ticket_id: string;
+        };
+        /** PostAttachmentResponse */
+        PostAttachmentResponse: {
+            /** Artifact Type */
+            artifact_type: string | null;
+            /**
+             * Attached At
+             * Format: date-time
+             */
+            attached_at: string;
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Produced By Skill */
+            produced_by_skill: string | null;
+            /** Repo Commit */
+            repo_commit: string | null;
+            /** Skill Version */
+            skill_version: string | null;
         };
         /**
          * ProtectedPathSet
@@ -4040,6 +4133,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_attachments_endpoint_api_attachments_get: {
+        parameters: {
+            query: {
+                ticket_id: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAttachmentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_attachment_api_attachments_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostAttachmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostAttachmentResponse"];
                 };
             };
             /** @description Validation Error */

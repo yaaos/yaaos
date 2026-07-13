@@ -19,6 +19,7 @@ import {
   type PipelineRunView,
   type RunOutcomeView,
   useArtifactVersion,
+  useAttachments,
   useCancelRun,
   usePipelines,
   useRerunRun,
@@ -44,8 +45,16 @@ import {
 import { Skeleton } from "@shared/components/ui/skeleton";
 import { Textarea } from "@shared/components/ui/textarea";
 import { ago } from "@shared/utils/public/ago";
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Play, XCircle } from "lucide-react";
-import { Suspense, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  Paperclip,
+  Play,
+  XCircle,
+} from "lucide-react";
+import { type ReactNode, Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 
 export function OverviewTab({
@@ -55,19 +64,19 @@ export function OverviewTab({
 }: { ticketId: string; ticketType: string; onShowRuns: () => void }) {
   const { data: overview, isLoading, isError } = useRunOverview(ticketId);
 
+  let mainContent: ReactNode;
+
   if (isLoading) {
-    return (
+    mainContent = (
       <div className="flex flex-col gap-2">
         <Skeleton className="h-40" />
       </div>
     );
-  }
-  if (isError) {
-    return <ErrorBanner message="Couldn't load this ticket's run." />;
-  }
-  if (!overview) {
+  } else if (isError) {
+    mainContent = <ErrorBanner message="Couldn't load this ticket's run." />;
+  } else if (!overview) {
     if (ticketType === "manual") {
-      return (
+      mainContent = (
         <ErrorBoundary
           fallbackRender={({ resetErrorBoundary }) => (
             <ErrorBanner message="Couldn't load pipelines." onRetry={resetErrorBoundary} />
@@ -78,18 +87,17 @@ export function OverviewTab({
           </Suspense>
         </ErrorBoundary>
       );
+    } else {
+      mainContent = (
+        <EmptyState
+          icon={AlertCircle}
+          headline="No runs yet."
+          body="When a pipeline starts on this ticket, it'll appear here."
+        />
+      );
     }
-    return (
-      <EmptyState
-        icon={AlertCircle}
-        headline="No runs yet."
-        body="When a pipeline starts on this ticket, it'll appear here."
-      />
-    );
-  }
-
-  if (overview.status === "paused" && overview.pause) {
-    return (
+  } else if (overview.status === "paused" && overview.pause) {
+    mainContent = (
       <ErrorBoundary
         fallbackRender={({ resetErrorBoundary }) => (
           <ErrorBanner message="Couldn't load the pausing stage." onRetry={resetErrorBoundary} />
@@ -100,14 +108,28 @@ export function OverviewTab({
         </Suspense>
       </ErrorBoundary>
     );
+  } else if (overview.status === "in_flight" && overview.run) {
+    mainContent = <InFlightCard ticketId={ticketId} run={overview.run} onShowRuns={onShowRuns} />;
+  } else if (overview.status === "terminal" && overview.outcome) {
+    mainContent = <OutcomeCard ticketId={ticketId} outcome={overview.outcome} />;
+  } else {
+    mainContent = null;
   }
-  if (overview.status === "in_flight" && overview.run) {
-    return <InFlightCard ticketId={ticketId} run={overview.run} onShowRuns={onShowRuns} />;
-  }
-  if (overview.status === "terminal" && overview.outcome) {
-    return <OutcomeCard ticketId={ticketId} outcome={overview.outcome} />;
-  }
-  return null;
+
+  return (
+    <div className="flex flex-col gap-4">
+      {mainContent}
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load attachments." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense fallback={<Skeleton className="h-16" />}>
+          <AttachmentsSection ticketId={ticketId} />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
+  );
 }
 
 function waitingOnLabel(pause: PauseDetailView): string {
@@ -397,6 +419,39 @@ function OutcomeCard({ ticketId, outcome }: { ticketId: string; outcome: RunOutc
         pending={rerun.isPending}
         onConfirm={() => rerun.mutate(outcome.run_id, { onSettled: () => setRerunOpen(false) })}
       />
+    </div>
+  );
+}
+
+/** Read-only attachments list for the ticket Overview tab. Renders nothing
+ *  (no header, no empty state) when the ticket has no attachments yet. */
+function AttachmentsSection({ ticketId }: { ticketId: string }) {
+  const { data: attachments } = useAttachments(ticketId);
+  if (attachments.length === 0) return null;
+
+  return (
+    <div>
+      <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
+        <Paperclip className="w-3 h-3" aria-hidden />
+        Attachments
+      </h3>
+      <ul className="flex flex-col gap-1" data-testid="attachments-list">
+        {attachments.map((a) => (
+          <li
+            key={a.id}
+            className="flex items-center gap-2 rounded border border-border px-3 py-2 text-sm"
+            data-testid={`attachment-row-${a.id}`}
+          >
+            <span className="font-medium truncate">{a.filename}</span>
+            {a.produced_by_skill && (
+              <span className="text-xs text-muted-foreground">· {a.produced_by_skill}</span>
+            )}
+            <span className="ml-auto text-xs text-muted-foreground shrink-0">
+              {ago(a.attached_at)}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

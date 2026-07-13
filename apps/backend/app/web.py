@@ -48,7 +48,9 @@ from app.domain import tickets  # noqa: F401, E402
 
 # 5a-pipelines. Run-engine modules. Types-first: findings/artifacts/repos
 # carry no dependencies on the others; pipelines imports findings;
-# actions/pr_review import pipelines + findings.
+# actions/pr_review import pipelines + findings. attachments before pipelines
+# so pipelines can import it for the adoption matcher (Phase 4+).
+from app.domain import attachments as _domain_attachments  # noqa: F401, E402
 from app.domain import findings as _domain_findings  # noqa: F401, E402
 from app.domain import artifacts as _domain_artifacts  # noqa: F401, E402
 from app.domain import repos as _domain_repos  # noqa: F401, E402

@@ -587,6 +587,98 @@
         "title": "ArtifactMeta",
         "type": "object"
       },
+      "AttachmentMeta": {
+        "description": "Metadata projection — all fields except `body`. Used by list reads, SPA, and MCP.",
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Type"
+          },
+          "attached_at": {
+            "format": "date-time",
+            "title": "Attached At",
+            "type": "string"
+          },
+          "attached_by": {
+            "format": "uuid",
+            "title": "Attached By",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "produced_by_skill": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced By Skill"
+          },
+          "repo_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Commit"
+          },
+          "skill_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "produced_by_skill",
+          "skill_version",
+          "artifact_type",
+          "repo_commit",
+          "note",
+          "attached_by",
+          "attached_at"
+        ],
+        "title": "AttachmentMeta",
+        "type": "object"
+      },
       "AuditEntryView": {
         "properties": {
           "actor_kind": {
@@ -1911,6 +2003,22 @@
         "title": "ListArtifactsResponse",
         "type": "object"
       },
+      "ListAttachmentsResponse": {
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentMeta"
+            },
+            "title": "Attachments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "attachments"
+        ],
+        "title": "ListAttachmentsResponse",
+        "type": "object"
+      },
       "ListIntakePointsResponse": {
         "properties": {
           "points": {
@@ -2486,6 +2594,114 @@
           "referenced"
         ],
         "title": "PipelineSummary",
+        "type": "object"
+      },
+      "PostAttachmentRequest": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "title": "Ticket Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "filename",
+          "body"
+        ],
+        "title": "PostAttachmentRequest",
+        "type": "object"
+      },
+      "PostAttachmentResponse": {
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Type"
+          },
+          "attached_at": {
+            "format": "date-time",
+            "title": "Attached At",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "produced_by_skill": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced By Skill"
+          },
+          "repo_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Commit"
+          },
+          "skill_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "produced_by_skill",
+          "skill_version",
+          "artifact_type",
+          "repo_commit",
+          "attached_at"
+        ],
+        "title": "PostAttachmentResponse",
         "type": "object"
       },
       "ProtectedPathSet": {
@@ -4747,6 +4963,154 @@
         "summary": "Get Artifact Endpoint",
         "tags": [
           "artifacts"
+        ]
+      }
+    },
+    "/api/attachments": {
+      "get": {
+        "operationId": "list_attachments_endpoint_api_attachments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ticket_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ticket Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAttachmentsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Attachments Endpoint",
+        "tags": [
+          "attachments"
+        ]
+      },
+      "post": {
+        "operationId": "post_attachment_api_attachments_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostAttachmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Attachment",
+        "tags": [
+          "attachments"
         ]
       }
     },

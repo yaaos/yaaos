@@ -36,6 +36,7 @@ None. Transport only — Redis is the substrate.
 - `run_state_changed` — `pipeline_runs` row state transition; payload carries `{ticket_id, run_id, state}`; published by [`domain/pipelines`](domain_pipelines.md) at every run-state write (promotion to `running`, and every terminal)
 - `stage_state_changed` — a `stage_executions` row reached a terminal status (`completed`/`failed`); payload carries `{ticket_id, run_id}`; published by [`domain/pipelines`](domain_pipelines.md)
 - `artifact_stored` — a new `artifacts` row was written; payload carries `{ticket_id}`; published by [`domain/pipelines`](domain_pipelines.md) after `domain/artifacts.store`
+- `attachment_added` — a new `ticket_attachments` row was written; payload carries `{ticket_id, attachment_id}`; published by [`domain/attachments`](domain_attachments.md) after `add_attachment`
 
 ## How it's tested
 

@@ -107,7 +107,7 @@ depends_on = ["app.core.auth", "app.core.database", "app.core.sessions", "app.co
 
 [[modules]]
 path = "app.domain.attachments"
-depends_on = []
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.core.sessions", "app.core.sse", "app.core.webserver", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.findings"
@@ -882,7 +882,18 @@ expose = [
 from = ["app.domain.artifacts"]
 
 [[interfaces]]
-expose = ["ArtifactFrontmatter", "parse_frontmatter"]
+expose = [
+  "ArtifactFrontmatter",
+  "Attachment",
+  "AttachmentMeta",
+  "AttachmentNotFoundError",
+  "AttachmentTooLargeError",
+  "TicketNotFoundError",
+  "add_attachment",
+  "get_attachment",
+  "list_attachments",
+  "parse_frontmatter",
+]
 from = ["app.domain.attachments"]
 
 [[interfaces]]

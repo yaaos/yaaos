@@ -183,6 +183,22 @@ describe("server-event subscriber", () => {
     ]);
   });
 
+  it("invalidates the attachments key on attachment_added", () => {
+    const qc = new QueryClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    attachQueryClient(qc);
+    setOrgSlug("acme");
+    const es = live()[0];
+    if (!es) throw new Error("expected one EventSource instance");
+
+    es.emit({ kind: "attachment_added", ticket_id: "t1" });
+    vi.advanceTimersByTime(250);
+
+    expect(spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey))).toEqual([
+      JSON.stringify(["attachments", "t1"]),
+    ]);
+  });
+
   it("ignores events with unparseable JSON without crashing", () => {
     const qc = new QueryClient();
     const spy = vi.spyOn(qc, "invalidateQueries");

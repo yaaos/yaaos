@@ -1,14 +1,31 @@
-"""domain/attachments — artifact frontmatter contract + parser.
+"""domain/attachments — attachment storage, frontmatter contract + parser.
 
-Owns the `ArtifactFrontmatter` value object (the skill↔yaaos routing-metadata
-contract) and its deterministic YAML parser. Ticket-attachment storage and
-delivery land in later phases; this initial slice ships only the contract so
-the drift test and skill prompts can land together.
+Owns the `ArtifactFrontmatter` value object, its YAML parser, and the
+`ticket_attachments` table. Attachments are user-supplied ticket inputs
+(text documents), not pipeline products.
 """
 
+import app.domain.attachments.web  # noqa: F401 — registers /api/attachments routes
 from app.domain.attachments.contracts import ArtifactFrontmatter, parse_frontmatter
+from app.domain.attachments.service import (
+    AttachmentNotFoundError,
+    AttachmentTooLargeError,
+    TicketNotFoundError,
+    add_attachment,
+    get_attachment,
+    list_attachments,
+)
+from app.domain.attachments.types import Attachment, AttachmentMeta
 
 __all__ = [
     "ArtifactFrontmatter",
+    "Attachment",
+    "AttachmentMeta",
+    "AttachmentNotFoundError",
+    "AttachmentTooLargeError",
+    "TicketNotFoundError",
+    "add_attachment",
+    "get_attachment",
+    "list_attachments",
     "parse_frontmatter",
 ]
