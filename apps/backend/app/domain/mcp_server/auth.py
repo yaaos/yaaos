@@ -161,13 +161,16 @@ async def mint_refresh_token(
 async def rotate_refresh_token(
     raw_refresh: str,
     *,
+    client_id: UUID,
     session: AsyncSession,
-) -> tuple[McpRefreshTokenRow, str, str] | None:
+) -> tuple[str, str] | None:
     """Consume an existing refresh token and issue a new token pair.
 
-    Returns `(old_row, new_access_raw, new_refresh_raw)` or `None` if the
-    token is invalid or expired.  Old row is deleted by this call; the caller
-    must also delete the associated old access token(s).
+    Returns `(new_access_raw, new_refresh_raw)` or `None` if the token is
+    invalid, expired, or was issued to a different client. All validation —
+    including the `client_id` match — happens BEFORE the old row is deleted:
+    RFC 6749 §5.2 requires that a failed validation not consume the token, so
+    the legitimate holder's refresh token survives a mismatched attempt.
     """
     token_hash = _hash_token(raw_refresh)
     row = (
@@ -177,6 +180,8 @@ async def rotate_refresh_token(
     if row is None:
         return None
     if row.expires_at < datetime.now(UTC):
+        return None
+    if row.client_id != client_id:
         return None
 
     # Delete the consumed refresh token (rotation: each token is single-use).
@@ -194,7 +199,7 @@ async def rotate_refresh_token(
         org_id=row.org_id,
         session=session,
     )
-    return row, new_access, new_refresh
+    return new_access, new_refresh
 
 
 async def revoke_tokens_for_user(

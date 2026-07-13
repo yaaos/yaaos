@@ -6,20 +6,24 @@ Not to be confused with [`domain/mcp_proxy`](domain_mcp_proxy.md), which proxies
 
 ## Scope
 
-Owns: four OAuth tables (`mcp_oauth_clients`, `mcp_auth_codes`, `mcp_access_tokens`, `mcp_refresh_tokens`), the FastAPI routes for the RFC 8414 discovery document + RFC 7591 client registration + authorize + token endpoints, the FastMCP `mcp` server instance and its `find_ticket` tool, bearer token lifecycle helpers.
+Owns: four OAuth tables (`mcp_oauth_clients`, `mcp_auth_codes`, `mcp_access_tokens`, `mcp_refresh_tokens`), the FastAPI routes for the RFC 8414 discovery document + RFC 7591 client registration + authorize + token endpoints, the FastMCP server instance (private to `tools.py`) and its tool roster, `mount(app)` (ASGI sub-app mount + lifespan chaining, `asgi.py`), bearer token lifecycle helpers.
 
-Does **not** own: the session cookie (reads it from `core/identity` / `core/sessions`); org membership (reads from `core/tenancy`); the outer FastAPI app's lifespan (the composition root chains the FastMCP lifespan in `app/web.py`).
+Does **not** own: the session cookie (reads it from `core/identity` / `core/sessions`); org membership (reads from `core/tenancy`); the outer FastAPI app object (the composition root passes it to `mount()` after `create_app()`).
 
 ## Why / invariants
 
 - **Raw token never stored** — `secrets.token_urlsafe(32)` returned once; sha256 stored. Same discipline as `domain/mcp_proxy` and `core/sessions`.
 - **PKCE S256 required** — `code_challenge_method=S256` is enforced at the authorize endpoint and verified at token exchange. Plain PKCE is rejected.
 - **Public clients only** — `token_endpoint_auth_method=none`. No client secret; PKCE is the proof-of-possession mechanism.
+- **Consent page escapes everything** — `_consent_html` HTML-escapes every interpolated value (`html.escape(..., quote=True)`): `client_name` is stored verbatim by the unauthenticated `/register` endpoint and `state` is a query param — both attacker-controlled.
+- **Registration metadata validated hard** — `/register` is unauthenticated, so `_RegisterRequest` caps `client_name` (≤256, printable) and `redirect_uris` (≤5, each ≤2048, `https://` only with an `http://localhost` / `http://127.0.0.1` loopback carve-out per RFC 8252 §7.3). Violations return HTTP 400 `invalid_client_metadata` (RFC 7591 §3.2.2 shape, not FastAPI's 422 — the body is parsed manually).
 - **Org locked at consent time** — the user picks the org on the consent form; `McpPrincipal.org_id` never changes on refresh rotation.
+- **Failed refresh validation never consumes the token** — `rotate_refresh_token` checks existence, expiry, AND `client_id` match before deleting the old row (RFC 6749 §5.2); a mismatched attempt leaves the legitimate holder's token usable.
+- **Tokens die with the user** — `revoke_tokens_for_user` is registered as a `core/identity` user-deletion hook at import time (the token tables carry no FK to `users`), so `core/identity.delete_user` revokes MCP bearers in the same transaction.
 - **Role resolved live** — `authenticate()` calls `get_member_role(session, org_id=..., user_id=...)` on every inbound bearer check so freshly demoted members are rejected without waiting for token rotation.
 - **Access token TTL** — 8 hours (`ACCESS_TOKEN_TTL`). Refresh token TTL — 4 weeks (`REFRESH_TOKEN_TTL`).
 - **Hourly sweep** — `mcp_server_token_sweep` (`@scheduled`, cron `0 * * * *`) drops expired access + refresh rows.
-- **FastMCP lifespan** — `StreamableHTTPSessionManager.run()` is single-use per instance. The composition root (`app/web.py`) creates a fresh `mcp.http_app()` on each lifespan start via `_MCPProxy`; tests that restart the ASGI lifespan each get a virgin session manager.
+- **FastMCP lifespan** — `StreamableHTTPSessionManager.run()` is single-use per instance. `mount(app)` (`asgi.py`) chains the FastMCP lifespan into the app's `lifespan_context` (Starlette does not propagate lifespan to mounted sub-apps) and creates a fresh `mcp.http_app()` on each lifespan start via an ASGI proxy; tests that restart the ASGI lifespan each get a virgin session manager.
 - **Tool auth bridge** — `YaaosTokenVerifier` implements FastMCP's `TokenVerifier`; it opens a DB session, calls `authenticate()`, and serialises the resulting `McpPrincipal` into `AccessToken.claims`. Tool handlers reconstruct the principal via `_get_principal()` without a second DB hit.
 
 ## Public interface
@@ -30,8 +34,8 @@ Exported from `__init__.py`:
 - `McpAuthError` — raised by `authenticate()` on any failure.
 - `McpPrincipal` — frozen Pydantic model: `user_id`, `org_id`, `role`.
 - `authenticate(bearer, *, session)` — verifies an inbound MCP bearer; returns `McpPrincipal` or raises `McpAuthError`.
-- `revoke_tokens_for_user(user_id, *, session)` — deletes all token rows for a user.
-- `mcp` — the `FastMCP` server instance; mounted by the composition root.
+- `revoke_tokens_for_user(user_id, *, session)` — deletes all token rows for a user; also registered as a `core/identity` user-deletion hook at import time.
+- `mount(app)` — mounts the FastMCP sub-app at `/api/mcp-server/mcp` + the `/.well-known` discovery route and chains the FastMCP lifespan; called once by the composition root after `create_app()`. The `FastMCP` instance itself is private to `tools.py` (Cardinal rule — never export the instance).
 
 OAuth routes registered via `oauth_web.py` side-effect import:
 
@@ -56,11 +60,11 @@ Migration: `c6d7e8f9a0b1_add_mcp_server_tables.py`.
 
 ## Core flows
 
-1. **Client registration** — `POST /api/mcp-server/register` with `{client_name, redirect_uris}` → mints a `client_id` UUID, inserts `McpOAuthClientRow`, returns `{client_id, ...}`. No prior auth required (RFC 7591 §3.2).
+1. **Client registration** — `POST /api/mcp-server/register` with `{client_name, redirect_uris}` → validates metadata (caps + scheme allowlist; 400 `invalid_client_metadata` on violation), mints a `client_id` UUID, inserts `McpOAuthClientRow`, returns `{client_id, ...}`. No prior auth required (RFC 7591 §3.2).
 2. **Authorization** — `GET /api/mcp-server/authorize?client_id=…&response_type=code&redirect_uri=…&code_challenge=…[&state=…]` → reads `yaaos_session` cookie via `core/identity.find_session_by_hash`; unauthenticated → redirect to `/login?next=…`; authenticated → render consent HTML with org picker.
 3. **Consent** — `POST /api/mcp-server/authorize/consent` (form POST) → verifies session + client + redirect_uri + org membership; mints one-time auth code; redirects to `redirect_uri?code=…[&state=…]`.
 4. **Token exchange** — `POST /api/mcp-server/token` with `grant_type=authorization_code, code=…, code_verifier=…, redirect_uri=…` → verifies PKCE S256; consumes code (one-time); mints access + refresh tokens; returns `{access_token, token_type, expires_in, refresh_token}`.
-5. **Token refresh** — `POST /api/mcp-server/token` with `grant_type=refresh_token` → `rotate_refresh_token` atomically deletes old refresh token and mints a new pair.
+5. **Token refresh** — `POST /api/mcp-server/token` with `grant_type=refresh_token` → `rotate_refresh_token` validates existence + expiry + `client_id` match, then atomically deletes the old refresh token and mints a new pair. Any validation failure returns `invalid_grant` without consuming the token.
 6. **MCP tool call** — FastMCP sub-app receives bearer in `Authorization` header → `YaaosTokenVerifier.verify_token` → `authenticate()` → principal in `AccessToken.claims` → tool handler reads via `_get_principal()`.
 
 ## MCP tools
@@ -85,5 +89,5 @@ All tools read org from `McpPrincipal` (set at consent time) — never from tool
 
 ## How it's tested
 
-- `test/test_oauth_service.py` (`@pytest.mark.service`) — full OAuth flow: registration, consent page, consent form with PKCE, code exchange, refresh rotation, token expiry, client_id mismatch, wrong PKCE verifier, code reuse.
+- `test/test_oauth_service.py` (`@pytest.mark.service`) — full OAuth flow: registration (including metadata caps + `javascript:`/non-loopback-`http` redirect-URI rejection), consent page (including HTML-escaping of `client_name` and `state`), consent form with PKCE, code exchange, refresh rotation (including mismatched-client non-consumption), token expiry, wrong PKCE verifier, code reuse, user-deletion hook revocation.
 - `test/test_tools_service.py` (`@pytest.mark.service`) — FastMCP `initialize` with valid bearer; bad bearer → 401; `find_ticket` with unknown branch → null result; `find_ticket` with seeded ticket → found; bad bearer on tool call → 401; full create→attach→inspect loop; role-floor check (BUILDER can write).

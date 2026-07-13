@@ -20,6 +20,7 @@ from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.attachments.service import (
     AttachmentTooLargeError,
+    InvalidAttachmentFilenameError,
     TicketNotFoundError,
     add_attachment,
     list_attachments,
@@ -91,6 +92,8 @@ async def post_attachment(body: PostAttachmentRequest) -> PostAttachmentResponse
             raise _err(404, "ticket_not_found") from exc
         except AttachmentTooLargeError as exc:
             raise _err(413, "too_large") from exc
+        except InvalidAttachmentFilenameError as exc:
+            raise _err(400, "invalid_filename") from exc
     return PostAttachmentResponse(
         id=attachment.id,
         filename=attachment.filename,

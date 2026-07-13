@@ -34,6 +34,8 @@ Unverified emails never reach the orchestrator — the callback handler enforces
 
 **Provider registry** — `register_provider(p)` overwrites on re-register (plugins may import multiple times in tests). Plugins: [`plugins/github`](plugins_github.md), [`plugins/oauth_test`](plugins_oauth_test.md).
 
+**User-deletion hooks** — `register_user_deletion_hook(hook)` lets higher layers clean up user-scoped rows that carry no FK to `users` without a core→domain import (same inversion as `core/api_keys.register_validator`). `delete_user` awaits each registered hook (`async (user_id, *, session)`) inside its transaction before deleting the user row. Registered today: [`domain/mcp_server`](domain_mcp_server.md)'s `revoke_tokens_for_user` (at import time). Idempotent re-registration.
+
 ## Gotchas
 
 - `_set_session_last_seen_for_tests` and `_delete_user_artifacts_for_tests` are NOT in `__all__`. Cross-module callers use `set_session_last_seen` from `app.testing.e2e_setup` or `delete_user` from `app.testing.e2e_setup`.

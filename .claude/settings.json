@@ -62,6 +62,11 @@
       "mcp__569c4fc3-583c-478d-b5c5-ef19d5a9674f__notion-get-comments"
     ],
     "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(rm -rf $HOME*)",
+      "Bash(rm -fr /*)",
+      "Bash(rm -rf .git*)",
       "Bash(rmdir *)",
       "Bash(sudo *)",
       "Bash(dd *)",

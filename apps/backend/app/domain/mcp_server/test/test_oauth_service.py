@@ -123,6 +123,74 @@ async def test_register_rejects_empty_redirect_uris() -> None:
     assert "redirect_uris" in r.json()["error_description"]
 
 
+@pytest.mark.asyncio
+async def test_register_rejects_javascript_redirect_uri() -> None:
+    """Only https:// (plus http://localhost / http://127.0.0.1) schemes are allowed."""
+    async with _client() as c:
+        r = await c.post(
+            "/api/mcp-server/register",
+            json={"client_name": "bad", "redirect_uris": ["javascript:alert(1)"]},
+        )
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_client_metadata"
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_http_non_localhost_and_data_uris() -> None:
+    async with _client() as c:
+        for bad_uri in ("http://evil.example/cb", "data:text/html,x", "ftp://x/cb"):
+            r = await c.post(
+                "/api/mcp-server/register",
+                json={"client_name": "bad", "redirect_uris": [bad_uri]},
+            )
+            assert r.status_code == 400, bad_uri
+            assert r.json()["error"] == "invalid_client_metadata"
+
+
+@pytest.mark.asyncio
+async def test_register_accepts_https_and_localhost_uris() -> None:
+    async with _client() as c:
+        r = await c.post(
+            "/api/mcp-server/register",
+            json={
+                "client_name": "good",
+                "redirect_uris": [
+                    "https://example.com/callback",
+                    "http://localhost:3000/callback",
+                    "http://127.0.0.1:8123/cb",
+                ],
+            },
+        )
+    assert r.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_register_caps_client_name_and_uri_counts() -> None:
+    async with _client() as c:
+        too_long_name = await c.post(
+            "/api/mcp-server/register",
+            json={"client_name": "x" * 257, "redirect_uris": ["https://example.com/cb"]},
+        )
+        unprintable_name = await c.post(
+            "/api/mcp-server/register",
+            json={"client_name": "bad\x00name", "redirect_uris": ["https://example.com/cb"]},
+        )
+        too_many_uris = await c.post(
+            "/api/mcp-server/register",
+            json={
+                "client_name": "ok",
+                "redirect_uris": [f"https://example.com/cb{i}" for i in range(6)],
+            },
+        )
+        too_long_uri = await c.post(
+            "/api/mcp-server/register",
+            json={"client_name": "ok", "redirect_uris": ["https://example.com/" + "a" * 2048]},
+        )
+    for r in (too_long_name, unprintable_name, too_many_uris, too_long_uri):
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_client_metadata"
+
+
 # ---------------------------------------------------------------------------
 # Authorization code flow
 # ---------------------------------------------------------------------------
@@ -187,6 +255,45 @@ async def test_authorize_renders_consent_page_for_authenticated_user(db_session)
         )
     assert r.status_code == 200
     assert b"Allow access" in r.content
+
+
+@pytest.mark.asyncio
+async def test_consent_page_escapes_user_supplied_values(db_session) -> None:
+    """`client_name` (stored verbatim by the unauthenticated /register) and
+    `state` (query param) must be HTML-escaped in the consent page — otherwise
+    stored/reflected XSS on the yaaos origin."""
+    _user_id, _org_id, raw_cookie = await _seed_user_org_session(db_session)
+    _, challenge = _pkce_pair()
+
+    async with _client() as c:
+        reg = await c.post(
+            "/api/mcp-server/register",
+            json={
+                "client_name": "<script>alert(1)</script>",
+                "redirect_uris": ["http://localhost:3000/callback"],
+            },
+        )
+        client_id = reg.json()["client_id"]
+
+        r = await c.get(
+            "/api/mcp-server/authorize",
+            params={
+                "client_id": client_id,
+                "response_type": "code",
+                "redirect_uri": "http://localhost:3000/callback",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": '" onmouseover="x',
+            },
+            cookies={"yaaos_session": raw_cookie},
+        )
+    assert r.status_code == 200
+    # client_name renders escaped — no raw <script> in the response body.
+    assert b"<script>alert(1)</script>" not in r.content
+    assert b"&lt;script&gt;alert(1)&lt;/script&gt;" in r.content
+    # state cannot break out of the hidden input's value attribute.
+    assert b'value="" onmouseover=' not in r.content
+    assert b"&quot; onmouseover=&quot;x" in r.content
 
 
 # ---------------------------------------------------------------------------
@@ -472,6 +579,41 @@ async def test_old_refresh_is_invalid_after_rotation(db_session) -> None:
     assert rot2.json()["error"] == "invalid_grant"
 
 
+@pytest.mark.asyncio
+async def test_refresh_with_mismatched_client_is_not_consumed(db_session) -> None:
+    """RFC 6749 §5.2 — a refresh attempt that fails client validation must NOT
+    consume the token: the legitimate holder's refresh still works afterwards."""
+    _, refresh_raw, _, client_id, _, _ = await _full_flow(db_session)
+
+    async with _client() as c:
+        reg2 = await c.post(
+            "/api/mcp-server/register",
+            json={"client_name": "other", "redirect_uris": ["http://localhost:3000/callback"]},
+        )
+        other_client_id = reg2.json()["client_id"]
+
+        mismatched = await c.post(
+            "/api/mcp-server/token",
+            data={
+                "grant_type": "refresh_token",
+                "client_id": other_client_id,
+                "refresh_token": refresh_raw,
+            },
+        )
+        legitimate = await c.post(
+            "/api/mcp-server/token",
+            data={
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "refresh_token": refresh_raw,
+            },
+        )
+    assert mismatched.status_code == 401
+    assert mismatched.json()["error"] == "invalid_grant"
+    assert legitimate.status_code == 200, legitimate.text
+    assert len(legitimate.json()["refresh_token"]) > 20
+
+
 # ---------------------------------------------------------------------------
 # Revoke + sweep
 # ---------------------------------------------------------------------------
@@ -506,6 +648,53 @@ async def test_revoke_tokens_for_user_clears_all(db_session) -> None:
     await db_session.flush()
 
     await revoke_tokens_for_user(user.id, session=db_session)
+
+    acc = (
+        (await db_session.execute(select(McpAccessTokenRow).where(McpAccessTokenRow.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+    ref = (
+        (await db_session.execute(select(McpRefreshTokenRow).where(McpRefreshTokenRow.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+    assert acc == []
+    assert ref == []
+
+
+@pytest.mark.asyncio
+async def test_identity_delete_user_revokes_mcp_tokens(db_session) -> None:
+    """`core/identity.delete_user` runs the user-deletion hook registered by
+    `domain/mcp_server` at import time — MCP bearers cannot outlive the user
+    row (the token tables carry no FK to `users`, so no DB cascade applies)."""
+    from app.core.identity import delete_user as _identity_delete_user  # noqa: PLC0415
+    from app.domain.mcp_server.models import McpOAuthClientRow  # noqa: PLC0415
+
+    org = await insert_org(db_session, slug=f"mcp-del-{uuid4().hex[:8]}")
+    user = await create_user(db_session)
+    await create_membership(
+        db_session,
+        user_id=user.id,
+        org_id=org.org_id,
+        role=Role.BUILDER,
+        handle="u-del",
+    )
+    client_id = uuid4()
+    db_session.add(
+        McpOAuthClientRow(
+            client_id=client_id,
+            client_name="t",
+            redirect_uris=["http://localhost/cb"],
+        )
+    )
+    await db_session.flush()
+
+    await mint_access_token(client_id=client_id, user_id=user.id, org_id=org.org_id, session=db_session)
+    await mint_refresh_token(client_id=client_id, user_id=user.id, org_id=org.org_id, session=db_session)
+    await db_session.flush()
+
+    await _identity_delete_user(db_session, user_id=user.id)
 
     acc = (
         (await db_session.execute(select(McpAccessTokenRow).where(McpAccessTokenRow.user_id == user.id)))

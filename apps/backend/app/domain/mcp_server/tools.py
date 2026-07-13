@@ -50,7 +50,7 @@ from app.core.database import session as db_session
 from app.domain.artifacts import ArtifactNotFoundError
 from app.domain.artifacts import get as artifacts_get
 from app.domain.artifacts import list_for_ticket as artifacts_list_for_ticket
-from app.domain.attachments import AttachmentTooLargeError
+from app.domain.attachments import AttachmentTooLargeError, InvalidAttachmentFilenameError
 from app.domain.attachments import add_attachment as attachments_add
 from app.domain.attachments import list_attachments as list_attachments_svc
 from app.domain.findings import list_open_for_ticket as findings_list_open
@@ -283,6 +283,8 @@ async def add_attachment(
             await s.commit()
     except AttachmentTooLargeError:
         raise McpError(ErrorData(code=-32602, message="body exceeds 2 MiB limit"))
+    except InvalidAttachmentFilenameError:
+        raise McpError(ErrorData(code=-32602, message=f"invalid filename: {filename!r}"))
     except LookupError:
         # Covers attachments.TicketNotFoundError (LookupError subclass).
         raise McpError(ErrorData(code=-32001, message=f"ticket not found: {ticket_id}"))

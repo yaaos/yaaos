@@ -27,6 +27,7 @@ from app.core.identity.repository import (
     delete_email,
     delete_user,
     hash_token,
+    register_user_deletion_hook,
 )
 from app.core.identity.service import (
     EmailAlreadyLinkedError,
@@ -129,6 +130,7 @@ __all__ = [
     "mark_sso_satisfied",
     "mint_session",
     "register_provider",
+    "register_user_deletion_hook",
     "require_session",
     "resolve_github_attribution",
     "revoke_all_sessions_for_user",

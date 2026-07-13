@@ -24,7 +24,7 @@ Exported from `__init__.py`:
 - `list_attachments(ticket_id, *, org_id, session) -> list[AttachmentMeta]`
 - `get_attachment(attachment_id, *, org_id, session) -> Attachment`
 - `latest_matching(ticket_id, *, skill_name, attachment_ids, session) -> Attachment | None` — returns the newest attachment whose `produced_by_skill == skill_name` and whose `id` is in `attachment_ids`, or `None` when no match. Used by the adoption fork in `domain/pipelines`.
-- `TicketNotFoundError`, `AttachmentTooLargeError`, `AttachmentNotFoundError`
+- `TicketNotFoundError`, `AttachmentTooLargeError`, `InvalidAttachmentFilenameError`, `AttachmentNotFoundError`
 
 HTTP surface: `POST /api/attachments` (201) · `GET /api/attachments?ticket_id=` (200).
 
@@ -42,7 +42,7 @@ HTTP surface: `POST /api/attachments` (201) · `GET /api/attachments?ticket_id=`
 
 ### Core user flows
 
-1. **Attach a document** — `POST /api/attachments` → `add_attachment`: size cap check (2 MiB), ticket existence check via `tickets.get`, `parse_frontmatter`, row insert, `attachment.added` audit row, `attachment_added` SSE event stashed via `publish_general_after_commit`, commit.
+1. **Attach a document** — `POST /api/attachments` → `add_attachment`: filename safety check, size cap check (2 MiB), ticket existence check via `tickets.get`, `parse_frontmatter`, row insert, `attachment.added` audit row, `attachment_added` SSE event stashed via `publish_general_after_commit`, commit. The filename must be a single safe path segment (no `/`, `\`, `..`; not empty/`.`) — it is later joined as `.yaaos-inputs/<filename>` into an agent-workspace write path by the run engine, and a traversal segment would escape the inputs directory while staying inside the workspace root. Enforced at the storage boundary (`InvalidAttachmentFilenameError`) so HTTP (`400 invalid_filename`) and the MCP `add_attachment` tool (`-32602`) share one check.
 2. **List attachments** — `GET /api/attachments?ticket_id=` → `list_attachments`: returns `AttachmentMeta[]` newest first (`attached_at DESC, id DESC`). Bodies are never returned in the list.
 3. **Get single attachment** — `get_attachment`: returns `Attachment` (with body); raises `AttachmentNotFoundError` for cross-org or absent rows (existence not leaked).
 4. **Parse frontmatter from an artifact body** — caller passes the full body string to `parse_frontmatter`; returns VO on success, `None` on any failure (no error surfaced).
@@ -63,7 +63,7 @@ None — no attachment state machine. Attachments are immutable once stored.
 | `id` | UUIDv7 PK, server-generated. |
 | `org_id` | Org scope (NOT a FK — org rows live in a separate schema). |
 | `ticket_id` | FK to `tickets.id` (CASCADE DELETE). |
-| `filename` | Display name. |
+| `filename` | Display name; validated single path segment (see flow 1). |
 | `body` | Full document text (≤ 2 MiB). |
 | `produced_by_skill` | Frontmatter `skill` field; NULL = context-only. |
 | `skill_version` | Frontmatter `skill_version`; NULL when no frontmatter. |
@@ -81,4 +81,4 @@ Index: `idx_ticket_attachments_match` on `(ticket_id, produced_by_skill, attache
 
 - `test/test_contracts.py` — unit tests covering the full `parse_frontmatter` decision matrix.
 - `test/test_schema_files.py` — drift test asserting the committed schema file byte-equals `ArtifactFrontmatter.model_json_schema()`.
-- `test/test_attachments_service.py` — service tests (`@pytest.mark.service`): frontmatter population, context-only fallback, malformed-frontmatter degradation, 2 MiB cap, unknown-ticket error, list ordering, cross-org get, `attachment.added` audit row, SSE event stash, HTTP 201/413/404, GET list endpoint. Uses real Postgres via `db_session` and `httpx.ASGITransport`.
+- `test/test_attachments_service.py` — service tests (`@pytest.mark.service`): frontmatter population, context-only fallback, malformed-frontmatter degradation, 2 MiB cap, unsafe-filename rejection (traversal/separators/empty), unknown-ticket error, list ordering, cross-org get, `attachment.added` audit row, SSE event stash, HTTP 201/400/413/404, GET list endpoint. Uses real Postgres via `db_session` and `httpx.ASGITransport`.

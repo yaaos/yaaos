@@ -17,15 +17,16 @@ Public clients only: `token_endpoint_auth_method="none"`.  PKCE S256 required.
 
 from __future__ import annotations
 
+import html
 import secrets
 from datetime import UTC, datetime, timedelta
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from uuid import UUID, uuid7
 
 import structlog
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 
 from app.core.auth import Role, public_route
@@ -96,19 +97,56 @@ async def oauth_server_metadata() -> JSONResponse:
 
 
 class _RegisterRequest(BaseModel):
-    client_name: str
-    redirect_uris: list[str]
+    """Registration metadata — validated hard because /register is unauthenticated."""
+
+    client_name: str = Field(min_length=1, max_length=256)
+    redirect_uris: list[str] = Field(min_length=1, max_length=5)
+
+    @field_validator("client_name")
+    @classmethod
+    def _client_name_printable(cls, v: str) -> str:
+        if not v.isprintable():
+            raise ValueError("client_name must be printable")
+        return v
+
+    @field_validator("redirect_uris")
+    @classmethod
+    def _redirect_uris_allowed(cls, v: list[str]) -> list[str]:
+        for uri in v:
+            if len(uri) > 2048:
+                raise ValueError("redirect_uri exceeds 2048 characters")
+            parsed = urlsplit(uri)
+            if parsed.scheme == "https":
+                continue
+            # Loopback carve-out for local dev clients (RFC 8252 §7.3).
+            if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"):
+                continue
+            raise ValueError(f"redirect_uri scheme not allowed: {parsed.scheme or '(none)'}")
+        return v
 
 
 @router.post("/register", dependencies=[Depends(public_route)], status_code=201, response_model=None)
-async def register_client(body: _RegisterRequest) -> JSONResponse:
+async def register_client(request: Request) -> JSONResponse:
     """RFC 7591 dynamic client registration.  No prior auth required.
 
+    Body is parsed manually so metadata violations return the RFC 7591 §3.2.2
+    error shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.
     Returns the minted `client_id` (UUID) which drives the rest of the flow.
     """
-    if not body.redirect_uris:
+    try:
+        payload = await request.json()
+    except ValueError:
         return JSONResponse(
-            {"error": "invalid_request", "error_description": "redirect_uris is required"},
+            {"error": "invalid_client_metadata", "error_description": "request body must be JSON"},
+            status_code=400,
+        )
+    try:
+        body = _RegisterRequest.model_validate(payload)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        loc = ".".join(str(part) for part in first["loc"])
+        return JSONResponse(
+            {"error": "invalid_client_metadata", "error_description": f"{loc}: {first['msg']}"},
             status_code=400,
         )
 
@@ -163,9 +201,22 @@ def _consent_html(
 
     The SPA has no pre-auth surface; this page lives outside the SPA shell.
     Deliberately plain — no JS, no design tokens.
+
+    Every interpolated value is HTML-escaped: `client_name` is stored verbatim
+    by the unauthenticated /register endpoint and `state` is a query param —
+    both are attacker-controlled (stored/reflected XSS on the yaaos origin
+    otherwise). The rest are escaped defensively.
     """
-    opts = "\n".join(f'<option value="{oid}">{slug}</option>' for oid, slug in orgs)
-    state_field = f'<input type="hidden" name="state" value="{state}">' if state else ""
+
+    def esc(value: str) -> str:
+        return html.escape(value, quote=True)
+
+    opts = "\n".join(f'<option value="{esc(oid)}">{esc(slug)}</option>' for oid, slug in orgs)
+    state_field = f'<input type="hidden" name="state" value="{esc(state)}">' if state else ""
+    client_name = esc(client_name)
+    client_id = esc(client_id)
+    code_challenge = esc(code_challenge)
+    redirect_uri = esc(redirect_uri)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>yaaos — Authorize</title>
@@ -420,13 +471,11 @@ async def _exchange_refresh(
         return _token_error("invalid_client", "invalid client_id")
 
     async with db_session() as s:
-        result = await rotate_refresh_token(refresh_token, session=s)
+        result = await rotate_refresh_token(refresh_token, client_id=client_uuid, session=s)
         if result is None:
-            return _token_error("invalid_grant", "refresh token not found or expired", 401)
-        old_row, new_access_raw, new_refresh_raw = result
-        if old_row.client_id != client_uuid:
-            await s.commit()
-            return _token_error("invalid_grant", "client_id mismatch", 401)
+            # No commit — validation failure must not consume the token.
+            return _token_error("invalid_grant", "refresh token invalid, expired, or client mismatch", 401)
+        new_access_raw, new_refresh_raw = result
         await s.commit()
 
     return JSONResponse(

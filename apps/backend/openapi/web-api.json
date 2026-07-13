@@ -4459,27 +4459,6 @@
         "title": "_PatchUserRequest",
         "type": "object"
       },
-      "_RegisterRequest": {
-        "properties": {
-          "client_name": {
-            "title": "Client Name",
-            "type": "string"
-          },
-          "redirect_uris": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Redirect Uris",
-            "type": "array"
-          }
-        },
-        "required": [
-          "client_name",
-          "redirect_uris"
-        ],
-        "title": "_RegisterRequest",
-        "type": "object"
-      },
       "_SsoConfigBody": {
         "properties": {
           "email_domains": {
@@ -7770,18 +7749,8 @@
     },
     "/api/mcp-server/register": {
       "post": {
-        "description": "RFC 7591 dynamic client registration.  No prior auth required.\n\nReturns the minted `client_id` (UUID) which drives the rest of the flow.",
+        "description": "RFC 7591 dynamic client registration.  No prior auth required.\n\nBody is parsed manually so metadata violations return the RFC 7591 §3.2.2\nerror shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.\nReturns the minted `client_id` (UUID) which drives the rest of the flow.",
         "operationId": "register_client_api_mcp_server_register_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/_RegisterRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "201": {
             "content": {
@@ -7790,16 +7759,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Register Client",

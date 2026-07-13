@@ -807,6 +807,8 @@ export interface paths {
          * Register Client
          * @description RFC 7591 dynamic client registration.  No prior auth required.
          *
+         *     Body is parsed manually so metadata violations return the RFC 7591 §3.2.2
+         *     error shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.
          *     Returns the minted `client_id` (UUID) which drives the rest of the flow.
          */
         post: operations["register_client_api_mcp_server_register_post"];
@@ -3969,13 +3971,6 @@ export interface components {
             /** Display Name */
             display_name?: string | null;
         };
-        /** _RegisterRequest */
-        _RegisterRequest: {
-            /** Client Name */
-            client_name: string;
-            /** Redirect Uris */
-            redirect_uris: string[];
-        };
         /** _SsoConfigBody */
         _SsoConfigBody: {
             /**
@@ -5606,11 +5601,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["_RegisterRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             201: {
@@ -5619,15 +5610,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

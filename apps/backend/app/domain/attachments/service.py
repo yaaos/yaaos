@@ -9,6 +9,7 @@ the attachment to context-only (metadata columns remain NULL).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import PurePosixPath
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -35,11 +36,36 @@ class AttachmentTooLargeError(ValueError):
     """Raised by `add_attachment` when `body` exceeds the 2 MiB cap."""
 
 
+class InvalidAttachmentFilenameError(ValueError):
+    """Raised by `add_attachment` when `filename` is not a single safe path segment."""
+
+
 class AttachmentNotFoundError(LookupError):
     """Raised by `get_attachment` when the row is absent or org-mismatched.
 
     Absent and cross-org indistinguishable — same pattern as `artifacts.get`.
     """
+
+
+def _validate_filename(filename: str) -> None:
+    """Require `filename` to be a single, safe path segment.
+
+    The run engine later joins the stored filename as `.yaaos-inputs/<filename>`
+    into a `WriteFilesEntry` path for the agent workspace. A traversal segment
+    (e.g. `../.git/hooks/pre-commit`) normalizes to a path that stays inside
+    the workspace root — so the agent-side join accepts it — and lands the body
+    outside the inputs directory. Validation lives here, at the storage
+    boundary, so both HTTP and MCP ingress are covered by one check.
+    """
+    if (
+        not filename
+        or "/" in filename
+        or "\\" in filename
+        or ".." in filename
+        or filename == "."
+        or len(PurePosixPath(filename).parts) != 1
+    ):
+        raise InvalidAttachmentFilenameError(filename)
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +116,13 @@ async def add_attachment(
 
     Raises `TicketNotFoundError` when `ticket_id` does not exist in `org_id`.
     Raises `AttachmentTooLargeError` when `body` exceeds 2 MiB.
+    Raises `InvalidAttachmentFilenameError` when `filename` is not a single
+    safe path segment.
     """
+    # Filename safety — enforced at the storage boundary so both HTTP and MCP
+    # ingress are covered.
+    _validate_filename(filename)
+
     # Size cap — enforced before any DB write.
     if len(body.encode("utf-8")) > _MAX_BODY_BYTES:
         raise AttachmentTooLargeError("body exceeds 2 MiB limit")

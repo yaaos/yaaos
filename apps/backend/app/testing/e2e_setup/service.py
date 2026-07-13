@@ -760,15 +760,13 @@ async def delete_user(user_id: UUID) -> None:
     need cross-module cleanup (e.g. memberships) must call those separately
     before this.
 
-    Also revokes any inbound MCP access/refresh tokens for the user, since
-    the mcp_access_tokens / mcp_refresh_tokens tables have no FK to users
-    and are not cascade-deleted at the DB level.
+    Inbound MCP token revocation runs via the user-deletion hook that
+    `domain/mcp_server` registers with `core/identity` at import time (the
+    composition root imports `domain/mcp_server` before this can be reached).
     """
     from app.core.identity import delete_user as _identity_delete_user  # noqa: PLC0415
-    from app.domain.mcp_server import revoke_tokens_for_user as _revoke_mcp_tokens  # noqa: PLC0415
 
     async with db_session() as s:
-        await _revoke_mcp_tokens(user_id, session=s)
         await _identity_delete_user(s, user_id=user_id)
         await s.commit()
 

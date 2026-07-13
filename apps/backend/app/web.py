@@ -49,7 +49,7 @@ from app.domain import tickets  # noqa: F401, E402
 # 5a-pipelines. Run-engine modules. Types-first: findings/artifacts/repos
 # carry no dependencies on the others; pipelines imports findings;
 # actions/pr_review import pipelines + findings. attachments before pipelines
-# so pipelines can import it for the adoption matcher (Phase 4+).
+# so pipelines can import it for the adoption matcher.
 from app.domain import attachments as _domain_attachments  # noqa: F401, E402
 from app.domain import findings as _domain_findings  # noqa: F401, E402
 from app.domain import artifacts as _domain_artifacts  # noqa: F401, E402
@@ -74,7 +74,7 @@ import app.domain.mcp_proxy  # noqa: E402 — triggers mcp_proxy web route regis
 
 # 5c. Inbound MCP server — registers /api/mcp-server/* routes via oauth_web.py
 #     side-effect import. The FastMCP ASGI sub-app is mounted after create_app().
-import app.domain.mcp_server  # noqa: E402
+from app.domain import mcp_server as _domain_mcp_server  # noqa: E402
 from app.core.workspace import web as _core_workspace_web  # noqa: F401, E402
 from app.core.notifications import web as _notifications_web  # noqa: F401, E402
 from app.core.sse import web as _core_sse_web  # noqa: F401, E402
@@ -114,71 +114,12 @@ if get_settings().yaaos_coding_agent_stub:
 # 8. Build the FastAPI app.
 app = webserver.create_app()
 
-# 8a. Inbound MCP server — mount the FastMCP ASGI sub-app at /api/mcp-server/mcp
-#     and the /.well-known/oauth-authorization-server discovery route.
-#     Mounted AFTER create_app() so the FastAPI routes registered via RouteSpec
-#     (register, authorize, authorize/consent, token) appear in app.routes first
-#     and take priority over the sub-app Mount for their specific paths.
-#     Direct-mount mirrors the _e2e_setup.mount pattern.
-#
-#     FastMCP lifespan: Starlette does NOT propagate lifespan events to mounted
-#     sub-apps, so we chain the FastMCP http_app's lifespan into the FastAPI
-#     router's lifespan_context.  Without this the StreamableHTTPSessionManager's
-#     task group never initialises and every /api/mcp-server/mcp request errors.
-#
-#     StreamableHTTPSessionManager.run() can only be called ONCE per instance.
-#     In tests that restart the ASGI lifespan (e.g. multiple TestClient() uses),
-#     a fixed module-level _mcp_http_app would fail on the second lifespan start.
-#     Solution: an ASGI proxy whose inner handler is swapped to a FRESH http_app
-#     on each lifespan start; this gives each startup a virgin session manager.
-from contextlib import asynccontextmanager as _asynccontextmanager  # noqa: E402
-from typing import Any as _Any  # noqa: E402
-
-from app.domain.mcp_server.oauth_web import well_known_router as _mcp_well_known_router  # noqa: E402
-from app.domain.mcp_server.tools import mcp as _mcp_server  # noqa: E402
-
-
-class _MCPProxy:
-    """ASGI proxy for the FastMCP sub-app.
-
-    A fresh `mcp.http_app()` (and thus a fresh `StreamableHTTPSessionManager`)
-    is created on each lifespan startup and stored here.  The proxy forwards
-    every ASGI call to the current inner handler.  This allows the parent app's
-    lifespan to restart (e.g. in tests using `TestClient(app)` multiple times)
-    without hitting the "can only be called once per instance" guard on the
-    session manager.
-    """
-
-    def __init__(self) -> None:
-        self._inner: _Any = None
-
-    async def __call__(self, scope: dict, receive: _Any, send: _Any) -> None:
-        if self._inner is None:
-            raise RuntimeError("_MCPProxy not initialised — lifespan not running")
-        await self._inner(scope, receive, send)
-
-
-_mcp_proxy = _MCPProxy()
-_orig_router_lifespan = app.router.lifespan_context
-
-
-@_asynccontextmanager
-async def _combined_lifespan(_app):
-    # Fresh instance every time so session manager starts clean.
-    mcp_http_app = _mcp_server.http_app(path="/", stateless_http=True)
-    _mcp_proxy._inner = mcp_http_app
-    try:
-        async with _orig_router_lifespan(_app):
-            async with mcp_http_app.router.lifespan_context(mcp_http_app):
-                yield
-    finally:
-        _mcp_proxy._inner = None
-
-
-app.router.lifespan_context = _combined_lifespan
-
-app.include_router(_mcp_well_known_router, prefix="/.well-known", tags=["mcp_server"])
-app.mount("/api/mcp-server/mcp", _mcp_proxy)
+# 8a. Inbound MCP server — mounts the FastMCP ASGI sub-app at /api/mcp-server/mcp
+#     and the /.well-known/oauth-authorization-server discovery route, and chains
+#     the FastMCP lifespan into the app's lifespan_context. Mounted AFTER
+#     create_app() so the FastAPI routes registered via RouteSpec take priority
+#     over the sub-app Mount. Details in app/domain/mcp_server/asgi.py.
+_domain_mcp_server.mount(app)
 
 # 7b. Test-only HTTP surface (`/api/testing/*`) — reset + seed endpoints used by
 # the e2e Playwright suite (and ad-hoc local seeding). `mount_testing_endpoints`

@@ -28,6 +28,7 @@ from app.core.sse import GeneralEventKind
 from app.domain.attachments.service import (
     AttachmentNotFoundError,
     AttachmentTooLargeError,
+    InvalidAttachmentFilenameError,
     TicketNotFoundError,
     add_attachment,
     get_attachment,
@@ -178,6 +179,53 @@ async def test_add_attachment_over_cap_raises_too_large(db_session) -> None:  # 
             actor=actor,
             session=db_session,
         )
+
+
+@pytest.mark.asyncio
+async def test_add_attachment_rejects_unsafe_filenames(db_session) -> None:  # type: ignore[no-untyped-def]
+    """A filename that is not a single safe path segment raises before any write.
+
+    The filename is later joined as `.yaaos-inputs/<filename>` into a workspace
+    write path by the run engine — a traversal segment would escape the inputs
+    directory while staying inside the workspace root.
+    """
+    org_id, _, ticket_id, actor = await _make_org_user_ticket(db_session)
+
+    for bad in (
+        "../.git/hooks/pre-commit",
+        "nested/file.md",
+        "back\\slash.md",
+        "..",
+        ".",
+        "",
+        "dots..inside.md",
+    ):
+        with pytest.raises(InvalidAttachmentFilenameError):
+            await add_attachment(
+                ticket_id,
+                org_id=org_id,
+                filename=bad,
+                body=_PLAIN_BODY,
+                actor=actor,
+                session=db_session,
+            )
+
+
+@pytest.mark.asyncio
+async def test_add_attachment_accepts_plain_filename(db_session) -> None:  # type: ignore[no-untyped-def]
+    """A plain single-segment filename is accepted."""
+    org_id, _, ticket_id, actor = await _make_org_user_ticket(db_session)
+
+    attachment = await add_attachment(
+        ticket_id,
+        org_id=org_id,
+        filename="requirements.v2.md",
+        body=_PLAIN_BODY,
+        actor=actor,
+        session=db_session,
+    )
+    await db_session.commit()
+    assert attachment.filename == "requirements.v2.md"
 
 
 @pytest.mark.asyncio
@@ -416,6 +464,24 @@ async def test_post_attachment_too_large_returns_413(seeded) -> None:  # type: i
         )
     assert r.status_code == 413, r.text
     assert r.json()["detail"]["error"] == "too_large"
+
+
+@pytest.mark.asyncio
+async def test_post_attachment_traversal_filename_returns_400(seeded) -> None:  # type: ignore[no-untyped-def]
+    """POST /api/attachments with a path-traversal filename returns 400 invalid_filename."""
+    async with _client() as c:
+        r = await c.post(
+            "/api/attachments",
+            json={
+                "ticket_id": seeded["ticket_id"],
+                "filename": "../.git/hooks/pre-commit",
+                "body": _PLAIN_BODY,
+            },
+            cookies=_cookies(seeded),
+            headers=_headers(seeded, mutate=True),
+        )
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"]["error"] == "invalid_filename"
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from app.domain.attachments.contracts import ArtifactFrontmatter, parse_frontmat
 from app.domain.attachments.service import (
     AttachmentNotFoundError,
     AttachmentTooLargeError,
+    InvalidAttachmentFilenameError,
     TicketNotFoundError,
     add_attachment,
     get_attachment,
@@ -24,6 +25,7 @@ __all__ = [
     "AttachmentMeta",
     "AttachmentNotFoundError",
     "AttachmentTooLargeError",
+    "InvalidAttachmentFilenameError",
     "TicketNotFoundError",
     "add_attachment",
     "get_attachment",

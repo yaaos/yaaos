@@ -5,6 +5,8 @@ yaaos is an MCP server for local coding agents.  This module owns:
     authorization code flow, opaque bearer tokens).
   - The FastMCP tool registry (one thin wrapper per domain service function).
   - Token lifecycle: mint, rotate, sweep, revoke.
+  - `mount(app)` — mounts the FastMCP ASGI sub-app + discovery route on the
+    composition root's FastAPI app (see `asgi.py`).
 
 FastMCP provides Streamable HTTP transport and bearer-auth middleware;
 the AS endpoints are hand-rolled FastAPI routes because FastMCP's
@@ -13,6 +15,8 @@ for the browser-based consent flow.
 """
 
 import app.domain.mcp_server.oauth_web  # noqa: F401 — registers /api/mcp-server routes
+from app.core.identity import register_user_deletion_hook as _register_user_deletion_hook
+from app.domain.mcp_server.asgi import mount
 from app.domain.mcp_server.auth import (
     ACCESS_TOKEN_TTL,
     REFRESH_TOKEN_TTL,
@@ -21,7 +25,6 @@ from app.domain.mcp_server.auth import (
     authenticate,
     revoke_tokens_for_user,
 )
-from app.domain.mcp_server.tools import mcp
 
 __all__ = [
     "ACCESS_TOKEN_TTL",
@@ -29,6 +32,10 @@ __all__ = [
     "McpAuthError",
     "McpPrincipal",
     "authenticate",
-    "mcp",
+    "mount",
     "revoke_tokens_for_user",
 ]
+
+# MCP bearers must not outlive the user row — the token tables carry no FK to
+# `users`, so `core/identity.delete_user` invokes this hook in its transaction.
+_register_user_deletion_hook(revoke_tokens_for_user)
