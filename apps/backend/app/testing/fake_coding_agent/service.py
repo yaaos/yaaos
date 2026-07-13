@@ -11,16 +11,22 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from app.core.agent_gateway import InvokeClaudeCodeCommand, InvokeClaudeCodeLimits
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
+    CommandBuildContext,
     Invocation,
     InvokeCodingAgent,
     RunResult,
+    StageOptions,
     Usage,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _TOKENS_IN = 0
 _TOKENS_OUT = 0
@@ -35,8 +41,18 @@ class FakeCodingAgentPlugin:
 
     def __init__(self, plugin_id: str = "claude_code") -> None:
         self.plugin_id = plugin_id
+        self.display_name = "Fake Plugin"
+        self.command_kind = "InvokeClaudeCode"
         # Overridable per-instance return values.
         self.compile_invocation_result: InvokeCodingAgent | None = None
+
+    def stage_options(self) -> StageOptions:
+        """Return empty enumerations — tests that need specific values override this."""
+        return StageOptions(models=(), efforts=())
+
+    def skill_path(self, skill_name: str) -> str:
+        """Conventional skill path — matches `ClaudeCodePlugin.skill_path`."""
+        return f".claude/skills/{skill_name}/SKILL.md"
 
     def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Return a stable canned exec block for the given invocation."""
@@ -47,6 +63,26 @@ class FakeCodingAgentPlugin:
             env={},
             stdin=None,
             wallclock_seconds=invocation.wallclock_seconds,
+        )
+
+    async def build_command(
+        self,
+        *,
+        compiled: InvokeCodingAgent,
+        invocation: Invocation,
+        build: CommandBuildContext,
+        session: AsyncSession,
+    ) -> InvokeClaudeCodeCommand:
+        """Build a canned `InvokeClaudeCodeCommand` — matches `command_kind`."""
+        return InvokeClaudeCodeCommand(
+            command_id=build.command_id,
+            workspace_id=build.workspace_id,
+            traceparent=build.traceparent,
+            invocation=build.invocation_body,
+            mcp_servers=(),
+            limits=InvokeClaudeCodeLimits(wallclock_seconds=compiled.wallclock_seconds),
+            result_spec={},
+            skill_path=build.skill_path,
         )
 
     def parse_result(self, terminal_event_payload: Mapping[str, Any]) -> RunResult:

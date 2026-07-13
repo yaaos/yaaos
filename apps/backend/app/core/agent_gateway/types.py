@@ -25,6 +25,7 @@ class AgentCommandKind(StrEnum):
     WRITE_FILES = "WriteFiles"
     REFRESH_WORKSPACE_AUTH = "RefreshWorkspaceAuth"
     INVOKE_CLAUDE_CODE = "InvokeClaudeCode"
+    INVOKE_CODEX = "InvokeCodex"
     CLEANUP_WORKSPACE = "CleanupWorkspace"
     PUSH_BRANCH = "PushBranch"
     CONFIG_UPDATE = "ConfigUpdate"
@@ -176,6 +177,51 @@ class InvokeClaudeCodeFields(BaseModel):
     skill_path: str
 
 
+# ── InvokeCodex ─────────────────────────────────────────────────────────────
+
+
+class InvokeCodexLimits(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    wallclock_seconds: int = Field(ge=1)
+
+
+class InvokeCodexCommand(_CommandBase):
+    """Command that runs the OpenAI Codex CLI inside the workspace.
+
+    `invocation` carries the exec block (argv, stdin, env) that
+    `CodexPlugin.compile_invocation` produces and `CodexPlugin.build_command`
+    wires into this wire command. Credentials are the org-level
+    CODEX_API_KEY env var (delivered via ConfigUpdate.api_keys["openai"]) —
+    no per-command credential injection. `output_schema_json` is written to
+    `$TMPDIR/<command_id>-schema.json` and `--output-schema <path>` appended
+    to argv by the Go agent before spawning; None means no schema constraint.
+    """
+
+    kind: Literal[AgentCommandKind.INVOKE_CODEX] = AgentCommandKind.INVOKE_CODEX
+    invocation: dict[str, Any]
+    limits: InvokeCodexLimits
+    result_spec: dict[str, Any] = Field(default_factory=dict)
+    # skill_path: checkout-relative path the agent stats before spawning.
+    # Convention: `.codex/skills/<skill_name>/SKILL.md`.
+    skill_path: str
+    output_schema_json: str | None = None
+
+
+class InvokeCodexFields(BaseModel):
+    """Kind-specific payload fields for an `InvokeCodex` command.
+
+    No envelope keys — see `InvokeClaudeCodeFields` for the pattern.
+    `model_dump(mode="json")` yields the flat keys the Go agent expects.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    invocation: dict[str, Any]
+    limits: dict[str, Any]
+    result_spec: dict[str, Any] = Field(default_factory=dict)
+    skill_path: str
+    output_schema_json: str | None = None
+
+
 class AgentConfig(BaseModel):
     """Runtime configuration delivered to the agent via ConfigUpdateCommand.
 
@@ -282,6 +328,7 @@ AgentCommand = Annotated[
     | WriteFilesCommand
     | RefreshWorkspaceAuthCommand
     | InvokeClaudeCodeCommand
+    | InvokeCodexCommand
     | CleanupWorkspaceCommand
     | PushBranchCommand
     | ConfigUpdateCommand
@@ -307,6 +354,16 @@ TERMINAL_EVENT_KINDS: frozenset[AgentEventKind] = frozenset(
         AgentEventKind.COMPLETED_SUCCESS,
         AgentEventKind.COMPLETED_FAILURE,
         AgentEventKind.COMPLETED_SKIPPED,
+    }
+)
+
+# Canonical set of command kinds that carry a run_id and whose terminal events
+# must route back to the coding-agent run sink. Non-run-bearing kinds (e.g.
+# ConfigUpdate) follow a different terminal path.
+RUN_BEARING_KINDS: frozenset[str] = frozenset(
+    {
+        AgentCommandKind.INVOKE_CLAUDE_CODE,
+        AgentCommandKind.INVOKE_CODEX,
     }
 )
 
@@ -470,6 +527,11 @@ class DispatchContext(BaseModel):
     stage_execution_id: UUID
     attempt: int
     traceparent: str | None = None
+    # Attribution: the user whose credentials drive per-user-mode stages.
+    # Populated from `pipeline_runs.triggered_by_user_id` by the run engine
+    # when building a dispatch context.  None when attribution is unavailable
+    # (API-key mode, schedule without a creator, etc.).
+    user_id: UUID | None = None
 
 
 # ── Errors ─────────────────────────────────────────────────────────────

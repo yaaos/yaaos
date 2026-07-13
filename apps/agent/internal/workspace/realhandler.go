@@ -22,7 +22,10 @@
 //                            of `os.Environ()`, injects API key secrets from
 //                            the last ConfigUpdate (e.g.
 //                            ANTHROPIC_API_KEY), sets a workspace-local
-//                            TMPDIR, adds TRACEPARENT for span linkage,
+//                            TMPDIR (via overrideEnv, so it replaces any
+//                            TMPDIR inherited from the agent's own
+//                            environment rather than shadowing it), adds
+//                            TRACEPARENT for span linkage,
 //                            dispatches via the configured `RunFunc`
 //                            (production default: `RunStreaming`) with
 //                            the workspace tempdir as cwd. After exit —
@@ -83,16 +86,17 @@ var tokenRedactRe = regexp.MustCompile(`x-access-token:[^@]*@`)
 // Adding a new provider here requires no other change in the agent.
 var apiKeyProviderEnvVars = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",
+	"openai":    "CODEX_API_KEY",
 	"rwx":       "RWX_ACCESS_TOKEN",
 }
 
-// Excerpt caps for the `claude exit N` failure string. Stderr stays small;
-// stdout gets a larger tail because claude with `--output-format=stream-json`
-// emits its `{"type":"result","is_error":true,…}` event at the end of stdout,
-// not stderr.
+// Excerpt caps for the failure string emitted on non-zero subprocess exit.
+// Stderr stays small; stdout gets a larger tail because coding agents with
+// structured output (e.g. claude --output-format=stream-json) emit result
+// events at the end of stdout, not stderr.
 const (
-	claudeErrStderrCap     = 2048
-	claudeErrStdoutTailCap = 4096
+	errStderrCap     = 2048
+	errStdoutTailCap = 4096
 )
 
 // artifactMaxBytes caps the artifact file RunClaude reads from
@@ -132,6 +136,25 @@ func excerptTail(b []byte, limit int) string {
 		return string(b)
 	}
 	return "...[truncated head]" + string(b[len(b)-limit:])
+}
+
+// overrideEnv returns env with every existing "key=..." entry removed and a
+// single "key=val" entry appended. Unlike a bare append, this guarantees
+// exactly one entry for key regardless of how many times it already appears
+// in env (e.g. inherited from os.Environ() plus a wire-supplied override) —
+// callers that read the first match (as some libc getenv-style consumers do)
+// and callers that read the last match both see the same value. Order of
+// unrelated entries is preserved.
+func overrideEnv(env []string, key, val string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, prefix+val)
 }
 
 // RealHandlerConfig customizes the production handler's behaviour. Zero
@@ -442,7 +465,7 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	for k, v := range inv.Exec.Env {
 		env = append(env, k+"="+v)
 	}
-	env = append(env, "TMPDIR="+tmpDir)
+	env = overrideEnv(env, "TMPDIR", tmpDir)
 	if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
 		env = append(env, tpEnv)
 	}
@@ -518,8 +541,8 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 			return result, fmt.Errorf(
 				"claude exit %d: stderr=%s stdout_tail=%s",
 				res.ExitCode,
-				excerptHead(res.Stderr, claudeErrStderrCap),
-				excerptTail(res.Stdout, claudeErrStdoutTailCap),
+				excerptHead(res.Stderr, errStderrCap),
+				excerptTail(res.Stdout, errStdoutTailCap),
 			)
 		}
 		return result, fmt.Errorf("claude subprocess: %w", runErr)
@@ -528,6 +551,125 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 		// Exit-push failure is a stage failure with the git stderr — the
 		// artifact still ships via `result` above even though this command
 		// reports completed_failure.
+		return result, fmt.Errorf("git push: %w", pushErr)
+	}
+
+	result.ExecResult = command.ExecResult{
+		ExitCode: res.ExitCode,
+		Stdout:   string(res.Stdout),
+		Stderr:   string(res.Stderr),
+		Duration: res.Duration,
+	}
+	return result, nil
+}
+
+func (h *RealHandler) RunCodex(ctx context.Context, cmd *command.InvokeCodexCommand) (command.InvokeResult, error) {
+	h.mu.Lock()
+	slot, ok := h.slots[cmd.Proto.WorkspaceID]
+	h.mu.Unlock()
+	if !ok {
+		return command.InvokeResult{}, ErrUnknownWorkspace
+	}
+
+	var inv invocationExec
+	if err := json.Unmarshal(cmd.Proto.Invocation, &inv); err != nil {
+		return command.InvokeResult{}, fmt.Errorf("decode invocation: %w", err)
+	}
+	if len(inv.Exec.Argv) == 0 {
+		return command.InvokeResult{}, errors.New("invocation.exec.argv missing or empty")
+	}
+
+	// Pre-spawn: skill file must exist. Convention: `.codex/skills/<name>/SKILL.md`.
+	if cmd.Proto.SkillPath == "" {
+		return command.InvokeResult{}, errors.New("skill not found: (empty skill_path)")
+	}
+	if _, statErr := os.Stat(filepath.Join(slot.path, cmd.Proto.SkillPath)); statErr != nil {
+		return command.InvokeResult{}, fmt.Errorf("skill not found: %s", cmd.Proto.SkillPath)
+	}
+
+	// TMPDIR: workspace-local so artifact + schema files are cleaned up
+	// automatically with the workspace tempdir.
+	tmpDir := filepath.Join(slot.path, workspaceTmpDirName)
+	if err := os.MkdirAll(tmpDir, h.cfg.DirPerm); err != nil {
+		return command.InvokeResult{}, fmt.Errorf("create tmpdir: %w", err)
+	}
+
+	argv := append([]string(nil), inv.Exec.Argv...)
+
+	// Output schema: write the JSON Schema to a temp file and append the
+	// --output-schema flag so codex constrains its structured output. Only
+	// when the backend supplied a schema — nil means no constraint.
+	if cmd.Proto.OutputSchemaJSON != "" {
+		schemaPath := filepath.Join(tmpDir, cmd.Proto.CommandID+"-schema.json")
+		if err := os.WriteFile(schemaPath, []byte(cmd.Proto.OutputSchemaJSON), 0o600); err != nil {
+			return command.InvokeResult{}, fmt.Errorf("write output schema: %w", err)
+		}
+		argv = append(argv, "--output-schema", schemaPath)
+	}
+
+	// Env layering (same priority order as RunClaude).
+	env := os.Environ()
+	if h.cfg.ApiKeys != nil {
+		if apiKeys := h.cfg.ApiKeys(); apiKeys != nil {
+			for providerID, envVar := range apiKeyProviderEnvVars {
+				if sec, ok := apiKeys[providerID]; ok && !sec.IsZero() {
+					env = append(env, envVar+"="+sec.Value())
+				}
+			}
+		}
+	}
+	for k, v := range inv.Exec.Env {
+		env = append(env, k+"="+v)
+	}
+	env = overrideEnv(env, "TMPDIR", tmpDir)
+	if tpEnv := tracing.TraceparentEnv(ctx); tpEnv != "" {
+		env = append(env, tpEnv)
+	}
+
+	emitter := EmitterFromContext(ctx)
+	var accumulated bytes.Buffer
+	_, endRun := tracing.StartSpan(ctx, "workspace.runcodex")
+	res, runErr := h.cfg.RunFunc(ctx, RunStreamingOptions{
+		Argv:  argv,
+		Stdin: []byte(inv.Exec.Stdin),
+		Env:   env,
+		Dir:   slot.path,
+		OnStdoutLine: func(line []byte) {
+			accumulated.Write(line)
+			accumulated.WriteByte('\n')
+			emitter.Progress(map[string]any{
+				"workspace_id": cmd.Proto.WorkspaceID,
+				"stream_line":  string(line),
+			})
+		},
+	})
+	endRun(runErr)
+	if res != nil {
+		res.Stdout = accumulated.Bytes()
+	}
+
+	artifactBody, artifactErr := readArtifact(tmpDir, cmd.Proto.CommandID)
+	pushErr := maybePushOriginHead(ctx, slot.path)
+
+	result := command.InvokeResult{
+		WorkspaceID:   cmd.Proto.WorkspaceID,
+		Artifact:      artifactBody,
+		ArtifactError: artifactErr,
+	}
+
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) && res != nil {
+			return result, fmt.Errorf(
+				"codex exit %d: stderr=%s stdout_tail=%s",
+				res.ExitCode,
+				excerptHead(res.Stderr, errStderrCap),
+				excerptTail(res.Stdout, errStdoutTailCap),
+			)
+		}
+		return result, fmt.Errorf("codex subprocess: %w", runErr)
+	}
+	if pushErr != nil {
 		return result, fmt.Errorf("git push: %w", pushErr)
 	}
 

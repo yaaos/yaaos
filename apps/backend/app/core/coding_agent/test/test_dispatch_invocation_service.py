@@ -18,12 +18,14 @@ from sqlalchemy import select
 
 from app.core.agent_gateway import DispatchContext, get_command_org_and_payload
 from app.core.coding_agent import (
+    CredentialUnavailableError,
     Invocation,
     dispatch_invocation,
 )
 from app.core.coding_agent.models import CodingAgentRunRow
 from app.core.coding_agent.run_service import get_run_id_for_command
 from app.core.workspace import WorkspaceClaimFailed, WorkspaceNotFoundError
+from app.plugins.codex import CodexPlugin
 from app.testing.e2e_setup import seed_agent, seed_workspace
 from app.testing.fake_coding_agent import FakeCodingAgentPlugin
 from app.web import app as _web_app  # noqa: F401 — registers all models so FK metadata resolves correctly
@@ -309,6 +311,34 @@ async def test_dispatch_invocation_busy_workspace_raises_claim_failed(db_session
         await dispatch_invocation(
             invocation=_invocation(ws_id),
             plugin=FakeCodingAgentPlugin(),
+            ctx=_ctx(run_id),
+            command_id=uuid.uuid7(),
+            session=db_session,
+        )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_invocation_codex_no_org_key_raises_credential_unavailable(db_session) -> None:
+    """A codex dispatch with no org-level OpenAI key surfaces
+    `CredentialUnavailableError` through `dispatch_invocation` — the
+    `CodexPlugin.build_command` credential gate must fire on the real
+    dispatch path, not just when the plugin method is called directly."""
+    org_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    ws_id = await _seed_active_workspace(org_id)
+    invocation = Invocation(
+        workspace_id=ws_id,
+        skill="pipeline-requirements",
+        model="gpt-5-codex",
+        effort="medium",
+        context={"stage_name": "requirements", "input": {}, "artifact_path": "$TMPDIR/out.md"},
+        wallclock_seconds=300,
+    )
+
+    with pytest.raises(CredentialUnavailableError, match="No OpenAI API key"):
+        await dispatch_invocation(
+            invocation=invocation,
+            plugin=CodexPlugin(),
             ctx=_ctx(run_id),
             command_id=uuid.uuid7(),
             session=db_session,

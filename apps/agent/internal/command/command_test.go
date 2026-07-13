@@ -293,6 +293,50 @@ func TestDecodeRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("InvokeCodex_with_wallclock", func(t *testing.T) {
+		raw := mustMarshal(t, map[string]any{
+			"command_id":   "cmd-cx",
+			"workspace_id": "ws-cx",
+			"traceparent":  "tp-cx",
+			"kind":         "InvokeCodex",
+			"invocation":   json.RawMessage(`{"exec":{"argv":["codex","exec"],"stdin":"","env":{}}}`),
+			"limits": map[string]any{
+				"wallclock_seconds": 90,
+			},
+			"skill_path": ".codex/skills/myskill/SKILL.md",
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		hdr := cmd.Header()
+		assertHeader(t, hdr, "cmd-cx", "ws-cx", "tp-cx", protocol.KindInvokeCodex)
+		assertTimeout(t, cmd.Timeout(), 90*time.Second)
+		if _, ok := cmd.(*command.InvokeCodexCommand); !ok {
+			t.Errorf("expected *command.InvokeCodexCommand, got %T", cmd)
+		}
+	})
+
+	t.Run("InvokeCodex_fallback_timeout", func(t *testing.T) {
+		raw := mustMarshal(t, map[string]any{
+			"command_id":   "cmd-cxf",
+			"workspace_id": "ws-cxf",
+			"traceparent":  "tp-cxf",
+			"kind":         "InvokeCodex",
+			"invocation":   json.RawMessage(`{"exec":{"argv":["codex"],"stdin":"","env":{}}}`),
+			"limits": map[string]any{
+				"wallclock_seconds": 0,
+			},
+			"skill_path": ".codex/skills/s/SKILL.md",
+		})
+		cmd, err := command.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		// wallclock_seconds=0 → fallback 15m
+		assertTimeout(t, cmd.Timeout(), 15*time.Minute)
+	})
+
 	t.Run("completion_token survives decode", func(t *testing.T) {
 		raw := mustMarshal(t, map[string]any{
 			"command_id":       "cmd-tok",
@@ -420,6 +464,7 @@ func TestSetTraceparent_AllKinds(t *testing.T) {
 		&command.WriteFilesCommand{},
 		&command.RefreshWorkspaceAuthCommand{},
 		&command.InvokeClaudeCodeCommand{},
+		&command.InvokeCodexCommand{},
 		&command.CleanupWorkspaceCommand{},
 		&command.PushBranchCommand{},
 		&command.ConfigUpdateCommand{},

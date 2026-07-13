@@ -229,6 +229,7 @@ async def add_binding(
     *,
     spec: TriggerBindingSpec,
     actor: Actor,
+    created_by: UUID | None = None,
     session: AsyncSession,
 ) -> UUID:
     """Validates: `intake_point_id` registered · schedule present iff the
@@ -269,6 +270,7 @@ async def add_binding(
         intake_point_id=spec.intake_point_id,
         pipeline_id=spec.pipeline_id,
         schedule=spec.schedule.model_dump(mode="json") if spec.schedule is not None else None,
+        created_by=created_by,
     )
     session.add(row)
     await session.flush()
@@ -318,6 +320,7 @@ async def _to_trigger_binding(row: RepoTriggerBindingRow, *, session: AsyncSessi
         pipeline_id=row.pipeline_id,
         pipeline_name=pipeline_ref.name if pipeline_ref is not None else "",
         schedule=Schedule.model_validate(row.schedule) if row.schedule is not None else None,
+        created_by=row.created_by,
     )
 
 

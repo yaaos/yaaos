@@ -10,13 +10,31 @@ settings validation; `core/coding_agent` owns dispatch and the run lifecycle.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.agent_gateway import AgentCommand
+
+
+class StageOptions(BaseModel, frozen=True):
+    """Per-plugin model and effort enumerations for the stage editor.
+
+    Carried by `CodingAgentPlugin.stage_options()` and surfaced on the
+    `/api/coding-agents` list row so the stage editor populates dropdowns
+    without a separate round-trip.
+    """
+
+    models: tuple[str, ...]
+    efforts: tuple[str, ...]
+
 
 # Plugin/model-specific effort level string. The plugin validates its
 # own allowed values; `core/coding_agent` treats this as an opaque str.
@@ -46,16 +64,34 @@ class Invocation(BaseModel):
 class InvokeCodingAgent(BaseModel):
     """Concrete exec block returned by `CodingAgentPlugin.compile_invocation`.
 
-    Carries the exact argv, env overrides, optional stdin, and wallclock
-    cap the Go agent uses to spawn the Claude Code subprocess.
-    `env` carries the Anthropic API key — the accepted carve-out for
-    wire-bound exec (same contract as the `otlp_token` on ConfigUpdate).
+    Carries the exact argv, env overrides, optional stdin, and wallclock cap.
+    `env` carries env overrides — the accepted carve-out for wire-bound exec
+    (same contract as `otlp_token` on ConfigUpdate).
     """
 
     argv: list[str]
     env: Mapping[str, str]
     stdin: str | None = None
     wallclock_seconds: int
+
+
+class CommandBuildContext(BaseModel, frozen=True):
+    """Dispatch-time context `dispatch_invocation` hands to `plugin.build_command`.
+
+    `invocation_body` is the vendor-shared `{"exec": {argv, stdin, env}}` wire
+    body `core/coding_agent` assembles from the plugin's own compiled
+    `InvokeCodingAgent` — the Go agent requires the `exec` wrapper, since a
+    flat argv dict leaves `inv.Exec.Argv` empty after json.Unmarshal.
+    `user_id` is the run's attributed user; `None` for system-actor runs.
+    """
+
+    command_id: UUID
+    workspace_id: UUID
+    traceparent: str
+    org_id: UUID
+    user_id: UUID | None
+    skill_path: str
+    invocation_body: dict[str, Any]
 
 
 class RunStatus(StrEnum):
@@ -180,6 +216,9 @@ class CodingAgentPlugin(Protocol):
     `plugin_id` identifies the plugin in the registry and on run rows.
     `compile_invocation` is a pure function that translates a high-level
     `Invocation` into a concrete `InvokeCodingAgent` exec block.
+    `build_command` constructs the plugin's wire `AgentCommand` from a
+    `CommandBuildContext`, gating on any dispatch-time credential the plugin
+    requires.
     `parse_result` is a pure function that decodes a terminal AgentEvent
     payload dict into a `RunResult`.
     `validate_settings` validates a raw settings dict and returns the
@@ -196,6 +235,24 @@ class CodingAgentPlugin(Protocol):
         to vendor-specific CLI flags, and context encoding for the skill that
         runs inside the workspace. Raises `CodingAgentError` for unknown
         skills or missing configuration that can be verified without IO.
+        """
+        ...
+
+    async def build_command(
+        self,
+        *,
+        compiled: InvokeCodingAgent,
+        invocation: Invocation,
+        build: CommandBuildContext,
+        session: AsyncSession,
+    ) -> AgentCommand:
+        """Construct the wire `AgentCommand` for this invocation.
+
+        The plugin owns wire-command construction and any dispatch-time
+        credential gating (e.g. Codex's org-level OpenAI-key check). Raises
+        `CredentialUnavailableError` when a required credential is missing.
+        Receives `session` so gates can read org state; must not commit —
+        the caller (`dispatch_invocation`) owns the transaction.
         """
         ...
 
@@ -232,9 +289,109 @@ class CodingAgentPlugin(Protocol):
         """
         ...
 
+    display_name: str
+    """Human-readable plugin name, e.g. "Claude Code". Surfaced on install
+    list rows so the SPA can render the display name without storing it."""
+
+    command_kind: str
+    """AgentCommandKind string this plugin dispatches, e.g. "InvokeClaudeCode".
+    Decouples `dispatch_invocation` from knowing which command kind a plugin
+    uses — the plugin declares it; dispatch reads it."""
+
+    def stage_options(self) -> StageOptions:
+        """Return the model and effort enumerations for this plugin.
+
+        Pure function — no IO, no session. Callers (the stage editor via
+        the `/api/coding-agents` list endpoint) use the returned lists to
+        populate model/effort dropdowns without a separate request.
+        """
+        ...
+
+    def skill_path(self, skill_name: str) -> str:
+        """Return the checkout-relative path of the named skill's entry file.
+
+        Pure function — no IO, no session. The agent stats this path before
+        spawning the coding-agent subprocess; an absent file causes
+        `completed_failure` with `failure_reason="skill not found: <path>"`.
+        Vendors differ in their on-disk conventions — this method is the
+        single place the convention is declared.
+        """
+        ...
+
+    def render_skill_bundle(
+        self,
+        skills: Sequence[SkillSource],
+        agents: Sequence[AgentSource],
+    ) -> list[BundleFile]:
+        """Render a vendor-native skills bundle from canonical source objects.
+
+        Pure function — no IO, no session. Receives parsed `SkillSource` and
+        `AgentSource` objects (built from the `.claude/` source tree) and
+        returns the list of files that should go into the download zip.
+
+        For ``claude_code``: passthrough re-emit of the `.claude/` tree — the
+        canonical source format IS the generic input schema.
+        For ``codex``: codex-native skills under `.codex/skills/`, per-agent
+        `.codex/agents/pipeline-*.toml` definitions, and an `AGENTS.md`
+        carrying the delegation-authorization sentence.
+        """
+        ...
+
+
+class BundleFile(BaseModel, frozen=True):
+    """One file entry in a generated skills bundle.
+
+    ``path`` is repo-root-relative (forward slashes, no leading slash) and
+    becomes the zip entry path. ``content`` is the file's text content.
+    """
+
+    path: str
+    content: str
+
+
+class SkillSource(BaseModel, frozen=True):
+    """Parsed canonical skill source (from one `.claude/skills/<name>/` dir).
+
+    ``frontmatter`` is the parsed YAML header. ``body`` is the markdown body
+    after the frontmatter block. ``extra_files`` carries any non-`SKILL.md`
+    files in the skill directory, each with their repo-root-relative ``path``.
+    """
+
+    name: str
+    frontmatter: dict[str, Any]
+    body: str
+    extra_files: tuple[BundleFile, ...]
+
+
+class AgentSource(BaseModel, frozen=True):
+    """Parsed canonical agent source (from one `.claude/agents/pipeline-*.md`).
+
+    ``frontmatter`` is the parsed YAML header. ``body`` is the markdown body
+    after the frontmatter block.
+    """
+
+    name: str
+    frontmatter: dict[str, Any]
+    body: str
+
 
 class CodingAgentError(Exception):
     """Infrastructure failure (subprocess won't spawn, config table unreadable)."""
+
+
+class CredentialUnavailableError(CodingAgentError):
+    """Raised by a credential provider when it cannot resolve a usable credential
+    for a dispatch (missing OAuth connection, expired token that can't be refreshed,
+    API key not configured, attribution gap, etc.).
+
+    ``user_message`` is a short human-readable description suitable for inclusion
+    in the stage's ``failure_reason`` — it is surfaced in the Runs tab and must
+    not contain internal details (user IDs, secret excerpts, stack traces).
+    """
+
+    def __init__(self, user_message: str) -> None:
+        super().__init__(user_message)
+        self.user_message = user_message
 
 
 class PluginNotFoundError(LookupError):

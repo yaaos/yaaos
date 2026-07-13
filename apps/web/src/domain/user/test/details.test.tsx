@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import type React from "react";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -37,9 +37,15 @@ const BASE_USER = {
   ],
 };
 
+// Default empty connections — override per-test when testing the connections section.
+const EMPTY_CONNECTIONS = { connections: [] };
+
 describe("DetailsPage (MSW)", () => {
   beforeEach(() => {
-    server.use(http.get("/api/user/me", () => HttpResponse.json(BASE_USER)));
+    server.use(
+      http.get("/api/user/me", () => HttpResponse.json(BASE_USER)),
+      http.get("/api/user/oauth/connections", () => HttpResponse.json(EMPTY_CONNECTIONS)),
+    );
   });
 
   it("renders display name, per-org handles, emails, GitHub connect CTA", async () => {
@@ -65,5 +71,112 @@ describe("DetailsPage (MSW)", () => {
       expect(screen.getByTestId("github-username")).toHaveTextContent("@octocat"),
     );
     expect(screen.getByTestId("github-clear")).toBeInTheDocument();
+  });
+
+  it("renders connections section with a not-connected card", async () => {
+    server.use(
+      http.get("/api/user/oauth/connections", () =>
+        HttpResponse.json({
+          connections: [
+            {
+              provider_id: "example",
+              display_name: "Example Provider",
+              connect_hint: "Authorize yaaos in the Example Provider settings.",
+              status: "not_connected",
+              external_account_id: null,
+              connected_at: null,
+              needs_reauth_reason: null,
+            },
+          ],
+        }),
+      ),
+    );
+    render(wrap(<DetailsPage />));
+    await waitFor(() => expect(screen.getByTestId("connections-section")).toBeInTheDocument());
+    expect(screen.getByTestId("connection-row-example")).toBeInTheDocument();
+    expect(screen.getByTestId("connection-connect-example")).toBeInTheDocument();
+  });
+
+  it("renders connected card with Disconnect button", async () => {
+    server.use(
+      http.get("/api/user/oauth/connections", () =>
+        HttpResponse.json({
+          connections: [
+            {
+              provider_id: "example",
+              display_name: "Example Provider",
+              connect_hint: "Authorize yaaos in the Example Provider settings.",
+              status: "connected",
+              external_account_id: "example-acct-123",
+              connected_at: new Date().toISOString(),
+              needs_reauth_reason: null,
+            },
+          ],
+        }),
+      ),
+    );
+    render(wrap(<DetailsPage />));
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-disconnect-example")).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/example-acct-123/)).toBeInTheDocument();
+  });
+
+  it("renders needs_reauth card with reason text and reconnect button", async () => {
+    server.use(
+      http.get("/api/user/oauth/connections", () =>
+        HttpResponse.json({
+          connections: [
+            {
+              provider_id: "example",
+              display_name: "Example Provider",
+              connect_hint: "Authorize yaaos in the Example Provider settings.",
+              status: "needs_reauth",
+              external_account_id: null,
+              connected_at: null,
+              needs_reauth_reason: "token refresh rejected (invalid_grant)",
+            },
+          ],
+        }),
+      ),
+    );
+    render(wrap(<DetailsPage />));
+    await waitFor(() => expect(screen.getByTestId("connections-section")).toBeInTheDocument());
+    expect(screen.getByTestId("connection-row-example")).toBeInTheDocument();
+    // Reconnect button shown (not connected), labeled for re-authorization
+    expect(screen.getByTestId("connection-connect-example")).toHaveTextContent("Reconnect");
+    // Reason text surfaced to the user
+    expect(screen.getByText(/invalid_grant/)).toBeInTheDocument();
+  });
+
+  it("shows inline error text when starting device auth fails", async () => {
+    server.use(
+      http.get("/api/user/oauth/connections", () =>
+        HttpResponse.json({
+          connections: [
+            {
+              provider_id: "example",
+              display_name: "Example Provider",
+              connect_hint: "Authorize yaaos in the Example Provider settings.",
+              status: "not_connected",
+              external_account_id: null,
+              connected_at: null,
+              needs_reauth_reason: null,
+            },
+          ],
+        }),
+      ),
+      http.post("/api/user/oauth/example/device-auth/start", () =>
+        HttpResponse.json({ detail: "device_auth_failed" }, { status: 502 }),
+      ),
+    );
+    render(wrap(<DetailsPage />));
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-connect-example")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("connection-connect-example"));
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-connect-err-example")).toBeInTheDocument(),
+    );
   });
 });

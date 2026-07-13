@@ -19,6 +19,7 @@ No HTTP routes. No `bootstrap()` — wired from `app/web.py` via env var, not im
 
 Wraps the real plugin. Implements the full `CodingAgentPlugin` Protocol surface:
 - `compile_invocation` — returns a hardcoded minimal exec block (`argv=["stub"]`, `env={}`, `stdin=None`). Does **not** delegate to the wrapped plugin's `compile_invocation`. Purpose: prevent any real Claude CLI launch or Anthropic IO from tests.
+- `build_command` — delegates verbatim to the wrapped plugin's `build_command`. The stubbed `compiled` exec block flows straight through; the wrapped plugin's `build_command` only reads `compiled.wallclock_seconds` plus the `CommandBuildContext`, so delegating changes no CLI-relevant behavior (including the wrapped codex plugin's credential gate, which still fires).
 - `parse_result` — passes `terminal_event_payload["stdout"]` through unchanged into `RunResult.output`. Emits zero findings on its own — any downstream finding assertion requires the caller (test code or the e2e stub Go agent) to supply schema-valid stream-json in the payload. Attaches a canned `ActivityLog` (four typed `ActivityEvent` instances with real `datetime` timestamps and canonical `kind` values) and fixed stub usage counters.
 - `validate_settings` — always passes through `dict(settings)` unchanged. The stub deliberately skips validation so tests that exercise the full pipeline don't need valid settings; endpoint-level validation tests that need real rejection must bind `ClaudeCodePlugin` directly.
 

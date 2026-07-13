@@ -55,6 +55,7 @@ from app.domain.pipelines.service import (
     update_pipeline,
 )
 from app.domain.pipelines.service import _lookup_pipeline_ref as _lookup_pipeline_ref
+from app.domain.pipelines.stage_prompt import render_stage_prompt
 from app.domain.pipelines.types import (
     Kickoff,
     PauseResolution,
@@ -109,6 +110,7 @@ __all__ = [
     "pipeline_referenced_by_call",
     "register_comment_findings_provider",
     "register_run_terminal_hook",
+    "render_stage_prompt",
     "request_cancel",
     "resolve_pause",
     "start_rerun",

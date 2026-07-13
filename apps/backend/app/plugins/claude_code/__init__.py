@@ -10,6 +10,3 @@ __all__ = [
 
 # Register at import time.
 bootstrap()
-
-# Side-effect import: register HTTP routes (/defaults).
-from app.plugins.claude_code import web  # noqa: E402, F401

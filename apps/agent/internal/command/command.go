@@ -106,6 +106,12 @@ func Decode(raw []byte) (Command, error) {
 			return nil, fmt.Errorf("command: decode InvokeClaudeCode: %w", err)
 		}
 		return &InvokeClaudeCodeCommand{Proto: v}, nil
+	case protocol.KindInvokeCodex:
+		var v protocol.InvokeCodexCommand
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, fmt.Errorf("command: decode InvokeCodex: %w", err)
+		}
+		return &InvokeCodexCommand{Proto: v}, nil
 	case protocol.KindCleanupWorkspace:
 		var v protocol.CleanupWorkspaceCommand
 		if err := json.Unmarshal(raw, &v); err != nil {

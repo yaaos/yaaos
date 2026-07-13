@@ -11,11 +11,17 @@ variables for the canonical list.
 """
 
 from functools import cache
+from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Dev default: resolve the repo root's `.claude/` tree by walking up from this
+# file's location.  The backend Dockerfile bakes the sources elsewhere and
+# sets YAAOS_SKILLS_SOURCE_DIR to the baked path.
+_DEFAULT_SKILLS_SOURCE_DIR = str(Path(__file__).resolve().parents[5] / ".claude")
 
 
 class Settings(BaseSettings):
@@ -165,6 +171,12 @@ class Settings(BaseSettings):
     # unset so dev/test only need one key. Production must set this.
     yaaos_totp_master_key: SecretStr = SecretStr("")
 
+    # Test-only device-code OAuth provider base URL, consumed by the
+    # `oauth_test` plugin's `UserOAuthApp` registration (device-authorize +
+    # token endpoints derive from this base). Overridden in the test stack
+    # to point at the `fake-oauth-provider` peer. Unused outside APP_MODE=test.
+    yaaos_oauth_test_provider_base_url: str = "http://fake-oauth-provider:8080"
+
     # Linear OAuth + hosted MCP. Defaults point at the real upstreams;
     # the test compose overrides to fake-linear hostnames.
     yaaos_oauth_linear_client_id: str = ""
@@ -214,6 +226,14 @@ class Settings(BaseSettings):
     # Set by the deploy pipeline (e.g. git SHA or semver tag). Default is a
     # safe sentinel so local/dev boots don't require the env var.
     service_version: str = "0.0.0-dev"
+
+    # Skills source directory — the parent of `skills/` and `agents/`
+    # sub-trees used by `core/coding_agent.build_skills_bundle_zip`.
+    # Dev default resolves to the repo root's `.claude/` tree so the local
+    # server can serve bundles without a Docker build step.
+    # The backend Dockerfile bakes `.claude/skills/` and `.claude/agents/` into
+    # `/app/yaaos_skills/` and sets YAAOS_SKILLS_SOURCE_DIR accordingly.
+    yaaos_skills_source_dir: str = _DEFAULT_SKILLS_SOURCE_DIR
 
     # Invitations + dev SMTP (Mailpit).
     yaaos_invitation_token_secret: SecretStr = SecretStr("dev-only-invitation-secret")

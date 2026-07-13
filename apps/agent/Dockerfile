@@ -117,6 +117,7 @@ FROM node:24-bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
  && npm install -g @anthropic-ai/claude-code \
+ && npm install -g @openai/codex@0.142.5 \
  && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Run as a non-root user (UID 65532, matching the distroless `nonroot`

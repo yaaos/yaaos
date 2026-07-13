@@ -23,7 +23,7 @@ import { Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { ExistingPipelineEditor, NewPipelineCard, type PicklistData } from "../PipelineEditor";
 import { TemplateDialog } from "../TemplateDialog";
-import { useClaudeCodeDefaults, useInstalledCodingAgents } from "../queries";
+import { useInstalledCodingAgents } from "../queries";
 
 export function PipelinesSettingsPage() {
   return (
@@ -51,13 +51,10 @@ export function PipelinesSettingsPage() {
 function PipelinesContent() {
   const { data: pipelines } = usePipelines();
   const { data: agents } = useInstalledCodingAgents();
-  const { data: defaults } = useClaudeCodeDefaults();
   const { data: actions } = useActions();
 
   const picklists: PicklistData = {
     agents,
-    models: defaults.models,
-    efforts: defaults.efforts,
     actions,
   };
 
@@ -72,11 +69,17 @@ function PipelinesContent() {
         subtitle="Compose the stage sequence a ticket runs through."
         actions={
           <>
-            <Button variant="outline" size="sm" asChild>
-              <a href="/yaaos-pipeline-skills.zip" download data-testid="pipelines-download-skills">
-                Download skills
-              </a>
-            </Button>
+            {agents.map((agent) => (
+              <Button key={agent.plugin_id} variant="outline" size="sm" asChild>
+                <a
+                  href={`/api/coding-agents/${agent.plugin_id}/skills-bundle`}
+                  download
+                  data-testid={`pipelines-download-skills-${agent.plugin_id}`}
+                >
+                  Download skills ({agent.display_name})
+                </a>
+              </Button>
+            ))}
             <Button
               variant="outline"
               data-testid="pipeline-new-from-template"
@@ -91,7 +94,7 @@ function PipelinesContent() {
         }
       />
       <p className="-mt-2 text-xs text-muted-foreground">
-        Unzip at the repo root. Adds .claude/skills and .claude/agents.
+        Unzip at the repo root. Adds the skills and agents for the installed coding agent.
       </p>
 
       {creating && (

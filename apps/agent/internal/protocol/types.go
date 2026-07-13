@@ -21,6 +21,7 @@ const (
 	KindWriteFiles           CommandKind = "WriteFiles"
 	KindRefreshWorkspaceAuth CommandKind = "RefreshWorkspaceAuth"
 	KindInvokeClaudeCode     CommandKind = "InvokeClaudeCode"
+	KindInvokeCodex          CommandKind = "InvokeCodex"
 	KindCleanupWorkspace     CommandKind = "CleanupWorkspace"
 	KindPushBranch           CommandKind = "PushBranch"
 	KindConfigUpdate         CommandKind = "ConfigUpdate"
@@ -119,6 +120,25 @@ type InvokeClaudeCodeCommand struct {
 	// RealHandler.RunClaude stats this path before spawning claude; absent
 	// → completed_failure with failure_reason="skill not found: <path>".
 	SkillPath string `json:"skill_path"`
+}
+
+type InvokeCodexLimits struct {
+	WallclockSeconds int `json:"wallclock_seconds"`
+}
+
+// InvokeCodexCommand runs the OpenAI Codex CLI inside a workspace. The
+// agent stats SkillPath before spawning — absent → completed_failure.
+// Credentials are the CODEX_API_KEY env var delivered via ConfigUpdate; no
+// per-command credential rides this wire type. If OutputSchemaJSON is
+// non-empty the agent writes it to $TMPDIR/<command_id>-schema.json and
+// appends --output-schema <path> to argv.
+type InvokeCodexCommand struct {
+	CommandHeader
+	Invocation       json.RawMessage   `json:"invocation"`
+	Limits           InvokeCodexLimits `json:"limits"`
+	ResultSpec       map[string]any    `json:"result_spec,omitempty"`
+	SkillPath        string            `json:"skill_path"`
+	OutputSchemaJSON string            `json:"output_schema_json,omitempty"`
 }
 
 type CleanupWorkspaceCommand struct {

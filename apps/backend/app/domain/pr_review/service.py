@@ -38,6 +38,7 @@ from app.core.api_keys import get as api_key_get
 from app.core.audit_log import Actor, ActorKind, audit_for_pr
 from app.core.auth import org_context
 from app.core.database import session as db_session
+from app.core.identity import resolve_github_attribution
 from app.core.intake import parse_yaaos_command
 from app.core.tasks import TaskRef, enqueue, task
 from app.core.vcs import approve_pr, has_active_approval, post_comment_reply
@@ -92,12 +93,16 @@ async def _start_re_review(
         pr_base_sha=pr_base_sha,
         pr_head_sha=pr_head_sha,
     )
+    triggered_by_user_id = await resolve_github_attribution(
+        author_login, org_id=org_id, ticket_id=ticket_id, session=session
+    )
     for binding in bindings:
         await start_run(
             org_id=org_id,
             ticket_id=ticket_id,
             pipeline_id=binding.pipeline_id,
             kickoff=kickoff,
+            triggered_by_user_id=triggered_by_user_id,
             session=session,
         )
 
@@ -268,6 +273,14 @@ async def maybe_start_batch_run(org_id: UUID, ticket_id: UUID, *, session: Async
     if not bindings:
         return
 
+    # Resolve PR author → triggered_by_user_id for per-user credential mode.
+    triggered_by_user_id: UUID | None = None
+    if ticket.pr_id is not None:
+        pr = await get_pull_request(ticket.pr_id, org_id=org_id)
+        triggered_by_user_id = await resolve_github_attribution(
+            pr.author_login, org_id=org_id, ticket_id=ticket_id, session=session
+        )
+
     kickoff = Kickoff(
         intake_point_id="github:pr_comment",
         actor=Actor.system(),
@@ -278,6 +291,7 @@ async def maybe_start_batch_run(org_id: UUID, ticket_id: UUID, *, session: Async
         ticket_id=ticket_id,
         pipeline_id=bindings[0].pipeline_id,
         kickoff=kickoff,
+        triggered_by_user_id=triggered_by_user_id,
         session=session,
     )
     for row in waiting:

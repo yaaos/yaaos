@@ -9,11 +9,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import delete
+from pydantic import BaseModel
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit_log import Actor, audit_for_ticket
 from app.core.identity.models import UserRow
 from app.core.identity.providers import ProviderProfile
 from app.core.identity.repository import (
@@ -55,6 +58,7 @@ from app.core.identity.types import (
     UserEmail,
     UserNotFoundError,
 )
+from app.core.tenancy import list_active_member_ids
 
 __all__ = [
     "EmailAlreadyLinkedError",
@@ -289,6 +293,83 @@ async def set_session_last_seen_for_tests(
     assert row is not None, f"session not found for hash: {token_hash[:8]}..."
     row.last_seen_at = last_seen_at
     await db.flush()
+
+
+async def find_user_ids_by_github_username(github_username: str, *, session: AsyncSession) -> list[UUID]:
+    """Return all non-deactivated user IDs whose ``github_username`` matches
+    ``github_username`` (case-insensitive).
+
+    Most callers expect exactly one result.  Zero means the PR author hasn't
+    connected a GitHub account; two or more means a collision (same GitHub
+    login on multiple accounts) — both cases should be treated as
+    "unresolvable" by the caller.
+
+    Callers that need to scope to a single org must intersect the returned
+    IDs with ``core/tenancy.list_active_member_ids(session, org_id)``
+    before deciding.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(UserRow.id).where(
+                    func.lower(UserRow.github_username) == github_username.lower(),
+                    UserRow.deactivated_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+_AttributionFailureReason = Literal[
+    "blank_username", "no_matching_user", "username_collision", "not_an_active_member"
+]
+
+
+class GithubAttributionFailedPayload(BaseModel):
+    """Audit payload for `ticket.attribution_failed`."""
+
+    github_username: str
+    reason: _AttributionFailureReason
+
+
+async def resolve_github_attribution(
+    github_username: str, *, org_id: UUID, ticket_id: UUID, session: AsyncSession
+) -> UUID | None:
+    """Resolve a GitHub username to the single active org member it belongs to.
+
+    Returns ``None`` — after writing a `ticket.attribution_failed` audit row
+    recording why — when the username is blank, matches zero users, matches
+    multiple users (collision), or the single match is not an active member
+    of ``org_id``. Per-user credential modes depend on attribution, so an
+    unresolvable author must be operator-visible, not silent.
+    """
+    reason: _AttributionFailureReason
+    if not github_username:
+        reason = "blank_username"
+    else:
+        user_ids = await find_user_ids_by_github_username(github_username, session=session)
+        if len(user_ids) == 0:
+            reason = "no_matching_user"
+        elif len(user_ids) > 1:
+            reason = "username_collision"
+        elif user_ids[0] in set(await list_active_member_ids(session, org_id)):
+            return user_ids[0]
+        else:
+            reason = "not_an_active_member"
+
+    actor = Actor.github_user(github_username) if github_username else Actor.system()
+    await audit_for_ticket(
+        ticket_id,
+        "ticket.attribution_failed",
+        GithubAttributionFailedPayload(github_username=github_username, reason=reason),
+        actor=actor,
+        org_id=org_id,
+        session=session,
+    )
+    return None
 
 
 async def _delete_user_artifacts_for_tests(db: AsyncSession, *, user_id: UUID) -> None:

@@ -33,6 +33,7 @@ import (
 // package depends on the other for this constant.
 var apiKeyProcessEnvVars = map[string]string{
 	"anthropic": "ANTHROPIC_API_KEY",
+	"openai":    "CODEX_API_KEY",
 	"rwx":       "RWX_ACCESS_TOKEN",
 }
 

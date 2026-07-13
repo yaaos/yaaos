@@ -26,9 +26,26 @@ export const USER_ME_FIXTURE = {
   ],
 };
 
+/** Default empty connections list — individual tests override this via server.use(). */
+export const CONNECTIONS_FIXTURE = {
+  connections: [] as Array<{
+    provider_id: string;
+    display_name: string;
+    connect_hint: string;
+    status: "not_connected" | "connected" | "needs_reauth";
+    external_account_id: string | null;
+    connected_at: string | null;
+    needs_reauth_reason: string | null;
+  }>,
+};
+
 export const userHandlers = [
   http.get("/api/user/me", () => {
     return HttpResponse.json(USER_ME_FIXTURE);
+  }),
+
+  http.get("/api/user/oauth/connections", () => {
+    return HttpResponse.json(CONNECTIONS_FIXTURE);
   }),
 
   http.patch("/api/user/me", async ({ request }) => {

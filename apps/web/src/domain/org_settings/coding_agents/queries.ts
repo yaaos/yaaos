@@ -3,9 +3,17 @@ import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-q
 
 export interface CodingAgentInstall {
   plugin_id: string;
+  display_name: string;
+  models: string[];
+  efforts: string[];
   settings: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface AvailablePlugin {
+  plugin_id: string;
+  display_name: string;
 }
 
 export function useCodingAgents() {
@@ -13,6 +21,16 @@ export function useCodingAgents() {
     queryKey: ["coding-agents"],
     queryFn: () => apiFetch<CodingAgentInstall[]>("/api/coding-agents"),
     staleTime: 10_000,
+  });
+}
+
+/** All registered coding-agent plugins regardless of install state. Used to
+ *  populate the "Add coding agent" picker so admins see every available plugin. */
+export function useAvailablePlugins() {
+  return useSuspenseQuery<{ plugins: AvailablePlugin[] }>({
+    queryKey: ["coding-agents", "available"],
+    queryFn: () => apiFetch<{ plugins: AvailablePlugin[] }>("/api/coding-agents/available"),
+    staleTime: 60_000,
   });
 }
 

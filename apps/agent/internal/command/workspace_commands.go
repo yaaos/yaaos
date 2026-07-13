@@ -15,6 +15,7 @@ const (
 	defaultRefreshWorkspaceAuthTimeout = 30 * time.Second
 	defaultCleanupWorkspaceTimeout     = 30 * time.Second
 	defaultInvokeClaudeCodeTimeout     = 15 * time.Minute
+	defaultInvokeCodexTimeout          = 15 * time.Minute
 	defaultPushBranchTimeout           = 120 * time.Second
 )
 
@@ -138,6 +139,41 @@ func (c *InvokeClaudeCodeCommand) MarshalWire() ([]byte, error) { return json.Ma
 
 // SetTraceparent implements Command.
 func (c *InvokeClaudeCodeCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }
+
+// ── InvokeCodexCommand ────────────────────────────────────────────────────────
+
+// InvokeCodexCommand runs the OpenAI Codex CLI inside the workspace.
+// Credentials arrive via the CODEX_API_KEY env var delivered on ConfigUpdate
+// — no per-command secret rides this type.
+type InvokeCodexCommand struct {
+	Proto protocol.InvokeCodexCommand
+}
+
+// Header implements Command.
+func (c *InvokeCodexCommand) Header() protocol.CommandHeader {
+	return c.Proto.CommandHeader
+}
+
+// Timeout implements Command. Reads Limits.WallclockSeconds from the wire;
+// the control plane sets this per invocation so the agent never caps a
+// legitimately long run. Falls back to 15 m if the field is absent or zero.
+func (c *InvokeCodexCommand) Timeout() time.Duration {
+	if c.Proto.Limits.WallclockSeconds > 0 {
+		return time.Duration(c.Proto.Limits.WallclockSeconds) * time.Second
+	}
+	return defaultInvokeCodexTimeout
+}
+
+// Execute calls ops.RunCodex and returns an InvokeResult.
+func (c *InvokeCodexCommand) Execute(ctx context.Context, ops WorkspaceOps) (Result, error) {
+	return ops.RunCodex(ctx, c)
+}
+
+// MarshalWire returns the flat JSON representation of this command.
+func (c *InvokeCodexCommand) MarshalWire() ([]byte, error) { return json.Marshal(c.Proto) }
+
+// SetTraceparent implements Command.
+func (c *InvokeCodexCommand) SetTraceparent(tp string) { c.Proto.Traceparent = tp }
 
 // ── CleanupWorkspaceCommand ───────────────────────────────────────────────────
 

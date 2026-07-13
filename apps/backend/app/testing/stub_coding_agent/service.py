@@ -16,18 +16,28 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
+    AgentSource,
+    BundleFile,
+    CommandBuildContext,
     Invocation,
     InvokeCodingAgent,
     RunResult,
+    SkillSource,
+    StageOptions,
     Usage,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.agent_gateway import AgentCommand
 
 log = structlog.get_logger("testing.stub_coding_agent")
 
@@ -75,11 +85,34 @@ _STUB_LATENCY_MS = 10
 
 
 class StubCodingAgentPlugin:
-    """Wraps a real `CodingAgentPlugin`; intercepts `compile_invocation` and `parse_result`."""
+    """Wraps a real `CodingAgentPlugin`; intercepts `compile_invocation` and `parse_result`.
+
+    New Protocol members (`display_name`, `command_kind`, `stage_options`,
+    `skill_path`) are delegated to the wrapped plugin so the stub remains
+    transparent for callers that read those attributes.
+    """
 
     def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
         self.plugin_id = wrapped.plugin_id
+        self.display_name: str = getattr(wrapped, "display_name", wrapped.plugin_id)
+        self.command_kind: str = getattr(wrapped, "command_kind", "InvokeClaudeCode")
+
+    def stage_options(self) -> StageOptions:
+        """Delegate to the wrapped plugin — transparent for callers."""
+        return self._wrapped.stage_options()
+
+    def skill_path(self, skill_name: str) -> str:
+        """Delegate to the wrapped plugin — transparent for callers."""
+        return self._wrapped.skill_path(skill_name)
+
+    def render_skill_bundle(
+        self,
+        skills: list[SkillSource],
+        agents: list[AgentSource],
+    ) -> list[BundleFile]:
+        """Delegate to the wrapped plugin — transparent for bundle generation."""
+        return self._wrapped.render_skill_bundle(skills, agents)
 
     def compile_invocation(self, invocation: Invocation) -> InvokeCodingAgent:
         """Return a minimal stub exec block — argv=["stub"], empty env."""
@@ -88,6 +121,28 @@ class StubCodingAgentPlugin:
             env={},
             stdin=None,
             wallclock_seconds=invocation.wallclock_seconds,
+        )
+
+    async def build_command(
+        self,
+        *,
+        compiled: InvokeCodingAgent,
+        invocation: Invocation,
+        build: CommandBuildContext,
+        session: AsyncSession,
+    ) -> AgentCommand:
+        """Delegate to the wrapped plugin's `build_command`.
+
+        The stubbed `compiled` exec block (argv=["stub"]) flows straight
+        through — the wrapped plugin's `build_command` only reads
+        `compiled.wallclock_seconds` (already real) plus `build.*`, so no
+        CLI-relevant behavior changes by delegating instead of stubbing here.
+        """
+        return await self._wrapped.build_command(
+            compiled=compiled,
+            invocation=invocation,
+            build=build,
+            session=session,
         )
 
     def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:

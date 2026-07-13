@@ -255,6 +255,35 @@ async def test_endpoint_rejects_invalid_settings(seeded) -> None:
 
 
 @pytest.mark.asyncio
+async def test_endpoint_codex_install_empty_settings_succeeds(seeded) -> None:
+    """Installing codex with empty settings succeeds — codex has no per-org auth setting.
+
+    Binds the real CodexPlugin (not the stub) so validation actually runs.
+    """
+    from app.core.coding_agent import set_coding_agents_for_tests  # noqa: PLC0415
+    from app.plugins.codex import CodexPlugin  # noqa: PLC0415
+
+    with set_coding_agents_for_tests() as reg:
+        reg.replace(CodexPlugin())
+
+        async with _client() as c:
+            r = await c.post(
+                "/api/coding-agents",
+                json={"plugin_id": "codex", "settings": {}},
+                cookies={
+                    "yaaos_session": seeded["admin_sess"].raw_token,
+                    "yaaos_csrf": seeded["admin_sess"].csrf_token,
+                },
+                headers={
+                    "X-Yaaos-Org-Slug": seeded["org"].slug,
+                    "X-CSRF-Token": seeded["admin_sess"].csrf_token,
+                },
+            )
+        assert r.status_code == 200, r.text
+        assert r.json()["settings"] == {}
+
+
+@pytest.mark.asyncio
 async def test_endpoint_accepts_valid_settings(seeded) -> None:
     """Valid settings dict is accepted and normalized by the plugin's validate_settings."""
     async with _client() as c:

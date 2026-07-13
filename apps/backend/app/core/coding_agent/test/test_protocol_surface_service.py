@@ -15,17 +15,24 @@ EXPECTED_ALL = frozenset(
     [
         # Protocol + types
         "CodingAgentPlugin",
+        "CommandBuildContext",
         "Invocation",
         "InvokeCodingAgent",
         "Effort",
         "RunResult",
         "RunStatus",
+        "StageOptions",
         "Usage",
         "CodingAgentError",
         "PluginNotFoundError",
         "ActivityEvent",
+        "ActivityEventKind",
         "ActivityLog",
         "ACTIVITY_EVENT_KINDS",
+        # Skills-bundle VOs
+        "AgentSource",
+        "BundleFile",
+        "SkillSource",
         # Dispatch + query APIs
         "register_plugin",
         "replace_plugin",
@@ -35,10 +42,14 @@ EXPECTED_ALL = frozenset(
         "create_run",
         "finalize_run",
         "get_stage_activity",
+        # Bundle builder
+        "build_skills_bundle_zip",
         # Test isolation seam
         "set_coding_agents_for_tests",
         # API key secrets provider
         "build_api_key_secrets_for_org",
+        # Credential error type (raised by plugin.build_command)
+        "CredentialUnavailableError",
         # Per-org install state
         "CodingAgentAlreadyInstalledError",
         "CodingAgentInstall",
@@ -105,9 +116,13 @@ def test_protocol_has_expected_methods() -> None:
     }
     assert proto_methods == {
         "compile_invocation",
+        "build_command",
         "parse_result",
         "parse_activity_line",
         "validate_settings",
+        "stage_options",
+        "skill_path",
+        "render_skill_bundle",
     }
 
 

@@ -125,6 +125,7 @@ async def _fire_one(fire: DueFire) -> None:
                     ticket_id=ticket_id,
                     pipeline_id=fire.binding.pipeline_id,
                     kickoff=kickoff,
+                    triggered_by_user_id=fire.binding.created_by,
                     session=s,
                 )
             await s.commit()

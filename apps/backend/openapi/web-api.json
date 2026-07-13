@@ -658,6 +658,25 @@
         "title": "AuditEntryView",
         "type": "object"
       },
+      "AvailablePluginView": {
+        "description": "Thin summary of a registered coding-agent plugin for the install picker.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plugin_id",
+          "display_name"
+        ],
+        "title": "AvailablePluginView",
+        "type": "object"
+      },
       "BoundaryControl": {
         "description": "Flat per-stage \"what to do next\" setting; `on_*` evaluated only when\n`mode == \"conditional\"`.",
         "properties": {
@@ -790,11 +809,30 @@
         "type": "object"
       },
       "CodingAgentView": {
+        "description": "Per-org coding-agent install row, enriched with per-plugin display metadata.\n\n`display_name`, `models`, and `efforts` are read from the registered plugin\ninstance at request time — they reflect the plugin's current defaults, not\npersisted values.",
         "properties": {
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "efforts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Efforts",
+            "type": "array"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
           },
           "plugin_id": {
             "title": "Plugin Id",
@@ -815,7 +853,10 @@
           "plugin_id",
           "settings",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "display_name",
+          "models",
+          "efforts"
         ],
         "title": "CodingAgentView",
         "type": "object"
@@ -3330,6 +3371,18 @@
       "TriggerBinding": {
         "description": "One repo intake→pipeline binding.",
         "properties": {
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -3649,6 +3702,87 @@
         "title": "_BulkShutdownResponse",
         "type": "object"
       },
+      "_ConnectionView": {
+        "properties": {
+          "connect_hint": {
+            "title": "Connect Hint",
+            "type": "string"
+          },
+          "connected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connected At"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "external_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Account Id"
+          },
+          "needs_reauth_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Reauth Reason"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_id",
+          "display_name",
+          "connect_hint",
+          "status",
+          "external_account_id",
+          "connected_at",
+          "needs_reauth_reason"
+        ],
+        "title": "_ConnectionView",
+        "type": "object"
+      },
+      "_ConnectionsResponse": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/_ConnectionView"
+            },
+            "title": "Connections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "title": "_ConnectionsResponse",
+        "type": "object"
+      },
       "_CreateOrgRequest": {
         "properties": {
           "name": {
@@ -3669,6 +3803,73 @@
           "slug"
         ],
         "title": "_CreateOrgRequest",
+        "type": "object"
+      },
+      "_DeviceAuthPollResponse": {
+        "properties": {
+          "poll_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Interval Seconds"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "poll_interval_seconds"
+        ],
+        "title": "_DeviceAuthPollResponse",
+        "type": "object"
+      },
+      "_DeviceAuthStartResponse": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "poll_interval_seconds": {
+            "title": "Poll Interval Seconds",
+            "type": "integer"
+          },
+          "user_code": {
+            "title": "User Code",
+            "type": "string"
+          },
+          "verification_url": {
+            "title": "Verification Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verification_url",
+          "user_code",
+          "expires_at",
+          "poll_interval_seconds"
+        ],
+        "title": "_DeviceAuthStartResponse",
+        "type": "object"
+      },
+      "_DisconnectResponse": {
+        "properties": {
+          "removed": {
+            "title": "Removed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "removed"
+        ],
+        "title": "_DisconnectResponse",
         "type": "object"
       },
       "_MarkReadFilter": {
@@ -5043,74 +5244,6 @@
         ]
       }
     },
-    "/api/claude_code/defaults": {
-      "get": {
-        "description": "Model / effort dropdown enums for the Claude Code settings UI.\nImported at request time so a code change surfaces on the next request.",
-        "operationId": "defaults_endpoint_api_claude_code_defaults_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-Yaaos-Org-Slug",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Yaaos-Org-Slug"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "yaaos_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Yaaos Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Defaults Endpoint Api Claude Code Defaults Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Defaults Endpoint",
-        "tags": [
-          "claude_code"
-        ]
-      }
-    },
     "/api/coding-agents": {
       "get": {
         "operationId": "list_endpoint_api_coding_agents_get",
@@ -5248,6 +5381,79 @@
           }
         },
         "summary": "Install Endpoint",
+        "tags": [
+          "coding_agent"
+        ]
+      }
+    },
+    "/api/coding-agents/available": {
+      "get": {
+        "description": "List all registered coding-agent plugins regardless of org install state.\n\nUsed by the Coding Agents settings page to populate the install picker so\nadmins can add a plugin that isn't yet installed in their org.",
+        "operationId": "available_endpoint_api_coding_agents_available_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "items": {
+                      "$ref": "#/components/schemas/AvailablePluginView"
+                    },
+                    "type": "array"
+                  },
+                  "title": "Response Available Endpoint Api Coding Agents Available Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Available Endpoint",
         "tags": [
           "coding_agent"
         ]
@@ -5408,6 +5614,74 @@
           }
         },
         "summary": "Update Settings Endpoint",
+        "tags": [
+          "coding_agent"
+        ]
+      }
+    },
+    "/api/coding-agents/{plugin_id}/skills-bundle": {
+      "get": {
+        "description": "Return a vendor-native skills bundle ZIP for the given plugin.\n\nThe ZIP is generated at request time from the canonical `.claude/` source\ntree baked into the backend image.  Entry paths are repo-root-relative so\n\"unzip at the repo root\" installs the skills.\n\nErrors:\n    404 unknown_plugin — plugin_id not registered.\n    500 skills_source_missing — source directory absent from the image\n        (deploy defect).",
+        "operationId": "skills_bundle_endpoint_api_coding_agents__plugin_id__skills_bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "title": "Plugin Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Skills Bundle Endpoint",
         "tags": [
           "coding_agent"
         ]
@@ -10711,6 +10985,233 @@
         "summary": "Patch User Me",
         "tags": [
           "user"
+        ]
+      }
+    },
+    "/api/user/oauth/connections": {
+      "get": {
+        "description": "List OAuth apps relevant to the caller with their connection status.",
+        "operationId": "list_connections_api_user_oauth_connections_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ConnectionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Connections",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/user/oauth/{provider_id}/connection": {
+      "delete": {
+        "description": "Remove the stored connection. Delete-only — never calls a revoke endpoint.",
+        "operationId": "disconnect_connection_route_api_user_oauth__provider_id__connection_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DisconnectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disconnect Connection Route",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/user/oauth/{provider_id}/device-auth/poll": {
+      "post": {
+        "description": "Poll the device-auth handshake. POST — a successful poll stores tokens and\nwrites audit rows (state changes must not be GET requests).",
+        "operationId": "poll_device_auth_route_api_user_oauth__provider_id__device_auth_poll_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DeviceAuthPollResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Poll Device Auth Route",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/user/oauth/{provider_id}/device-auth/start": {
+      "post": {
+        "description": "Begin a device-auth handshake for `provider_id`.",
+        "operationId": "start_device_auth_route_api_user_oauth__provider_id__device_auth_start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DeviceAuthStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Device Auth Route",
+        "tags": [
+          "oauth"
         ]
       }
     },

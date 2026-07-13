@@ -3,10 +3,12 @@
  * stage draft; "Save" commits it back to the pipeline draft's stage list
  * (`PipelineEditor` owns the array), "Cancel" discards.
  *
- * Picklist data (installed coding agents, model/effort defaults, registered
- * actions) is fetched once at the page level and threaded down as props —
- * keeps every `useSuspenseQuery` resolved before the page's first paint
- * instead of suspending deep inside a conditionally-mounted Sheet.
+ * Picklist data (installed coding agents, registered actions) is fetched
+ * once at the page level and threaded down as props — keeps every
+ * `useSuspenseQuery` resolved before the page's first paint instead of
+ * suspending deep inside a conditionally-mounted Sheet. Model/effort lists
+ * are derived from the selected agent's `models`/`efforts` fields rather
+ * than fetched separately.
  */
 
 import type { ActionInfoView } from "@core/api/public/queries";
@@ -48,8 +50,6 @@ interface StageEditorSheetProps {
   upstreamNames: string[];
   pipelineOptions: { id: string; name: string }[];
   agents: CodingAgentInstall[];
-  models: string[];
-  efforts: string[];
   actions: ActionInfoView[];
   onSave: (stage: StageDraft) => void;
 }
@@ -68,8 +68,6 @@ export function StageEditorSheet({
   upstreamNames,
   pipelineOptions,
   agents,
-  models,
-  efforts,
   actions,
   onSave,
 }: StageEditorSheetProps) {
@@ -101,13 +99,7 @@ export function StageEditorSheet({
           </div>
 
           {(draft.kind === "skill" || draft.kind === "review") && (
-            <SkillCommonFields
-              draft={draft}
-              setDraft={setDraft}
-              agents={agents}
-              models={models}
-              efforts={efforts}
-            />
+            <SkillCommonFields draft={draft} setDraft={setDraft} agents={agents} />
           )}
 
           {draft.kind === "skill" && <ReviewLoopFields draft={draft} setDraft={setDraft} />}
@@ -184,16 +176,19 @@ function SkillCommonFields<T extends StageDraft & { kind: "skill" | "review" }>(
   draft,
   setDraft,
   agents,
-  models,
-  efforts,
 }: {
   draft: T;
   setDraft: (d: T) => void;
   agents: CodingAgentInstall[];
-  models: string[];
-  efforts: string[];
 }) {
   const nameValid = draft.name === "" || STAGE_NAME_RE.test(draft.name);
+
+  // Derive model/effort lists from the currently selected agent. Falls back
+  // to empty arrays when no agent is selected or the agent isn't in the list
+  // yet — selects render empty but don't crash.
+  const selectedAgent = agents.find((a) => a.plugin_id === draft.coding_agent_plugin_id);
+  const models: string[] = selectedAgent?.models ?? [];
+  const efforts: string[] = selectedAgent?.efforts ?? [];
 
   return (
     <>
@@ -234,7 +229,7 @@ function SkillCommonFields<T extends StageDraft & { kind: "skill" | "review" }>(
           <SelectContent>
             {agents.map((a) => (
               <SelectItem key={a.plugin_id} value={a.plugin_id}>
-                {a.plugin_id}
+                {a.display_name}
               </SelectItem>
             ))}
           </SelectContent>

@@ -30,6 +30,11 @@ from app.core.agent_gateway.bearers import (
     revoke_all_for_org,
     set_bearer_verify_for_tests,
 )
+from app.core.agent_gateway.hydrators import (
+    CredentialHydrationError,
+    HydrationContext,
+    register_command_hydrator,
+)
 from app.core.agent_gateway.org_arn_lookup import (
     OrgArnRef,
     lookup_org_by_arn,
@@ -90,6 +95,7 @@ from app.core.agent_gateway.subscribers import (
     shutdown,
 )
 from app.core.agent_gateway.types import (
+    RUN_BEARING_KINDS,
     TERMINAL_EVENT_KINDS,
     AgentCommand,
     AgentCommandKind,
@@ -114,6 +120,9 @@ from app.core.agent_gateway.types import (
     InvokeClaudeCodeCommand,
     InvokeClaudeCodeFields,
     InvokeClaudeCodeLimits,
+    InvokeCodexCommand,
+    InvokeCodexFields,
+    InvokeCodexLimits,
     ProvisionWorkspaceCommand,
     PushBranchCommand,
     RefreshWorkspaceAuthCommand,
@@ -128,6 +137,7 @@ from app.core.agent_gateway.types import (
 )
 
 __all__ = [
+    "RUN_BEARING_KINDS",
     "TERMINAL_EVENT_KINDS",
     "AgentCommand",
     "AgentCommandKind",
@@ -145,16 +155,21 @@ __all__ = [
     "ClaimRequest",
     "CleanupWorkspaceCommand",
     "ConfigUpdateCommand",
+    "CredentialHydrationError",
     "DispatchContext",
     "GatewayError",
     "HeartbeatRequest",
     "HeartbeatResponse",
     "HeartbeatWorkspaceEntry",
+    "HydrationContext",
     "IdentityExchangeRequest",
     "IdentityExchangeResponse",
     "InvokeClaudeCodeCommand",
     "InvokeClaudeCodeFields",
     "InvokeClaudeCodeLimits",
+    "InvokeCodexCommand",
+    "InvokeCodexFields",
+    "InvokeCodexLimits",
     "OrgArnRef",
     "ProvisionWorkspaceCommand",
     "PushBranchCommand",
@@ -204,6 +219,7 @@ __all__ = [
     "record_workspace_event",
     "register_agent_event_consumer",
     "register_api_key_secrets_provider",
+    "register_command_hydrator",
     "register_org_arn_lookup",
     "register_report_sink",
     "register_run_sink",

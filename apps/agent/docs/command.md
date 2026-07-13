@@ -6,7 +6,7 @@
 
 **Owns:**
 - `Command` interface — the polymorphic root every command kind implements.
-- Two command families: `WorkspaceCommand` (6 kinds, executed in workspace children) and `AgentCommand` (3 kinds today — `ConfigUpdate`, `Shutdown`, `CancelShutdown` — executed in the supervisor).
+- Two command families: `WorkspaceCommand` (7 kinds — `ProvisionWorkspace`, `WriteFiles`, `RefreshWorkspaceAuth`, `InvokeClaudeCode`, `InvokeCodex`, `CleanupWorkspace`, `PushBranch` — executed in workspace children) and `AgentCommand` (3 kinds today — `ConfigUpdate`, `Shutdown`, `CancelShutdown` — executed in the supervisor).
 - `WorkspaceOps` and `AgentOps` capability seams — caller-owned interfaces the command types call at execution time.
 - Typed result structs (`ProvisionResult`, `WriteFilesResult`, `RefreshResult`, `InvokeResult`, `CleanupResult`, `PushBranchResult`, `ConfigUpdateResult`) + `ExecResult` for subprocess outcomes.
 - `AgentConfig` — the typed config struct `ConfigUpdateCommand` carries.
@@ -26,7 +26,7 @@
 
 - **One kind-switch, in Decode.** You must peek `kind` to know which concrete type to unmarshal into — that is unavoidable. All other routing uses method dispatch on the interface, not kind-switches.
 - **`WorkspaceOps` / `AgentOps` are caller-owned seams** — the command types call the seam; the workspace or supervisor provides the implementation. This keeps the command package free of real I/O and makes unit-testing trivial (supply a fake ops).
-- **Timeouts live on the command type.** `InvokeClaudeCode.Timeout()` prefers `Limits.WallclockSeconds` from the wire (the control plane sets it per invocation); all other kinds use Go-side defaults. `Pool.Dispatch` uses `cmd.Timeout()` directly.
+- **Timeouts live on the command type.** `InvokeClaudeCode.Timeout()` and `InvokeCodex.Timeout()` both prefer `Limits.WallclockSeconds` from the wire (the control plane sets it per invocation); all other kinds use Go-side defaults. `Pool.Dispatch` uses `cmd.Timeout()` directly.
 - **`SetTraceparent` is on the `Command` interface.** Each concrete type rewrites its embedded `CommandHeader.Traceparent`. The supervisor calls `cmd.SetTraceparent(childTP)` to reparent under its dispatch span — a single dispatch, not a kind-switch. A new command kind that forgets the method fails to compile (it can't satisfy `Command`), so the traceparent rewrite is compiler-enforced — unlike a type-switch, which `exhaustive` does not guard.
 - **Wire serialization via `MarshalWire()`.** The `WorkspaceCommand` interface includes `MarshalWire() ([]byte, error)` — each concrete type marshals its `.Proto` field. This is how `pool.inProcessRunner` and `execRunner` write commands to the workspace pipe. Custom wrappers (e.g. test overrides of `Timeout()`) inherit the method via embedding.
 - **Typed results, map wire.** `Execute` returns a typed `Result`; `ToWire()` produces the `map[string]any` that `AgentEvent.Outputs` carries. The backend wire contract stays `map[string]any`; the Go `command`↔`supervisor` boundary is fully typed.
@@ -42,7 +42,7 @@
 - `AgentCommand` (the interface here) is unrelated to the now-deleted `protocol.AgentCommand` union struct. Same term, different concept.
 - `ProvisionResult.Path` carries the workspace path the supervisor registry keys on; don't rename it.
 - `InvokeResult.ToWire()` includes both `stdout` (full, for the backend's CodeReview parser) and `stdout_excerpt` (display-friendly, truncated at 16 KiB). Both keys are load-bearing — the backend reads `stdout`, operators read `stdout_excerpt`.
-- `secret.Secret` fields (`AgentConfig.OTLPToken`) print as `[REDACTED]` under all fmt/json paths. Use `.Value()` only at the OTLP-exporter install site.
+- `secret.Secret` fields (e.g. `AgentConfig.OTLPToken`) print as `[REDACTED]` under all fmt/json paths. Use `.Value()` only at the consuming site (OTLP-exporter for the token).
 - When embedding a `WorkspaceCommand` to override `Timeout()` in tests, `MarshalWire()` is inherited automatically via embedding — no need to reimplement it.
 
 ## Vocabulary
@@ -57,7 +57,7 @@
 ## Entry points
 
 - `command.go` — `Command`/`WorkspaceCommand`/`AgentCommand` interfaces + `Decode` factory.
-- `workspace_commands.go` — the 5 `WorkspaceCommand` types + `Execute` bodies.
+- `workspace_commands.go` — the 7 `WorkspaceCommand` types + `Execute` bodies.
 - `agent_commands.go` — `ConfigUpdateCommand`, `ShutdownCommand`, `CancelShutdownCommand` + `AgentConfig`.
 - `results.go` — result structs + `ToWire()` + `ExecResult`.
 - `ops.go` — `WorkspaceOps` + `AgentOps` interfaces.

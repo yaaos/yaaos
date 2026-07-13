@@ -56,9 +56,9 @@ The key invariant: `protocol` does not import `command`. `ClaimCommand` returns 
 - `cmd/agent/` — main entrypoint; subcommand dispatch.
 - `internal/ipc/` — JSON-newline framing for supervisor↔workspace pipes; partial-read tolerance + concurrency-safe encoder.
 - `internal/protocol/` — wire types + HTTP client matching [`apps/backend/openapi/agent-api.yaml`](../../backend/openapi/agent-api.yaml); `openapi_drift_test.go` asserts every property name has a matching `json:` tag. See [protocol.md](protocol.md).
-- `internal/command/` — polymorphic `Command` interface, the 5 workspace command types + `ConfigUpdateCommand`, `WorkspaceOps`/`AgentOps` capability seams, typed result structs, and the `Decode` factory. See [command.md](command.md).
+- `internal/command/` — polymorphic `Command` interface, the 7 workspace command types + `ConfigUpdateCommand`, `WorkspaceOps`/`AgentOps` capability seams, typed result structs, and the `Decode` factory. See [command.md](command.md).
 - `internal/supervisor/` — identity exchange, N concurrent claim-loop workers, heartbeat loop, per-workspace runner `Pool`; `pool.Dispatch` spawns/reuses/reaps workspace subprocesses. See [supervisor.md](supervisor.md).
-- `internal/workspace/` — per-workspace dispatch loop (`Run`); `RealHandler` (production) implements `command.WorkspaceOps`: tempdir lifecycle, clone, write-files, auth-refresh, RunClaude, cleanup. See [workspace.md](workspace.md).
+- `internal/workspace/` — per-workspace dispatch loop (`Run`); `RealHandler` (production) implements `command.WorkspaceOps`: tempdir lifecycle, clone, write-files, auth-refresh, RunClaude, RunCodex, cleanup. See [workspace.md](workspace.md).
 - `internal/workspace/workspacetest/` — test-only `StubHandler`; satisfies `command.WorkspaceOps` with no-op success. Quarantined: depguard forbids non-`_test.go` files from importing it.
 - `internal/supervisor/supervisortest/` — test-only `InProcessSpawn`; runs `workspace.Run` in-process via `io.Pipe` pairs so supervisor tests need no OS process. Quarantined: depguard forbids non-`_test.go` files from importing it.
 - `internal/tracing/` — OTel wiring; W3C TraceContext propagation; `TraceparentEnv` exports current span to child processes.
@@ -97,11 +97,11 @@ Full state machine and record shapes → [workspace_lifecycle.md](workspace_life
 
 ### Per-command timeouts
 
-`Pool.Dispatch` wraps each `runner.Send` in `context.WithTimeout` using `cmd.Timeout()`. Each command type owns its deadline: `InvokeClaudeCodeCommand.Timeout()` reads `Limits.WallclockSeconds` from the wire; all other kinds use Go-side defaults defined in `internal/command`. On timeout the pool emits `completed_failure` with reason `timeout: <kind> exceeded <duration> wall-clock` and drops the runner so the next `ProvisionWorkspace` can respawn.
+`Pool.Dispatch` wraps each `runner.Send` in `context.WithTimeout` using `cmd.Timeout()`. Each command type owns its deadline: `InvokeClaudeCodeCommand.Timeout()` and `InvokeCodexCommand.Timeout()` both read `Limits.WallclockSeconds` from the wire (falling back to a 15-minute Go-side default); all other kinds use Go-side defaults defined in `internal/command`. On timeout the pool emits `completed_failure` with reason `timeout: <kind> exceeded <duration> wall-clock` and drops the runner so the next `ProvisionWorkspace` can respawn.
 
 ### InvokeClaudeCode failure excerpt
 
-On a non-zero claude exit, `RunClaude` returns `claude exit <code>: stderr=<…head…> stdout_tail=<…tail…>` — the supervisor maps this to the `completed_failure` event's `failure_reason`. Both halves ride because claude with `--output-format=stream-json` emits its `{"type":"result","is_error":true,…}` event at the end of stdout, so stderr alone is usually empty. Caps live in `realhandler.go` (`claudeErrStderrCap`, `claudeErrStdoutTailCap`); excerpts mark truncation explicitly (`...[truncated tail]` on stderr head, `...[truncated head]` on stdout tail). Empty halves render `<empty>` so a missing capture is distinguishable from a captured-nothing.
+On a non-zero claude exit, `RunClaude` returns `claude exit <code>: stderr=<…head…> stdout_tail=<…tail…>` — the supervisor maps this to the `completed_failure` event's `failure_reason`. Both halves ride because claude with `--output-format=stream-json` emits its `{"type":"result","is_error":true,…}` event at the end of stdout, so stderr alone is usually empty. Caps live in `realhandler.go` (`errStderrCap`, `errStdoutTailCap`); excerpts mark truncation explicitly (`...[truncated tail]` on stderr head, `...[truncated head]` on stdout tail). Empty halves render `<empty>` so a missing capture is distinguishable from a captured-nothing.
 
 ### Skill-path check + artifact collection + exit-push
 
@@ -113,11 +113,21 @@ On a non-zero claude exit, `RunClaude` returns `claude exit <code>: stderr=<…h
 
 Mechanical exit order: skill-stat (pre-spawn) → TMPDIR set (pre-spawn) → subprocess runs → artifact read → conditional push → terminal event reported.
 
+### InvokeCodex execution
+
+`RunCodex` in `realhandler.go` mirrors `RunClaude`'s pre/post scaffolding but calls the OpenAI Codex CLI:
+
+- **Pre-spawn skill check.** Same stat logic as `RunClaude` — `InvokeCodexCommand.Proto.SkillPath` (convention `.codex/skills/<skill_name>/SKILL.md`) is stat'd before any subprocess.
+- **Output schema.** When `InvokeCodexCommand.Proto.OutputSchemaJSON` is non-empty, `RunCodex` writes it to `$TMPDIR/<command_id>-schema.json` and appends `--output-schema <path>` to the codex argv.
+- **Artifact collection + exit-push.** Same mechanics as `RunClaude` — artifact at `$TMPDIR/<command_id>.md`, 2 MiB cap, conditional push via `maybePushOriginHead`.
+
+Credentials are the `CODEX_API_KEY` env var injected by `ExecSpawn` — no per-command secret rides `InvokeCodexCommand`.
+
 ### API key credential delivery
 
 Per-org API keys arrive via `ConfigUpdate.AgentConfig.ApiKeys` — a `map[string]secret.Secret` keyed by provider ID. The mapping from provider ID to env var name lives in two identical package-level tables:
 
-- `apiKeyProviderEnvVars` in `internal/workspace/realhandler.go` — used by `RealHandlerConfig.RunClaude` when the workspace subprocess is run in-process (test path; `InProcessSpawn`).
+- `apiKeyProviderEnvVars` in `internal/workspace/realhandler.go` — used by `RealHandlerConfig.RunClaude` and `RunCodex` when the workspace subprocess is run in-process (test path; `InProcessSpawn`).
 - `apiKeyProcessEnvVars` in `internal/supervisor/exec_spawn.go` — used by `ExecSpawn` to inject secrets into the OS subprocess's `cmd.Env` before `exec.Command.Start`. This is the production path.
 
 Currently registered providers and their injected env vars:
@@ -125,6 +135,7 @@ Currently registered providers and their injected env vars:
 | Provider | Env var |
 |---|---|
 | `anthropic` | `ANTHROPIC_API_KEY` |
+| `openai` | `CODEX_API_KEY` |
 | `rwx` | `RWX_ACCESS_TOKEN` |
 
 The backend's `build_api_key_secrets_for_org` forwards **all** stored org keys; the tables above are the agent-side allowlist — unknown providers are ignored.
@@ -166,6 +177,7 @@ All three OTel signals (traces, metrics, logs) share two standard dimensions on 
 | `workspace.handle.<kind>` | `supervisor.dispatch.<kind>` | `workspace.go` `executeCommand` | `workspace_id`, `command_id`, `kind`; `run_id` when present |
 | `workspace.clone` | `workspace.handle.ProvisionWorkspace` | `realhandler.go` `ProvisionWorkspace` | |
 | `workspace.runclaude` | `workspace.handle.InvokeClaudeCode` | `realhandler.go` `RunClaude` | |
+| `workspace.runcodex` | `workspace.handle.InvokeCodex` | `realhandler.go` `RunCodex` | |
 | `agent.identity_exchange` | inherits caller context; root at current call sites | `supervisor.go` `exchangeIdentity` | |
 | `agent.identity_refresh` | inherits caller context; root at current call sites | `supervisor.go` `runOneRefreshCycle` | |
 | `agent.claim` | none (per HTTP call, NOT per loop iteration) | `supervisor.go` `claimLoop` | `claim.outcome` (always present): `command` = claim + decode succeeded; `no_command` = HTTP 204; `cancel` = SIGTERM during long-poll; `error` = transport/protocol error or decode failure. `ErrNoCommand` and graceful-shutdown cancel close the span Unset; errors close it Error. |

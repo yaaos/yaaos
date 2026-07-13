@@ -9,7 +9,7 @@ import type { ComponentType } from "react";
  * here at navigation time. Plugins without a registered component fall back
  * to a "settings not available" placeholder.
  *
- * `claude_code` is the only registered plugin.
+ * First-party plugins: `claude_code`, `codex`.
  */
 export interface PluginSettingsComponentProps {
   pluginId: string;

@@ -1,11 +1,13 @@
 """core/coding_agent — Protocol + registry for coding-agent CLI plugins and per-org installs.
 
-The Plugin Protocol exposes two pure methods: `compile_invocation` translates a
-high-level `Invocation` (skill, model, effort, context, wallclock cap) into
-a concrete `InvokeCodingAgent` exec block; `parse_result` decodes a terminal
-AgentEvent payload into a `RunResult`. Plugins own skill resolution, model
-mapping, and stdout parsing. `dispatch_invocation` (Layer 3) calls
-`plugin.compile_invocation`, builds an `InvokeClaudeCodeCommand`, delegates to
+The Plugin Protocol exposes: `compile_invocation` translates a high-level
+`Invocation` (skill, model, effort, context, wallclock cap) into a concrete
+`InvokeCodingAgent` exec block; `build_command` constructs the plugin's wire
+`AgentCommand` from that exec block plus a `CommandBuildContext`, applying any
+dispatch-time credential gating the plugin requires; `parse_result` decodes a
+terminal AgentEvent payload into a `RunResult`. Plugins own skill resolution,
+model mapping, and stdout parsing. `dispatch_invocation` (Layer 3) calls
+`plugin.compile_invocation`, then `plugin.build_command`, then delegates to
 `dispatch_via_workspace` (Layer 2) with `claim_workspace=True` for the atomic
 enqueue + pin + claim, then inserts a `coding_agent_runs` row.
 
@@ -19,6 +21,9 @@ from app.core.agent_gateway import (
     register_api_key_secrets_provider as _register_api_key_secrets_provider,
 )
 from app.core.agent_gateway import (
+    register_command_hydrator as _register_command_hydrator,
+)
+from app.core.agent_gateway import (
     register_run_sink as _register_run_sink,
 )
 
@@ -27,6 +32,7 @@ from app.core.agent_gateway import (
 # the broker + scheduler registry at import time.
 from app.core.coding_agent import partition_maintenance as _partition_maintenance  # noqa: F401
 from app.core.coding_agent.api_keys import (
+    _config_update_hydrator,
     _register_api_key_on_change,
     build_api_key_secrets_for_org,
 )
@@ -53,42 +59,59 @@ from app.core.coding_agent.service import (
     replace_plugin,
     set_coding_agents_for_tests,
 )
+from app.core.coding_agent.skills_bundle import build_skills_bundle_zip
 from app.core.coding_agent.types import (
     ACTIVITY_EVENT_KINDS,
     ActivityEvent,
+    ActivityEventKind,
     ActivityLog,
+    AgentSource,
+    BundleFile,
     CodingAgentError,
     CodingAgentPlugin,
+    CommandBuildContext,
+    CredentialUnavailableError,
     Effort,
     Invocation,
     InvokeCodingAgent,
     PluginNotFoundError,
     RunResult,
     RunStatus,
+    SkillSource,
+    StageOptions,
     Usage,
 )
 
 _register_run_sink(CodingAgentRunSinkImpl())
 _register_api_key_secrets_provider(build_api_key_secrets_for_org)
 _register_api_key_on_change()
+_register_command_hydrator("ConfigUpdate", _config_update_hydrator)
 
 __all__ = [
     "ACTIVITY_EVENT_KINDS",
     "ActivityEvent",
+    "ActivityEventKind",
     "ActivityLog",
+    "AgentSource",
+    "BundleFile",
     "CodingAgentAlreadyInstalledError",
     "CodingAgentError",
     "CodingAgentInstall",
     "CodingAgentNotInstalledError",
     "CodingAgentPlugin",
+    "CommandBuildContext",
+    "CredentialUnavailableError",
     "Effort",
     "Invocation",
     "InvokeCodingAgent",
     "PluginNotFoundError",
     "RunResult",
     "RunStatus",
+    "SkillSource",
+    "StageOptions",
     "Usage",
     "build_api_key_secrets_for_org",
+    "build_skills_bundle_zip",
     "create_run",
     "dispatch_invocation",
     "finalize_run",

@@ -79,6 +79,13 @@ class PipelineRunRow(Base):
     )
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     otel_trace_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Attribution: the user whose credentials drive per-user-mode coding-agent
+    # stages.  NULL when attribution is unresolvable (zero/multiple matches) or
+    # the run was triggered by a non-user actor (schedule with no created_by,
+    # system, etc.).
+    triggered_by_user_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

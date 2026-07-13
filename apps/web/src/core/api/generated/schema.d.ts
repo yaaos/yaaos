@@ -319,27 +319,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude_code/defaults": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Defaults Endpoint
-         * @description Model / effort dropdown enums for the Claude Code settings UI.
-         *     Imported at request time so a code change surfaces on the next request.
-         */
-        get: operations["defaults_endpoint_api_claude_code_defaults_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/coding-agents": {
         parameters: {
             query?: never;
@@ -352,6 +331,29 @@ export interface paths {
         put?: never;
         /** Install Endpoint */
         post: operations["install_endpoint_api_coding_agents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/coding-agents/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Available Endpoint
+         * @description List all registered coding-agent plugins regardless of org install state.
+         *
+         *     Used by the Coding Agents settings page to populate the install picker so
+         *     admins can add a plugin that isn't yet installed in their org.
+         */
+        get: operations["available_endpoint_api_coding_agents_available_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -374,6 +376,35 @@ export interface paths {
         head?: never;
         /** Update Settings Endpoint */
         patch: operations["update_settings_endpoint_api_coding_agents__plugin_id__patch"];
+        trace?: never;
+    };
+    "/api/coding-agents/{plugin_id}/skills-bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Skills Bundle Endpoint
+         * @description Return a vendor-native skills bundle ZIP for the given plugin.
+         *
+         *     The ZIP is generated at request time from the canonical `.claude/` source
+         *     tree baked into the backend image.  Entry paths are repo-root-relative so
+         *     "unzip at the repo root" installs the skills.
+         *
+         *     Errors:
+         *         404 unknown_plugin — plugin_id not registered.
+         *         500 skills_source_missing — source directory absent from the image
+         *             (deploy defect).
+         */
+        get: operations["skills_bundle_endpoint_api_coding_agents__plugin_id__skills_bundle_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/github/health": {
@@ -1661,6 +1692,87 @@ export interface paths {
         patch: operations["patch_user_me_api_user_me_patch"];
         trace?: never;
     };
+    "/api/user/oauth/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Connections
+         * @description List OAuth apps relevant to the caller with their connection status.
+         */
+        get: operations["list_connections_api_user_oauth_connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/oauth/{provider_id}/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect Connection Route
+         * @description Remove the stored connection. Delete-only — never calls a revoke endpoint.
+         */
+        delete: operations["disconnect_connection_route_api_user_oauth__provider_id__connection_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/oauth/{provider_id}/device-auth/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll Device Auth Route
+         * @description Poll the device-auth handshake. POST — a successful poll stores tokens and
+         *     writes audit rows (state changes must not be GET requests).
+         */
+        post: operations["poll_device_auth_route_api_user_oauth__provider_id__device_auth_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/oauth/{provider_id}/device-auth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Device Auth Route
+         * @description Begin a device-auth handshake for `provider_id`.
+         */
+        post: operations["start_device_auth_route_api_user_oauth__provider_id__device_auth_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent/commands/claim": {
         parameters: {
             query?: never;
@@ -2165,6 +2277,16 @@ export interface components {
             };
         };
         /**
+         * AvailablePluginView
+         * @description Thin summary of a registered coding-agent plugin for the install picker.
+         */
+        AvailablePluginView: {
+            /** Display Name */
+            display_name: string;
+            /** Plugin Id */
+            plugin_id: string;
+        };
+        /**
          * BoundaryControl
          * @description Flat per-stage "what to do next" setting; `on_*` evaluated only when
          *     `mode == "conditional"`.
@@ -2240,13 +2362,26 @@ export interface components {
              */
             workspace_ids: string[];
         };
-        /** CodingAgentView */
+        /**
+         * CodingAgentView
+         * @description Per-org coding-agent install row, enriched with per-plugin display metadata.
+         *
+         *     `display_name`, `models`, and `efforts` are read from the registered plugin
+         *     instance at request time — they reflect the plugin's current defaults, not
+         *     persisted values.
+         */
         CodingAgentView: {
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** Display Name */
+            display_name: string;
+            /** Efforts */
+            efforts: string[];
+            /** Models */
+            models: string[];
             /** Plugin Id */
             plugin_id: string;
             /** Settings */
@@ -3314,6 +3449,8 @@ export interface components {
          * @description One repo intake→pipeline binding.
          */
         TriggerBinding: {
+            /** Created By */
+            created_by?: string | null;
             /**
              * Id
              * Format: uuid
@@ -3435,12 +3572,60 @@ export interface components {
             /** Results */
             results: components["schemas"]["ShutdownResult"][];
         };
+        /** _ConnectionView */
+        _ConnectionView: {
+            /** Connect Hint */
+            connect_hint: string;
+            /** Connected At */
+            connected_at: string | null;
+            /** Display Name */
+            display_name: string;
+            /** External Account Id */
+            external_account_id: string | null;
+            /** Needs Reauth Reason */
+            needs_reauth_reason: string | null;
+            /** Provider Id */
+            provider_id: string;
+            /** Status */
+            status: string;
+        };
+        /** _ConnectionsResponse */
+        _ConnectionsResponse: {
+            /** Connections */
+            connections: components["schemas"]["_ConnectionView"][];
+        };
         /** _CreateOrgRequest */
         _CreateOrgRequest: {
             /** Name */
             name: string;
             /** Slug */
             slug: string;
+        };
+        /** _DeviceAuthPollResponse */
+        _DeviceAuthPollResponse: {
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number | null;
+            /** Status */
+            status: string;
+        };
+        /** _DeviceAuthStartResponse */
+        _DeviceAuthStartResponse: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number;
+            /** User Code */
+            user_code: string;
+            /** Verification Url */
+            verification_url: string;
+        };
+        /** _DisconnectResponse */
+        _DisconnectResponse: {
+            /** Removed */
+            removed: boolean;
         };
         /** _MarkReadFilter */
         _MarkReadFilter: {
@@ -4105,41 +4290,6 @@ export interface operations {
             };
         };
     };
-    defaults_endpoint_api_claude_code_defaults_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Yaaos-Org-Slug"?: string | null;
-            };
-            path?: never;
-            cookie?: {
-                yaaos_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_endpoint_api_coding_agents_get: {
         parameters: {
             query?: never;
@@ -4197,6 +4347,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CodingAgentView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    available_endpoint_api_coding_agents_available_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: components["schemas"]["AvailablePluginView"][];
+                    };
                 };
             };
             /** @description Validation Error */
@@ -4274,6 +4459,39 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CodingAgentView"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skills_bundle_endpoint_api_coding_agents__plugin_id__skills_bundle_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path: {
+                plugin_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -6866,6 +7084,136 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["_UserMeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_connections_api_user_oauth_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_ConnectionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_connection_route_api_user_oauth__provider_id__connection_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_DisconnectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_device_auth_route_api_user_oauth__provider_id__device_auth_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_DeviceAuthPollResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_device_auth_route_api_user_oauth__provider_id__device_auth_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_DeviceAuthStartResponse"];
                 };
             };
             /** @description Validation Error */

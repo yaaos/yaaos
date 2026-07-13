@@ -20,6 +20,7 @@ from app.core.auth import AuthMiddleware, Role
 from app.core.identity import create_user, mint_session
 from app.domain.orgs import insert_membership, insert_org
 from app.domain.repos import web as _repos_web  # noqa: F401 -- triggers route registration
+from app.domain.repos.models import RepoTriggerBindingRow
 
 pytestmark = pytest.mark.service
 
@@ -294,3 +295,29 @@ async def test_delete_pipeline_referenced_by_binding_returns_409(seeded) -> None
         )
     assert deleted.status_code == 409, deleted.text
     assert deleted.json()["detail"]["error"] == "referenced"
+
+
+@pytest.mark.asyncio
+async def test_add_binding_stamps_created_by_with_acting_user(seeded, db_session) -> None:
+    """POST /api/repos/triggers stamps created_by on the binding row with the acting user's ID."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    admin_id = seeded["admin_id"]
+
+    async with _client() as c:
+        pipeline_id = await _create_pipeline_via_http(c, seeded, "created-by-stamped")
+        resp = await c.post(
+            "/api/repos/triggers",
+            params={"repo": "acme/web"},
+            json={"intake_point_id": "github:pr_opened", "pipeline_id": pipeline_id},
+            cookies=_cookies(seeded),
+            headers=_headers(seeded, mutate=True),
+        )
+    assert resp.status_code == 201, resp.text
+    binding_id = resp.json()["id"]
+
+    row = (
+        await db_session.execute(select(RepoTriggerBindingRow).where(RepoTriggerBindingRow.id == binding_id))
+    ).scalar_one_or_none()
+    assert row is not None
+    assert row.created_by == admin_id, f"created_by must be the acting admin; got {row.created_by!r}"

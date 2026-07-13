@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit_log import Actor, audit_for_ticket, audit_for_webhook_event
 from app.core.config import get_settings
 from app.core.database import session as db_session
+from app.core.identity import resolve_github_attribution
 from app.core.intake import (
     IntakeOutcome,
     IntakeRejectedError,
@@ -393,6 +394,9 @@ class GithubIntakeType:
             pr_base_sha=vcs_pr.base_sha,
             pr_head_sha=vcs_pr.head_sha,
         )
+        triggered_by_user_id = await resolve_github_attribution(
+            vcs_pr.author_login, org_id=org_id, ticket_id=prep.ticket_id, session=session
+        )
         started = 0
         for binding in bindings:
             try:
@@ -401,6 +405,7 @@ class GithubIntakeType:
                     ticket_id=prep.ticket_id,
                     pipeline_id=binding.pipeline_id,
                     kickoff=kickoff,
+                    triggered_by_user_id=triggered_by_user_id,
                     session=session,
                 )
                 started += 1
@@ -464,6 +469,12 @@ class GithubIntakeType:
                     pr_base_sha=fresh.base_sha,
                     pr_head_sha=fresh.head_sha,
                 )
+                triggered_by_user_id = await resolve_github_attribution(
+                    fresh.author_login,
+                    org_id=org_id,
+                    ticket_id=existing_pr.ticket_id,
+                    session=s,
+                )
                 started = 0
                 for binding in bindings:
                     try:
@@ -472,6 +483,7 @@ class GithubIntakeType:
                             ticket_id=existing_pr.ticket_id,
                             pipeline_id=binding.pipeline_id,
                             kickoff=kickoff,
+                            triggered_by_user_id=triggered_by_user_id,
                             session=s,
                         )
                         started += 1

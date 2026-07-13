@@ -1,14 +1,17 @@
 """Service tests — API key distribution to agents via ConfigUpdate.
 
 Covers:
-- `_build_config_update_dto` populates `api_keys` when an API key provider is registered.
-- Wire JSON (model_dump(mode='json')) unwraps api_keys values to plaintext.
-- Python model_dump stays redacted (SecretStr).
-- `api_keys.set` triggers `enqueue_config_update_for_all_org_agents` for every
-  configured agent in the org.
-- `api_keys.clear` triggers a ConfigUpdate refresh with an empty api_keys dict.
-- `ClaudeCodePlugin.build_invocation` no longer emits `ANTHROPIC_API_KEY` in
-  `InvokeCodingAgent.env` — key delivery is exclusively via ConfigUpdate.
+- `AgentConfig.api_keys` wire shape: SecretStr at Python boundary, plaintext in
+  JSON mode (unchanged by the hydration rework).
+- Persisted ConfigUpdate rows have `api_keys == {}` — credentials never stored at rest.
+- `claim_next` delivers a ConfigUpdate DTO with real api_keys injected by the
+  registered ConfigUpdate hydrator (claim-time credential hydration).
+- `enqueue_config_update_for_all_org_agents` inserts a row per agent.
+- The fan-out path does NOT call the api_key provider — credentials are resolved
+  at claim time, not enqueue time (provider call count stays 0 during fan-out).
+- `api_keys.set` triggers `enqueue_config_update_for_all_org_agents`.
+- `api_keys.clear` triggers a ConfigUpdate refresh.
+- `ClaudeCodePlugin.compile_invocation` does not emit `ANTHROPIC_API_KEY` in env.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core.agent_gateway.models import AgentCommandRow
-from app.core.agent_gateway.service import enqueue_config_update_for_agent
+from app.core.agent_gateway.service import claim_next, enqueue_config_update_for_agent
 from app.core.agent_gateway.types import AgentCommandKind, AgentConfig
 from app.core.audit_log import Actor
 from app.domain.orgs import insert_org
@@ -76,37 +79,140 @@ def test_agent_config_api_keys_empty_by_default() -> None:
     assert config.api_keys == {}
 
 
-# ── build_config_update_dto populates api_keys ──────────────────────────────
+# ── Credentials absent at rest, present in the claimed DTO ──────────────────
 
 
 @pytest.mark.service
-async def test_build_config_update_includes_api_keys(db_session) -> None:
-    """`_build_config_update_dto` includes api_keys from the registered provider."""
-    import app.core.agent_gateway.service as svc  # noqa: PLC0415
-    from app.core.agent_gateway import (  # noqa: PLC0415
-        clear_api_key_secrets_provider,
-        register_api_key_secrets_provider,
+async def test_config_update_persisted_payload_has_no_api_keys(db_session) -> None:
+    """The persisted ConfigUpdate row must have `config.api_keys == {}`.
+
+    Credentials are never stored in `agent_commands.payload` — they are
+    injected by the ConfigUpdate hydrator at claim time.
+    """
+    import app.core.api_keys as api_keys  # noqa: PLC0415
+
+    org_id = await _make_org(db_session)
+    agent_id = await _make_agent(org_id=org_id)
+
+    # Set a real API key so there would be something to embed if the old path
+    # were still active.
+    await api_keys.set(org_id, "anthropic", "sk-secret-test", actor=Actor.system(), session=db_session)
+    await db_session.flush()
+
+    # Enqueue a ConfigUpdate — after the credential-hygiene rework this must
+    # persist api_keys={} regardless of what keys are stored for the org.
+    await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
+    await db_session.flush()
+
+    rows = (
+        (
+            await db_session.execute(
+                select(AgentCommandRow).where(
+                    AgentCommandRow.org_id == org_id,
+                    AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows, "Expected at least one ConfigUpdate row"
+    for row in rows:
+        persisted_api_keys = (row.payload or {}).get("config", {}).get("api_keys", {})
+        assert persisted_api_keys == {}, (
+            f"Persisted payload must have api_keys={{}}; got {persisted_api_keys!r}"
+        )
+
+
+@pytest.mark.service
+async def test_claimed_config_update_dto_carries_api_keys(db_session) -> None:
+    """The DTO returned by `claim_next` must carry the real api_keys in
+    `config.api_keys` — injected at claim time by the ConfigUpdate hydrator,
+    NOT stored in the persisted row.
+
+    Both halves of the invariant are asserted in the same test body:
+    - Persisted row: `api_keys == {}`.
+    - Claimed DTO: `api_keys == {"anthropic": "sk-secret-test"}` (plaintext in
+      JSON mode via `@field_serializer(when_used="json")`).
+    """
+    import app.core.api_keys as api_keys  # noqa: PLC0415
+
+    org_id = await _make_org(db_session)
+    agent_id = await _make_agent(org_id=org_id)
+
+    await api_keys.set(org_id, "anthropic", "sk-secret-test", actor=Actor.system(), session=db_session)
+    await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
+    await db_session.flush()
+
+    # Half 1: persisted payload has no api_keys.
+    row = (
+        (
+            await db_session.execute(
+                select(AgentCommandRow)
+                .where(
+                    AgentCommandRow.org_id == org_id,
+                    AgentCommandRow.command_kind == AgentCommandKind.CONFIG_UPDATE,
+                    AgentCommandRow.status == "pending",
+                )
+                .order_by(AgentCommandRow.id)
+                .limit(1)
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+    assert row is not None
+    assert (row.payload or {}).get("config", {}).get("api_keys", {}) == {}, (
+        "Persisted payload must have api_keys={}"
     )
 
-    org_id = await seed_org()
+    # Half 2: claim returns a DTO with the real api_keys hydrated in.
+    cmd = await claim_next(
+        agent_id,
+        lifecycle="unconfigured",
+        new_workspaces=0,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert cmd is not None, "Expected a claimed ConfigUpdate command"
+    from app.core.agent_gateway.types import ConfigUpdateCommand  # noqa: PLC0415
 
-    async def fake_provider(oid, *, session):
-        if oid == org_id:
-            return {"anthropic": SecretStr("sk-api-key-test")}
-        return {}
+    assert isinstance(cmd, ConfigUpdateCommand)
+    wire = cmd.config.model_dump(mode="json")
+    assert wire["api_keys"].get("anthropic") == "sk-secret-test", (
+        f"Claimed DTO must carry hydrated api_keys; got {wire['api_keys']}"
+    )
 
-    # Clear the production provider (registered by coding_agent bootstrap)
-    # and install the fake for this test.
-    clear_api_key_secrets_provider()
-    register_api_key_secrets_provider(fake_provider)
-    try:
-        cmd = await svc._build_config_update_dto(org_id, session=db_session)
-        wire = cmd.config.model_dump(mode="json")
-        assert wire["api_keys"].get("anthropic") == "sk-api-key-test", (
-            f"Expected anthropic key in api_keys; got {wire['api_keys']}"
-        )
-    finally:
-        clear_api_key_secrets_provider()
+
+@pytest.mark.service
+async def test_claimed_config_update_dto_has_empty_api_keys_when_key_cleared(db_session) -> None:
+    """When the API key has been cleared, `claim_next` delivers `api_keys == {}`."""
+    import app.core.api_keys as api_keys  # noqa: PLC0415
+
+    org_id = await _make_org(db_session)
+    agent_id = await _make_agent(org_id=org_id)
+
+    # Set then immediately clear so no key is stored at claim time.
+    await api_keys.set(org_id, "anthropic", "sk-secret-temp", actor=Actor.system(), session=db_session)
+    await api_keys.clear(org_id, "anthropic", actor=Actor.system(), session=db_session)
+    await enqueue_config_update_for_agent(agent_id, org_id=org_id, session=db_session)
+    await db_session.flush()
+
+    cmd = await claim_next(
+        agent_id,
+        lifecycle="unconfigured",
+        new_workspaces=0,
+        workspace_ids=[],
+        wait_seconds=0,
+        session=db_session,
+    )
+    assert cmd is not None
+    from app.core.agent_gateway.types import ConfigUpdateCommand  # noqa: PLC0415
+
+    assert isinstance(cmd, ConfigUpdateCommand)
+    wire = cmd.config.model_dump(mode="json")
+    assert wire["api_keys"] == {}, f"Cleared key must not appear in claimed DTO; got {wire['api_keys']}"
 
 
 # ── enqueue_config_update_for_all_org_agents ────────────────────────────────
@@ -163,19 +269,21 @@ async def test_enqueue_config_update_for_all_org_agents_inserts_rows(db_session)
 
 
 @pytest.mark.service
-async def test_fan_out_resolves_per_org_inputs_once(db_session) -> None:
-    """The fan-out path resolves the per-org `AgentConfig` (org row + API key
-    secrets) exactly once and reuses it across every agent — not once per
-    agent. Regression-locks the O(N)→O(1) collapse in
-    `enqueue_config_update_for_all_org_agents`."""
+async def test_fan_out_does_not_call_api_key_provider(db_session) -> None:
+    """The fan-out path must NOT call the api_key provider.
+
+    Credentials are now resolved at claim time by the ConfigUpdate hydrator,
+    not at enqueue / fan-out time.  This ensures the persisted rows are
+    credential-free; the provider is O(1) per claim, not O(N) per fan-out.
+    """
     from app.core.agent_gateway import (  # noqa: PLC0415
         clear_api_key_secrets_provider,
         enqueue_config_update_for_all_org_agents,
+        get_api_key_secrets_provider,
         register_api_key_secrets_provider,
     )
 
     org_id = await seed_org()
-    # Three agents so a per-agent call would inflate the counter to 3.
     await _make_agent(org_id=org_id)
     await _make_agent(org_id=org_id)
     await _make_agent(org_id=org_id)
@@ -187,15 +295,21 @@ async def test_fan_out_resolves_per_org_inputs_once(db_session) -> None:
         calls += 1
         return {}
 
+    original_provider = get_api_key_secrets_provider()
     clear_api_key_secrets_provider()
     register_api_key_secrets_provider(counting_provider)
     try:
         await enqueue_config_update_for_all_org_agents(org_id, session=db_session)
         await db_session.flush()
     finally:
+        # Restore the original provider so subsequent tests see it.
         clear_api_key_secrets_provider()
+        if original_provider is not None:
+            register_api_key_secrets_provider(original_provider)
 
-    assert calls == 1, f"API key provider must be called exactly once per fan-out; got {calls}"
+    assert calls == 0, (
+        f"API key provider must NOT be called during fan-out (claim-time hydration only); got {calls} call(s)"
+    )
 
 
 # ── api_keys.set triggers ConfigUpdate fan-out ──────────────────────────────

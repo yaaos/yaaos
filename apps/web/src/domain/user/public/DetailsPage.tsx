@@ -2,6 +2,14 @@ import { ErrorBanner } from "@shared/components/public/layout/error-banner";
 import { PageHeader } from "@shared/components/public/layout/page-header";
 import { Badge } from "@shared/components/ui/badge";
 import { Button } from "@shared/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@shared/components/ui/dialog";
 import { Input } from "@shared/components/ui/input";
 import { Label } from "@shared/components/ui/label";
 import { Skeleton } from "@shared/components/ui/skeleton";
@@ -13,11 +21,17 @@ import {
   TableHeader,
   TableRow,
 } from "@shared/components/ui/table";
-import { Suspense, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Suspense, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import {
+  type OAuthConnectionView,
   type UserMembership,
   useClearGithubUsername,
+  useDisconnectOAuth,
+  useOAuthConnections,
+  usePollDeviceAuth,
+  useStartDeviceAuth,
   useUpdateDisplayName,
   useUpdateOrgHandle,
   useUserMe,
@@ -68,6 +82,15 @@ function DetailsContent() {
         }))}
       />
       <GithubSection username={data.github_username} />
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load connections." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense fallback={<Skeleton className="h-24 rounded-lg" />}>
+          <ConnectionsSection />
+        </Suspense>
+      </ErrorBoundary>
     </div>
   );
 }
@@ -247,5 +270,209 @@ function GithubSection({ username }: { username: string | null }) {
         </p>
       )}
     </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Connections section — OAuth user connections
+// ---------------------------------------------------------------------------
+
+function ConnectionsSection() {
+  const { data: connections } = useOAuthConnections();
+
+  if (connections.length === 0) return null;
+
+  return (
+    <Section
+      title="Connections"
+      description="Connect third-party accounts for coding agent integrations."
+    >
+      <div className="flex flex-col gap-3" data-testid="connections-section">
+        {connections.map((c) => (
+          <ConnectionCard key={c.provider_id} connection={c} />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function ConnectionCard({ connection }: { connection: OAuthConnectionView }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+
+  const qc = useQueryClient();
+  const startMutation = useStartDeviceAuth(connection.provider_id);
+  const disconnectMutation = useDisconnectOAuth(connection.provider_id);
+  const pollQuery = usePollDeviceAuth(connection.provider_id, polling);
+
+  // On grant: close dialog, stop polling, refresh connections list.
+  useEffect(() => {
+    if (pollQuery.data?.status === "connected") {
+      setPolling(false);
+      setDialogOpen(false);
+      void qc.invalidateQueries({ queryKey: ["user-oauth-connections"] });
+    } else if (pollQuery.data?.status === "denied" || pollQuery.data?.status === "expired") {
+      setPolling(false);
+    }
+  }, [pollQuery.data?.status, qc]);
+
+  function handleConnect() {
+    startMutation.mutate(undefined, {
+      onSuccess: () => {
+        setDialogOpen(true);
+        setPolling(true);
+      },
+    });
+  }
+
+  function handleDisconnectConfirm() {
+    disconnectMutation.mutate(undefined, {
+      onSuccess: () => setDisconnectOpen(false),
+    });
+  }
+
+  const isConnected = connection.status === "connected";
+  const needsReauth = connection.status === "needs_reauth";
+  const startData = startMutation.data;
+  const pollStatus = pollQuery.data?.status;
+
+  return (
+    <div
+      className="flex flex-col gap-1 rounded-md border border-border p-3"
+      data-testid={`connection-row-${connection.provider_id}`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">{connection.display_name}</span>
+          {isConnected && connection.external_account_id && (
+            <span className="text-muted-foreground text-xs">
+              Connected: {connection.external_account_id}
+            </span>
+          )}
+          {needsReauth && (
+            <span className="text-destructive text-xs">
+              {connection.needs_reauth_reason || "Re-authorization required."}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {isConnected ? (
+            <>
+              <Badge variant="secondary">Connected</Badge>
+              <Button
+                variant="destructive"
+                size="sm"
+                data-testid={`connection-disconnect-${connection.provider_id}`}
+                disabled={disconnectMutation.isPending}
+                onClick={() => setDisconnectOpen(true)}
+              >
+                Disconnect
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              data-testid={`connection-connect-${connection.provider_id}`}
+              disabled={startMutation.isPending}
+              onClick={handleConnect}
+            >
+              {startMutation.isPending ? "Starting…" : needsReauth ? "Reconnect" : "Connect"}
+            </Button>
+          )}
+        </div>
+      </div>
+      {startMutation.isError && (
+        <p
+          className="mt-2 text-xs text-destructive"
+          data-testid={`connection-connect-err-${connection.provider_id}`}
+        >
+          {(startMutation.error as Error)?.message || "Couldn't start the connection."}
+        </p>
+      )}
+
+      {/* Device-auth dialog */}
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPolling(false);
+          }
+          setDialogOpen(open);
+        }}
+      >
+        <DialogContent data-testid="device-auth-dialog">
+          <DialogHeader>
+            <DialogTitle>Connect {connection.display_name}</DialogTitle>
+            <DialogDescription>{connection.connect_hint}</DialogDescription>
+          </DialogHeader>
+          {startData && (
+            <div className="flex flex-col gap-4 py-2">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Visit this URL:</span>
+                <a
+                  href={startData.verification_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-mono text-primary underline break-all"
+                  data-testid="device-auth-verification-url"
+                >
+                  {startData.verification_url}
+                </a>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Enter this code:</span>
+                <span
+                  className="font-mono text-2xl font-bold tracking-widest text-center py-2 rounded bg-muted"
+                  data-testid="device-auth-user-code"
+                >
+                  {startData.user_code}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground text-center">
+                {pollStatus === "pending" && "Waiting for authorization…"}
+                {pollStatus === "denied" && "Authorization denied."}
+                {pollStatus === "expired" && "Code expired. Close and try again."}
+                {!pollStatus && "Polling…"}
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPolling(false);
+                setDialogOpen(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Disconnect confirm dialog */}
+      <Dialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
+        <DialogContent data-testid="disconnect-confirm">
+          <DialogHeader>
+            <DialogTitle>Disconnect {connection.display_name}?</DialogTitle>
+            <DialogDescription>This can't be undone.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDisconnectOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              data-testid="disconnect-confirm-action"
+              disabled={disconnectMutation.isPending}
+              onClick={handleDisconnectConfirm}
+            >
+              {disconnectMutation.isPending ? "Disconnecting…" : "Disconnect"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
