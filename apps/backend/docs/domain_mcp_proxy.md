@@ -2,7 +2,7 @@
 
 > Per-review MCP bearer + Streamable-HTTP proxy.
 
-Not to be confused with [`domain/mcp_server`](domain_mcp_server.md), which is the *inbound* MCP authorization server and tool host (OAuth 2.1 AS + `find_ticket` tool).
+Not to be confused with [`domain/mcp_server`](domain_mcp_server.md), which is the *inbound* MCP authorization server and tool host (OAuth 2.1 AS + the yaaos MCP tool roster).
 
 ## Scope
 

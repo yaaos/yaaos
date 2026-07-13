@@ -2678,6 +2678,11 @@
       "PipelineSummary": {
         "description": "One `list_pipelines` element — definition rows, unflattened.",
         "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",

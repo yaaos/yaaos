@@ -310,6 +310,7 @@ async def list_pipelines(org_id: UUID, *, session: AsyncSession) -> list[Pipelin
             PipelineSummary(
                 id=row.id,
                 name=row.name,
+                description=row.description,
                 stage_count=len(row.stages),
                 updated_at=row.updated_at,
                 updated_by_login=await _login_for(row.updated_by, org_id=org_id, session=session),

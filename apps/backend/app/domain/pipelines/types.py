@@ -41,6 +41,7 @@ class PipelineSummary(BaseModel, frozen=True):
 
     id: UUID
     name: str
+    description: str = ""
     stage_count: int
     updated_at: datetime
     updated_by_login: str | None

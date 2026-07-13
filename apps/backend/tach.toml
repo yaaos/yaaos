@@ -127,7 +127,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.domain.mcp_server"
-depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.domain.tickets"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.identity", "app.core.tasks", "app.core.tenancy", "app.core.webserver", "app.domain.artifacts", "app.domain.attachments", "app.domain.findings", "app.domain.pipelines", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.orgs"

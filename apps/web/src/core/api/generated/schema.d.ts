@@ -747,6 +747,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp-server/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Authorize
+         * @description Authorization endpoint.
+         *
+         *     Unauthenticated → 302 to /login?next=<this URL>.
+         *     Authenticated → render the consent page with an org picker.
+         */
+        get: operations["authorize_api_mcp_server_authorize_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-server/authorize/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authorize Consent
+         * @description Consent form submission.
+         *
+         *     Verifies session, client, redirect_uri, and org membership; mints a
+         *     one-time auth code (sha256-stored, 10-minute TTL); redirects to
+         *     `redirect_uri?code=…[&state=…]`.
+         */
+        post: operations["authorize_consent_api_mcp_server_authorize_consent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-server/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register Client
+         * @description RFC 7591 dynamic client registration.  No prior auth required.
+         *
+         *     Returns the minted `client_id` (UUID) which drives the rest of the flow.
+         */
+        post: operations["register_client_api_mcp_server_register_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-server/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Token Endpoint
+         * @description Token endpoint — authorization_code (PKCE S256) or refresh_token grant.
+         *
+         *     Public clients only (`token_endpoint_auth_method="none"`).
+         */
+        post: operations["token_endpoint_api_mcp_server_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/{review_id}/{server}": {
         parameters: {
             query?: never;
@@ -2376,6 +2467,34 @@ export interface components {
             /** Plugin Id */
             plugin_id: string;
         };
+        /** Body_authorize_consent_api_mcp_server_authorize_consent_post */
+        Body_authorize_consent_api_mcp_server_authorize_consent_post: {
+            /** Client Id */
+            client_id: string;
+            /** Code Challenge */
+            code_challenge: string;
+            /** Org Id */
+            org_id: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+            /** State */
+            state?: string | null;
+        };
+        /** Body_token_endpoint_api_mcp_server_token_post */
+        Body_token_endpoint_api_mcp_server_token_post: {
+            /** Client Id */
+            client_id: string;
+            /** Code */
+            code?: string | null;
+            /** Code Verifier */
+            code_verifier?: string | null;
+            /** Grant Type */
+            grant_type: string;
+            /** Redirect Uri */
+            redirect_uri?: string | null;
+            /** Refresh Token */
+            refresh_token?: string | null;
+        };
         /**
          * BoundaryControl
          * @description Flat per-stage "what to do next" setting; `on_*` evaluated only when
@@ -3143,6 +3262,11 @@ export interface components {
          */
         PipelineSummary: {
             /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
              * Id
              * Format: uuid
              */
@@ -3844,6 +3968,13 @@ export interface components {
             clear_github_username: boolean;
             /** Display Name */
             display_name?: string | null;
+        };
+        /** _RegisterRequest */
+        _RegisterRequest: {
+            /** Client Name */
+            client_name: string;
+            /** Redirect Uris */
+            redirect_uris: string[];
         };
         /** _SsoConfigBody */
         _SsoConfigBody: {
@@ -5386,6 +5517,141 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authorize_api_mcp_server_authorize_get: {
+        parameters: {
+            query: {
+                client_id: string;
+                response_type: string;
+                redirect_uri: string;
+                code_challenge: string;
+                code_challenge_method?: string;
+                state?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authorize_consent_api_mcp_server_authorize_consent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_authorize_consent_api_mcp_server_authorize_consent_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_client_api_mcp_server_register_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_RegisterRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    token_endpoint_api_mcp_server_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_token_endpoint_api_mcp_server_token_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

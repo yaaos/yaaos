@@ -63,7 +63,27 @@ Migration: `c6d7e8f9a0b1_add_mcp_server_tables.py`.
 5. **Token refresh** — `POST /api/mcp-server/token` with `grant_type=refresh_token` → `rotate_refresh_token` atomically deletes old refresh token and mints a new pair.
 6. **MCP tool call** — FastMCP sub-app receives bearer in `Authorization` header → `YaaosTokenVerifier.verify_token` → `authenticate()` → principal in `AccessToken.claims` → tool handler reads via `_get_principal()`.
 
+## MCP tools
+
+All tools read org from `McpPrincipal` (set at consent time) — never from tool arguments. Write tools (`create_ticket`, `add_attachment`, `start_run`) require builder+ role. Tool-level errors are JSON-RPC error payloads (not HTTP error codes): `-32001` not found, `-32002` constraint violation (e.g. run in flight), `-32004` auth / role failure, `-32602` invalid argument.
+
+| Tool | Wraps | In | Out |
+|---|---|---|---|
+| `find_ticket` | `tickets.get_by_branch` | `{branch_name}` | `{ticket_id, title, status}` (null fields when not found) |
+| `create_ticket` ✏ | `tickets.create_from_manual` | `{title, repo_external_id, branch_name?, idempotency_key?}` | `{ticket_id, created}` |
+| `add_attachment` ✏ | `attachments.add_attachment` | `{ticket_id, filename, body, note?}` | `{attachment_id, produced_by_skill, artifact_type}` |
+| `start_run` ✏ | `pipelines.start_manual_run` | `{ticket_id, pipeline_id, prompt?, replace_in_flight?}` | `{run_id}` |
+| `get_ticket` | `tickets.get` | `{ticket_id}` | `{id, title, status, branch_name, repo_external_id, created_at}` |
+| `get_run_overview` | `pipelines.get_run_overview` | `{ticket_id}` | RunOverview (`paused \| in_flight \| terminal`) or null |
+| `list_findings` | `findings.list_open_for_ticket` | `{ticket_id}` | `[{id, handle, severity, body, file, line}]` |
+| `list_artifacts` | `artifacts.list_for_ticket` | `{ticket_id}` | `[{stage_name, versions: [{id, version, is_final, created_at, adopted_from_attachment_id}]}]` |
+| `get_artifact` | `artifacts.get` | `{artifact_id}` | `{id, stage_name, version, is_final, body, created_at, adopted_from_attachment_id}` |
+| `list_attachments` | `attachments.list_attachments` | `{ticket_id}` | `[{id, filename, produced_by_skill, artifact_type, note, attached_at}]` |
+| `list_pipelines` | `pipelines.list_pipelines` | `{}` | `[{id, name, description}]` |
+
+`get_run_overview` and `list_pipelines` require `org_id_var` + `user_id_var` contextvars (set internally by `_mcp_tool_context` before the wrapped service call).
+
 ## How it's tested
 
 - `test/test_oauth_service.py` (`@pytest.mark.service`) — full OAuth flow: registration, consent page, consent form with PKCE, code exchange, refresh rotation, token expiry, client_id mismatch, wrong PKCE verifier, code reuse.
-- `test/test_tools_service.py` (`@pytest.mark.service`) — FastMCP `initialize` with valid bearer; bad bearer → 401; `find_ticket` with unknown branch → null result; `find_ticket` with seeded ticket → found; bad bearer on tool call → 401.
+- `test/test_tools_service.py` (`@pytest.mark.service`) — FastMCP `initialize` with valid bearer; bad bearer → 401; `find_ticket` with unknown branch → null result; `find_ticket` with seeded ticket → found; bad bearer on tool call → 401; full create→attach→inspect loop; role-floor check (BUILDER can write).
