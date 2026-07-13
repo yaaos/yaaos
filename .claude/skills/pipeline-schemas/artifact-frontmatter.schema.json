@@ -1,0 +1,60 @@
+{
+  "additionalProperties": false,
+  "description": "Routing metadata emitted at the top of every pipeline-skill artifact.\n\nParsed at attach time; treated as routing hints only — never trusted as\nauthoritative content. `skill` is the match key for stage adoption.",
+  "properties": {
+    "yaaos_artifact_version": {
+      "title": "Yaaos Artifact Version",
+      "type": "integer"
+    },
+    "skill": {
+      "title": "Skill",
+      "type": "string"
+    },
+    "skill_version": {
+      "title": "Skill Version",
+      "type": "string"
+    },
+    "artifact_type": {
+      "title": "Artifact Type",
+      "type": "string"
+    },
+    "produced_at": {
+      "format": "date-time",
+      "title": "Produced At",
+      "type": "string"
+    },
+    "repo_commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Repo Commit"
+    },
+    "produced_from": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Produced From"
+    }
+  },
+  "required": [
+    "yaaos_artifact_version",
+    "skill",
+    "skill_version",
+    "artifact_type",
+    "produced_at"
+  ],
+  "title": "ArtifactFrontmatter",
+  "type": "object"
+}

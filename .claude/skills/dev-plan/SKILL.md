@@ -87,9 +87,29 @@ Only after explicit yes: write `plan.md` phase blocks.
 - Doc updates land in the same phase as code (`CLAUDE.md` mandate).
 - Default to service tests over e2e.
 
+## Artifact frontmatter
+
+When writing `plan/ticket/<slug>/plan.md`, open the file with a YAML frontmatter block before the document body:
+
+```
+---
+yaaos_artifact_version: 1
+skill: dev-plan
+skill_version: "<this skill's version from the frontmatter above>"
+artifact_type: plan
+produced_at: "<ISO-8601 UTC timestamp>"
+repo_commit: "<output of git rev-parse HEAD; omit if not in a git repo>"
+produced_from: "<path to architecture.md if it was the primary input; omit if none>"
+---
+```
+
+The committed schema lives at `.claude/skills/pipeline-schemas/artifact-frontmatter.schema.json`. All seven fields: `yaaos_artifact_version` (always `1`), `skill`, `skill_version`, `artifact_type`, `produced_at`, `repo_commit`, `produced_from`. Update `produced_at` only when the document is first written — do not update it on every incremental write.
+
 ## `plan.md` structure
 
 Use the template at `.claude/skills/dev-plan/templates/plan.md`. Copy it to `plan/ticket/<slug>/plan.md` on first write and fill in placeholders. Add or remove phase blocks as needed; keep the final "Verify requirements" phase.
+
+**Content rules delegate to `pipeline-plan`.** The PhaseBlock structure, slicing rubric, and phase-block quality bar are defined in `.claude/skills/pipeline-plan/SKILL.md`. Read it before drafting any phase block. This skill's job is interactive user collaboration and slice confirmation; pipeline-plan defines the content contract.
 
 Rules the template encodes:
 

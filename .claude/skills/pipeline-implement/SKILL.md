@@ -116,6 +116,24 @@ Applied fixes appear in the subagent's `autonomous_decisions` (surfaced in the P
 
 The stage artifact (written to `$TMPDIR/<command_id>.md`) is the merged phase log. Write it incrementally: initial header after reading the plan artifact, then append each PhaseLogBlock as phases complete.
 
+The initial header opens with a YAML frontmatter block (written once at the start; not updated as phases complete):
+
+```
+---
+yaaos_artifact_version: 1
+skill: pipeline-implement
+skill_version: "<this skill's version from the frontmatter above>"
+artifact_type: phase_log
+produced_at: "<ISO-8601 UTC timestamp when the initial header is written>"
+repo_commit: "<output of git rev-parse HEAD at start; omit if not in a git repo>"
+produced_from: "<upstream plan artifact reference if known; omit if none>"
+---
+```
+
+The committed schema for this block lives at `.claude/skills/pipeline-schemas/artifact-frontmatter.schema.json`. All seven fields: `yaaos_artifact_version` (always `1`), `skill`, `skill_version`, `artifact_type`, `produced_at`, `repo_commit`, `produced_from`. The last two are optional (null / omitted) when not applicable.
+
+Artifact structure after the frontmatter block:
+
 ```
 # Implement — <plan summary line>
 

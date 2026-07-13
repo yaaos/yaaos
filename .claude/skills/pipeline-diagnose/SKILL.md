@@ -46,6 +46,24 @@ Structured JSON per the `SkillReturn` schema. The engine supplies the exact JSON
 - `paths_affected` — every file implicated in the root cause or its blast radius.
 - `summary` — one line.
 
+## Artifact frontmatter
+
+Every artifact this skill produces opens with a YAML frontmatter block before any other content:
+
+```
+---
+yaaos_artifact_version: 1
+skill: pipeline-diagnose
+skill_version: "<this skill's version from the frontmatter above>"
+artifact_type: diagnosis
+produced_at: "<ISO-8601 UTC timestamp, e.g. 2024-01-15T10:00:00Z>"
+repo_commit: "<output of git rev-parse HEAD; omit the field if not in a git repo>"
+produced_from: "<upstream artifact reference if one was provided as input; omit if none>"
+---
+```
+
+The committed schema for this block lives at `.claude/skills/pipeline-schemas/artifact-frontmatter.schema.json`. All seven fields: `yaaos_artifact_version` (always `1`), `skill`, `skill_version`, `artifact_type`, `produced_at`, `repo_commit`, `produced_from`. The last two are optional (null / omitted) when not applicable. Write the frontmatter block first, then the artifact body.
+
 ## Re-entry (`instruct` / `send_back`)
 
 On re-entry the invocation carries a revision — a human's instruction (e.g. "you missed the retry path") or a downstream gap description — plus your own prior diagnosis. Revise the existing document against the specific gap; don't restart the investigation from zero unless the instruction says the whole diagnosis is wrong.
