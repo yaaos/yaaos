@@ -207,7 +207,7 @@ tasks:
     tool-cache: ci-e2e-pnpm
     # Broad filter: e2e exercises the integrated test compose stack —
     # backend (web + worker images), web (SPA baked into the image), the
-    # three fake-* services, the local WorkspaceAgent + its mock-aws STS
+    # four fake-* services, the local WorkspaceAgent + its mock-aws STS
     # endpoint (both built by docker-compose.test.yml), the fake-claude
     # CLI the agent bind-mounts at /usr/local/bin/claude, the compose file
     # itself, and workspace lockfiles. Every build context AND bind-mount
@@ -224,6 +224,7 @@ tasks:
       - apps/fake-github/**
       - apps/fake-linear/**
       - apps/fake-notion/**
+      - apps/fake-oauth-provider/**
       - docker/docker-compose.test.yml
       - docker/mock-aws/**
       # apps/backend/Dockerfile's web-builder stage COPYs these into the
