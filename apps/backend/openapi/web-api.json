@@ -474,6 +474,18 @@
       },
       "ArtifactDetailResponse": {
         "properties": {
+          "adopted_from_attachment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adopted From Attachment Id"
+          },
           "body": {
             "title": "Body",
             "type": "string"
@@ -518,6 +530,7 @@
           "is_final",
           "body",
           "run_id",
+          "adopted_from_attachment_id",
           "created_at"
         ],
         "title": "ArtifactDetailResponse",
@@ -548,6 +561,18 @@
       "ArtifactMeta": {
         "description": "Metadata-only view of one artifact version — no body.",
         "properties": {
+          "adopted_from_attachment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adopted From Attachment Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -582,6 +607,7 @@
           "run_id",
           "iteration",
           "is_final",
+          "adopted_from_attachment_id",
           "created_at"
         ],
         "title": "ArtifactMeta",

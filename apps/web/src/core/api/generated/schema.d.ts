@@ -2237,6 +2237,8 @@ export interface components {
         };
         /** ArtifactDetailResponse */
         ArtifactDetailResponse: {
+            /** Adopted From Attachment Id */
+            adopted_from_attachment_id: string | null;
             /** Body */
             body: string;
             /**
@@ -2278,6 +2280,8 @@ export interface components {
          * @description Metadata-only view of one artifact version — no body.
          */
         ArtifactMeta: {
+            /** Adopted From Attachment Id */
+            adopted_from_attachment_id: string | null;
             /**
              * Created At
              * Format: date-time

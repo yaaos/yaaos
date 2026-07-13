@@ -427,6 +427,7 @@ expose = [
   "dispatch_invocation",
   "finalize_run",
   "get_plugin",
+  "get_shipped_skill_version",
   "get_stage_activity",
   "install_coding_agent",
   "list_coding_agents",
@@ -875,6 +876,7 @@ expose = [
   "ArtifactGroup",
   "ArtifactMeta",
   "ArtifactNotFoundError",
+  "adopted_attachment_ids_for_run",
   "get",
   "latest_final",
   "list_for_ticket",
@@ -893,6 +895,7 @@ expose = [
   "TicketNotFoundError",
   "add_attachment",
   "get_attachment",
+  "latest_matching",
   "list_attachments",
   "parse_frontmatter",
 ]

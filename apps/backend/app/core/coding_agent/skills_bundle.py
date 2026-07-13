@@ -182,3 +182,38 @@ async def build_skills_bundle_zip(plugin_id: str) -> bytes:
     settings = get_settings()
     source_dir = Path(settings.yaaos_skills_source_dir)
     return await asyncio.to_thread(_build_bundle_sync, plugin, source_dir)
+
+
+def _get_shipped_skill_version_sync(skill_name: str, source_dir: Path) -> str | None:
+    """Blocking read of the shipped skill version from its SKILL.md frontmatter.
+
+    Returns ``None`` when the skill directory is absent, ``SKILL.md`` is
+    missing, the file cannot be read, YAML parsing fails, or the frontmatter
+    carries no ``version`` key.  All failure modes are silent — the caller
+    should skip the version check when ``None`` is returned.
+    """
+    skill_md = source_dir / "skills" / skill_name / "SKILL.md"
+    try:
+        raw = skill_md.read_text(encoding="utf-8")
+    except FileNotFoundError, OSError:
+        return None
+    fm, _ = _parse_frontmatter(raw)
+    version = fm.get("version")
+    if not isinstance(version, str) or not version:
+        return None
+    return version
+
+
+async def get_shipped_skill_version(skill_name: str) -> str | None:
+    """Return the ``version`` declared in the shipped ``<skill_name>/SKILL.md`` frontmatter.
+
+    Returns ``None`` when the skill directory is absent, the frontmatter has no
+    ``version`` key, or any I/O or parse failure occurs — the caller should
+    silently skip the check in all ``None`` cases.
+
+    File I/O runs in a thread pool via ``asyncio.to_thread`` (sanctioned
+    blocking I/O carve-out — see ``apps/backend/docs/patterns.md``).
+    """
+    settings = get_settings()
+    source_dir = Path(settings.yaaos_skills_source_dir)
+    return await asyncio.to_thread(_get_shipped_skill_version_sync, skill_name, source_dir)

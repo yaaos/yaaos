@@ -44,6 +44,8 @@ class ArtifactDetailResponse(BaseModel):
     is_final: bool
     body: str
     run_id: UUID
+    # Provenance: non-null iff this artifact was adopted from a ticket attachment.
+    adopted_from_attachment_id: UUID | None
     created_at: datetime
 
 
@@ -75,6 +77,7 @@ async def get_artifact_endpoint(artifact_id: UUID) -> ArtifactDetailResponse:
         is_final=artifact.is_final,
         body=artifact.body,
         run_id=artifact.run_id,
+        adopted_from_attachment_id=artifact.adopted_from_attachment_id,
         created_at=artifact.created_at,
     )
 

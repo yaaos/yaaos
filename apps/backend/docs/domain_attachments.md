@@ -23,6 +23,7 @@ Exported from `__init__.py`:
 - `add_attachment(ticket_id, *, org_id, filename, body, note, actor, session) -> Attachment`
 - `list_attachments(ticket_id, *, org_id, session) -> list[AttachmentMeta]`
 - `get_attachment(attachment_id, *, org_id, session) -> Attachment`
+- `latest_matching(ticket_id, *, skill_name, attachment_ids, session) -> Attachment | None` — returns the newest attachment whose `produced_by_skill == skill_name` and whose `id` is in `attachment_ids`, or `None` when no match. Used by the adoption fork in `domain/pipelines`.
 - `TicketNotFoundError`, `AttachmentTooLargeError`, `AttachmentNotFoundError`
 
 HTTP surface: `POST /api/attachments` (201) · `GET /api/attachments?ticket_id=` (200).
@@ -47,6 +48,7 @@ HTTP surface: `POST /api/attachments` (201) · `GET /api/attachments?ticket_id=`
 4. **Parse frontmatter from an artifact body** — caller passes the full body string to `parse_frontmatter`; returns VO on success, `None` on any failure (no error surfaced).
 5. **Schema drift detection** — `test/test_schema_files.py` asserts byte-equality of committed `.claude/skills/pipeline-schemas/artifact-frontmatter.schema.json` with `ArtifactFrontmatter.model_json_schema()`.
 6. **Delivery to the agent workspace** — `domain/pipelines`' run engine snapshots attachment IDs into `Kickoff.attachment_ids` at `start_manual_run` time, then materialises the files as `.yaaos-inputs/<filename>` in the provisioned workspace via the `seed-inputs` system stage (a `WriteFilesCommand` after provision; before the first skill stage). See [domain_pipelines.md § Core user flows](domain_pipelines.md#core-user-flows).
+7. **Adoption matching** — `latest_matching(ticket_id, *, skill_name, attachment_ids, session)` is the query the engine uses to check whether a stage may be skipped: it returns the attachment with `produced_by_skill == skill_name` whose `id` is in `Kickoff.attachment_ids` and whose `attached_at` is the most recent, `None` when no match. The caller (the engine) also checks recency against the stage's own latest final artifact before deciding to adopt.
 
 ### State machines
 

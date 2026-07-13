@@ -3,6 +3,7 @@ name: pipeline-requirements
 description: Pipeline skill for a `requirements` stage — turns a spec/kickoff input into a requirements artifact. Invoked headlessly by the pipeline run engine; no interactive Q&A. Also runnable standalone by a developer against a spec in a working checkout.
 model: claude-sonnet-5
 effort: high
+version: "1.0.0"
 ---
 
 # pipeline-requirements

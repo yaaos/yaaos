@@ -44,6 +44,7 @@ EXPECTED_ALL = frozenset(
         "get_stage_activity",
         # Bundle builder
         "build_skills_bundle_zip",
+        "get_shipped_skill_version",
         # Test isolation seam
         "set_coding_agents_for_tests",
         # API key secrets provider

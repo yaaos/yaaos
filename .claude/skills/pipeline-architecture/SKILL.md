@@ -3,6 +3,7 @@ name: pipeline-architecture
 description: Pipeline skill for an `architecture` stage — turns a requirements artifact into a target-architecture artifact (current state + delta). Invoked headlessly by the pipeline run engine; no interactive Q&A.
 model: claude-sonnet-5
 effort: high
+version: "1.0.0"
 ---
 
 # pipeline-architecture

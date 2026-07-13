@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from app.core.coding_agent.skills_bundle import (
+    _get_shipped_skill_version_sync,
     _load_agent_sources,
     _load_skill_sources,
     _parse_frontmatter,
@@ -328,3 +329,42 @@ async def test_build_skills_bundle_zip_unknown_plugin(tmp_path: Path) -> None:
     with set_coding_agents_for_tests(scenario="empty"):
         with pytest.raises(PluginNotFoundError):
             await build_skills_bundle_zip("no_such_plugin")
+
+
+# ── get_shipped_skill_version ─────────────────────────────────────────────────
+
+
+def test_get_shipped_skill_version_returns_version(tmp_path: Path) -> None:
+    """Returns the `version` string from the SKILL.md frontmatter."""
+    skill_dir = tmp_path / "skills" / "pipeline-foo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: pipeline-foo\nversion: '1.2.3'\n---\n\n# Body\n")
+    assert _get_shipped_skill_version_sync("pipeline-foo", tmp_path) == "1.2.3"
+
+
+def test_get_shipped_skill_version_none_for_missing_skill(tmp_path: Path) -> None:
+    """Returns None when the skill directory does not exist."""
+    assert _get_shipped_skill_version_sync("pipeline-nonexistent", tmp_path) is None
+
+
+def test_get_shipped_skill_version_none_when_no_version_key(tmp_path: Path) -> None:
+    """Returns None when the SKILL.md has no `version` key."""
+    skill_dir = tmp_path / "skills" / "pipeline-bar"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: pipeline-bar\n---\n\n# Body\n")
+    assert _get_shipped_skill_version_sync("pipeline-bar", tmp_path) is None
+
+
+def test_get_shipped_skill_version_none_for_missing_skill_md(tmp_path: Path) -> None:
+    """Returns None when the skill directory exists but SKILL.md is absent."""
+    skill_dir = tmp_path / "skills" / "pipeline-baz"
+    skill_dir.mkdir(parents=True)
+    assert _get_shipped_skill_version_sync("pipeline-baz", tmp_path) is None
+
+
+def test_get_shipped_skill_version_returns_none_for_non_string_version(tmp_path: Path) -> None:
+    """Returns None when `version` is present but is not a string (e.g. int)."""
+    skill_dir = tmp_path / "skills" / "pipeline-qux"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: pipeline-qux\nversion: 1\n---\n\n# Body\n")
+    assert _get_shipped_skill_version_sync("pipeline-qux", tmp_path) is None

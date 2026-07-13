@@ -13,6 +13,7 @@ from app.domain.attachments.service import (
     TicketNotFoundError,
     add_attachment,
     get_attachment,
+    latest_matching,
     list_attachments,
 )
 from app.domain.attachments.types import Attachment, AttachmentMeta
@@ -26,6 +27,7 @@ __all__ = [
     "TicketNotFoundError",
     "add_attachment",
     "get_attachment",
+    "latest_matching",
     "list_attachments",
     "parse_frontmatter",
 ]

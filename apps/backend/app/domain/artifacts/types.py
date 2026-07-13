@@ -23,6 +23,9 @@ class Artifact(BaseModel):
     iteration: int
     is_final: bool
     body: str
+    # Provenance: set when this artifact was synthesised from a ticket
+    # attachment (adoption path); None for engine-produced artifacts.
+    adopted_from_attachment_id: UUID | None
     created_at: datetime
 
     @classmethod
@@ -38,6 +41,7 @@ class Artifact(BaseModel):
             iteration=row.iteration,
             is_final=row.is_final,
             body=row.body,
+            adopted_from_attachment_id=row.adopted_from_attachment_id,
             created_at=row.created_at,
         )
 
@@ -50,6 +54,8 @@ class ArtifactMeta(BaseModel):
     run_id: UUID
     iteration: int
     is_final: bool
+    # Provenance: set when this artifact was synthesised from an attachment.
+    adopted_from_attachment_id: UUID | None
     created_at: datetime
 
 

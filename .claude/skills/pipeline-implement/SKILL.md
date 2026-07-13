@@ -3,6 +3,7 @@ name: pipeline-implement
 description: Pipeline skill for an `implement` stage — thin orchestrator that executes a plan artifact's PhaseBlock sequence phase by phase in fresh-context subagents, verifies each via RWX remote run, commits per phase, and emits a merged phase-log artifact. Invoked headlessly by the pipeline run engine; no interactive Q&A. Paired with `pipeline-code-review` in the shipped `implementation` pipeline.
 model: claude-sonnet-5
 effort: xhigh
+version: "1.0.0"
 ---
 
 # pipeline-implement

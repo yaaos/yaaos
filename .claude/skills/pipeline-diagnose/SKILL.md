@@ -3,6 +3,7 @@ name: pipeline-diagnose
 description: Pipeline skill for a `diagnose` stage — investigates a bug report against the actual repo and writes a diagnosis artifact (root cause, evidence, blast radius). Invoked headlessly by the pipeline run engine as the first stage of the shipped `troubleshoot` pipeline; no interactive Q&A.
 model: claude-sonnet-5
 effort: high
+version: "1.0.0"
 ---
 
 # pipeline-diagnose

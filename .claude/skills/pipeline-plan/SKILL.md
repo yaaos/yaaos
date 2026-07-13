@@ -3,6 +3,7 @@ name: pipeline-plan
 description: Pipeline skill for a `plan` (or equivalently-purposed) stage — turns an architecture or diagnosis artifact into a PhaseBlock sequence that `pipeline-implement` executes phase by phase in a fresh-context subagent. Invoked headlessly by the pipeline run engine; no interactive Q&A. Stage name and skill name are independent — `troubleshoot`'s `fix-plan` stage runs this same skill.
 model: claude-sonnet-5
 effort: high
+version: "1.0.0"
 ---
 
 # pipeline-plan

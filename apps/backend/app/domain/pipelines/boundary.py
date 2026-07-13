@@ -59,7 +59,7 @@ async def evaluate_boundary(
     repo_external_id: str,
     residuals: Sequence[Finding],
     paths_affected: Sequence[str],
-    confidence: Confidence,
+    confidence: Confidence | None,
     session: AsyncSession,
 ) -> BoundaryDecision:
     if control.mode == "always_proceed":
@@ -82,7 +82,10 @@ async def evaluate_boundary(
             tripped["protected_code"] = True
             protected_owner_user_ids = match.owner_user_ids
 
-    if control.on_confidence_below is not None:
+    # `confidence` is None for adopted stages (no main-skill invocation ran).
+    # Skip the on_confidence_below check entirely — absence of a confidence
+    # score is not the same as a low score, so the condition must not fire.
+    if control.on_confidence_below is not None and confidence is not None:
         if _CONFIDENCE_RANK[confidence] < _CONFIDENCE_RANK[control.on_confidence_below]:
             tripped["confidence_below"] = control.on_confidence_below
 

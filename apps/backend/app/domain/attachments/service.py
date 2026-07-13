@@ -8,6 +8,7 @@ the attachment to context-only (metadata columns remain NULL).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -177,6 +178,37 @@ async def list_attachments(
         .all()
     )
     return [r.to_meta() for r in rows]
+
+
+async def latest_matching(
+    ticket_id: UUID,
+    *,
+    skill_name: str,
+    attachment_ids: Sequence[UUID],
+    session: AsyncSession,
+) -> Attachment | None:
+    """Return the newest attachment in `attachment_ids` whose
+    `produced_by_skill` equals `skill_name`, or None when none match.
+
+    Used by the run engine's adoption fork to find a candidate attachment for
+    an upcoming skill stage. `attachment_ids` is the run's kickoff snapshot —
+    already scoped to the right ticket and run.
+    """
+    if not attachment_ids:
+        return None
+    row = (
+        await session.execute(
+            select(TicketAttachmentRow)
+            .where(
+                TicketAttachmentRow.ticket_id == ticket_id,
+                TicketAttachmentRow.id.in_(attachment_ids),
+                TicketAttachmentRow.produced_by_skill == skill_name,
+            )
+            .order_by(TicketAttachmentRow.attached_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row.to_attachment() if row is not None else None
 
 
 async def get_attachment(
