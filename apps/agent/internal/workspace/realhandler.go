@@ -157,6 +157,20 @@ func overrideEnv(env []string, key, val string) []string {
 	return append(out, prefix+val)
 }
 
+// stripEnv returns env with every "key=..." entry removed. Order of unrelated
+// entries is preserved.
+func stripEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // RealHandlerConfig customizes the production handler's behaviour. Zero
 // values pick safe defaults.
 type RealHandlerConfig struct {
@@ -453,9 +467,21 @@ func (h *RealHandler) RunClaude(ctx context.Context, cmd *protocol.InvokeClaudeC
 	//      supervisor → workspace hop links the same way; this hop
 	//      extends it one more step to the Claude Code grand-child).
 	env := os.Environ()
+	// Personal single-tenant escape hatch: when YAAOS_AGENT_ANTHROPIC_SUBSCRIPTION=true
+	// is set on the container, never hand claude an Anthropic API key. Strip any
+	// inherited copy and skip the ConfigUpdate injection below so claude falls back
+	// to the $HOME/.claude subscription (OAuth) login. No login probe — if nobody is
+	// logged in, claude fails, which is acceptable. openai/rwx keys are unaffected.
+	subscriptionAuth := os.Getenv("YAAOS_AGENT_ANTHROPIC_SUBSCRIPTION") == "true"
+	if subscriptionAuth {
+		env = stripEnv(env, "ANTHROPIC_API_KEY")
+	}
 	if h.cfg.ApiKeys != nil {
 		if apiKeys := h.cfg.ApiKeys(); apiKeys != nil {
 			for providerID, envVar := range apiKeyProviderEnvVars {
+				if subscriptionAuth && providerID == "anthropic" {
+					continue
+				}
 				if sec, ok := apiKeys[providerID]; ok && !sec.IsZero() {
 					env = append(env, envVar+"="+sec.Value())
 				}
