@@ -1169,6 +1169,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pipelines/runs/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Run Endpoint
+         * @description Kick off a pipeline run on an existing ticket.
+         *
+         *     `replace_in_flight=false` (default): returns 409 `run_in_flight` if a
+         *     running or paused run already exists on the ticket.
+         *     `replace_in_flight=true`: kills the in-flight run and immediately starts
+         *     the new one.
+         *
+         *     Registered BEFORE `/{pipeline_id}` — the latter is a bare single-segment
+         *     match that would otherwise swallow the literal `/runs/start` path.
+         */
+        post: operations["start_run_endpoint_api_pipelines_runs_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pipelines/runs/{run_id}/cancel": {
         parameters: {
             query?: never;
@@ -1548,7 +1576,14 @@ export interface paths {
          */
         get: operations["list__api_tickets_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create
+         * @description Create a manual ticket. `idempotency_key` is optional — omitting it
+         *     creates a distinct ticket on every call; supplying the same key twice
+         *     returns the existing ticket with `created=false` (HTTP 200, not 201, for
+         *     that case — the 201 is only emitted on the winning insert).
+         */
+        post: operations["create__api_tickets_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2433,6 +2468,27 @@ export interface components {
         };
         /** CreatePipelineResponse */
         CreatePipelineResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /** CreateTicketRequest */
+        CreateTicketRequest: {
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Idempotency Key */
+            idempotency_key?: string | null;
+            /** Repo External Id */
+            repo_external_id: string;
+            /** Title */
+            title: string;
+        };
+        /** CreateTicketResponse */
+        CreateTicketResponse: {
+            /** Created */
+            created: boolean;
             /**
              * Id
              * Format: uuid
@@ -3418,6 +3474,34 @@ export interface components {
             started_at: string;
             /** Status */
             status: string;
+        };
+        /** StartRunRequest */
+        StartRunRequest: {
+            /** Input Text */
+            input_text?: string | null;
+            /**
+             * Pipeline Id
+             * Format: uuid
+             */
+            pipeline_id: string;
+            /**
+             * Replace In Flight
+             * @default false
+             */
+            replace_in_flight: boolean;
+            /**
+             * Ticket Id
+             * Format: uuid
+             */
+            ticket_id: string;
+        };
+        /** StartRunResponse */
+        StartRunResponse: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
         };
         /**
          * StepActivityResponse
@@ -6070,6 +6154,43 @@ export interface operations {
             };
         };
     };
+    start_run_endpoint_api_pipelines_runs_start_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cancel_run_endpoint_api_pipelines_runs__run_id__cancel_post: {
         parameters: {
             query?: never;
@@ -6783,6 +6904,7 @@ export interface operations {
                 cursor?: string | null;
                 created_after?: string | null;
                 created_before?: string | null;
+                branch?: string | null;
                 limit?: number;
             };
             header?: {
@@ -6804,6 +6926,43 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create__api_tickets_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateTicketResponse"];
                 };
             };
             /** @description Validation Error */

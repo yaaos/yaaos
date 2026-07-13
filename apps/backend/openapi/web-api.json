@@ -974,6 +974,65 @@
         "title": "CreatePipelineResponse",
         "type": "object"
       },
+      "CreateTicketRequest": {
+        "properties": {
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "repo_external_id": {
+            "title": "Repo External Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "repo_external_id"
+        ],
+        "title": "CreateTicketRequest",
+        "type": "object"
+      },
+      "CreateTicketResponse": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created"
+        ],
+        "title": "CreateTicketResponse",
+        "type": "object"
+      },
       "Decision": {
         "description": "One pause resolution recorded against a stage execution.",
         "properties": {
@@ -3292,6 +3351,56 @@
           "completed_at"
         ],
         "title": "StageExecution",
+        "type": "object"
+      },
+      "StartRunRequest": {
+        "properties": {
+          "input_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Text"
+          },
+          "pipeline_id": {
+            "format": "uuid",
+            "title": "Pipeline Id",
+            "type": "string"
+          },
+          "replace_in_flight": {
+            "default": false,
+            "title": "Replace In Flight",
+            "type": "boolean"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "title": "Ticket Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "pipeline_id"
+        ],
+        "title": "StartRunRequest",
+        "type": "object"
+      },
+      "StartRunResponse": {
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "StartRunResponse",
         "type": "object"
       },
       "StepActivityResponse": {
@@ -8861,6 +8970,82 @@
         ]
       }
     },
+    "/api/pipelines/runs/start": {
+      "post": {
+        "description": "Kick off a pipeline run on an existing ticket.\n\n`replace_in_flight=false` (default): returns 409 `run_in_flight` if a\nrunning or paused run already exists on the ticket.\n`replace_in_flight=true`: kills the in-flight run and immediately starts\nthe new one.\n\nRegistered BEFORE `/{pipeline_id}` — the latter is a bare single-segment\nmatch that would otherwise swallow the literal `/runs/start` path.",
+        "operationId": "start_run_endpoint_api_pipelines_runs_start_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Run Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
     "/api/pipelines/runs/{run_id}/cancel": {
       "post": {
         "operationId": "cancel_run_endpoint_api_pipelines_runs__run_id__cancel_post",
@@ -10366,6 +10551,22 @@
           },
           {
             "in": "query",
+            "name": "branch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -10433,6 +10634,80 @@
           }
         },
         "summary": "List ",
+        "tags": [
+          "tickets"
+        ]
+      },
+      "post": {
+        "description": "Create a manual ticket. `idempotency_key` is optional — omitting it\ncreates a distinct ticket on every call; supplying the same key twice\nreturns the existing ticket with `created=false` (HTTP 200, not 201, for\nthat case — the 201 is only emitted on the winning insert).",
+        "operationId": "create__api_tickets_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTicketRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateTicketResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create ",
         "tags": [
           "tickets"
         ]

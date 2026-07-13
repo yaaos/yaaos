@@ -495,11 +495,11 @@ async def resume_with_send_back(
 
 async def kill_run(run: PipelineRunRow, *, session: AsyncSession) -> None:
     """`kill`: run terminal `killed` — same cleanup-first routing as any
-    other decided run outcome. Flips `state` back to `running` first (the
-    "a dispatch is in flight" state, regardless of `paused`'s HITL meaning)
-    so the cleanup stage's own terminal event — routed through
-    `HANDLE_AGENT_EVENT`, which requires `state == "running"` — isn't
-    dropped as stale."""
+    other decided run outcome. Accepts `state in {"paused", "running"}`:
+    flips `state` back to `running` first (the "a dispatch is in flight"
+    state, regardless of `paused`'s HITL meaning) so the cleanup stage's
+    own terminal event — routed through `HANDLE_AGENT_EVENT`, which requires
+    `state == "running"` — isn't dropped as stale."""
     run.state = "running"
     await _finish_or_cleanup(run, "killed", failure_reason=None, session=session)
 

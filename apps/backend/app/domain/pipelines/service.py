@@ -44,6 +44,10 @@ from app.domain.repos import pipeline_referenced_by_binding as _repo_pipeline_re
 from app.domain.tickets import get as get_ticket
 
 _TERMINAL_RUN_STATES = frozenset({"completed", "failed", "killed", "cancelled"})
+# Only running/paused runs hold the one-in-flight slot exclusively. queued
+# runs are safe — the DB unique index prevents two promotions on the same
+# ticket, so the new run simply queues behind the existing queued one.
+_IN_FLIGHT_STATES = frozenset({"running", "paused"})
 
 
 class PipelineNotFoundError(LookupError):
@@ -98,6 +102,10 @@ class MissingInheritedArtifactError(ValueError):
 
 class TemplateNotFoundError(LookupError):
     """No shipped default `PipelineDefinition` for the given id."""
+
+
+class RunInFlightError(ValueError):
+    """A run is already running or paused on the ticket and `replace_in_flight=False`."""
 
 
 class InvalidPauseResolutionError(ValueError):
@@ -741,6 +749,73 @@ async def instantiate_template(
 def list_templates() -> tuple[PipelineDefinition, ...]:
     """The code-shipped default pipelines (pinned ids)."""
     return defaults.ALL_DEFAULTS
+
+
+async def start_manual_run(
+    *,
+    org_id: UUID,
+    ticket_id: UUID,
+    pipeline_id: UUID,
+    actor: Actor,
+    input_text: str | None,
+    replace_in_flight: bool = False,
+    triggered_by_user_id: UUID | None = None,
+    session: AsyncSession,
+) -> UUID:
+    """Start a pipeline run on a ticket, with optional in-flight-run replacement.
+
+    Validation order (to avoid killing a run before confirming the target
+    inputs are valid):
+      1. Ticket exists in org (raises `TicketNotFoundError` if not).
+      2. Pipeline exists in org (raises `PipelineNotFoundError` if not).
+      3. Check for an existing running/paused run.
+         - `replace_in_flight=False` → raises `RunInFlightError`.
+         - `replace_in_flight=True` → kills the in-flight run, then starts the
+           new one. The kill fires the normal terminal path (cleanup-workspace
+           if provisioned), calls `promote_oldest_queued` (which finds nothing
+           since the new run isn't created yet), then `start_run` inserts the
+           new run and immediately promotes it via `attempt_promotion`.
+    """
+    # 1. Validate ticket (opens its own session — shape b)
+    await get_ticket(ticket_id, org_id=org_id)
+
+    # 2. Validate pipeline
+    org_definitions = await _load_org_definitions(org_id, session=session)
+    if pipeline_id not in org_definitions:
+        raise PipelineNotFoundError(pipeline_id)
+
+    # 3. In-flight gate
+    in_flight = (
+        await session.execute(
+            select(PipelineRunRow)
+            .where(
+                PipelineRunRow.ticket_id == ticket_id,
+                PipelineRunRow.state.in_(list(_IN_FLIGHT_STATES)),
+            )
+            .order_by(PipelineRunRow.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if in_flight is not None:
+        if not replace_in_flight:
+            raise RunInFlightError(f"ticket {ticket_id} already has a run in state={in_flight.state}")
+        await engine.kill_run(in_flight, session=session)
+
+    kickoff = Kickoff(
+        intake_point_id="manual",
+        actor=actor,
+        input_text=input_text,
+        revision=None,
+    )
+    return await start_run(
+        org_id=org_id,
+        ticket_id=ticket_id,
+        pipeline_id=pipeline_id,
+        kickoff=kickoff,
+        triggered_by_user_id=triggered_by_user_id,
+        session=session,
+    )
 
 
 async def has_run_in_flight(ticket_id: UUID, *, session: AsyncSession) -> bool:

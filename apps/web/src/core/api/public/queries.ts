@@ -483,6 +483,20 @@ export function useRerunRun(ticket_id: string) {
   });
 }
 
+/** Kick off a pipeline run on a ticket — 409 when already in-flight and
+ *  `replace_in_flight=false`. Callers should catch the 409 and prompt. */
+export function useStartRun(ticket_id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { pipeline_id: string; input_text?: string; replace_in_flight: boolean }) =>
+      apiFetch<{ run_id: string }>("/api/pipelines/runs/start", {
+        method: "POST",
+        body: JSON.stringify({ ticket_id, ...vars }),
+      }),
+    onSuccess: () => _invalidateRun(qc, ticket_id),
+  });
+}
+
 // ── Artifacts (Artifacts tab) ────────────────────────────────────────────────
 
 export type ArtifactGroupView = components["schemas"]["ArtifactGroup"];
