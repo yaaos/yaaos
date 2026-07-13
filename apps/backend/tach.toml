@@ -131,7 +131,7 @@ depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "
 
 [[modules]]
 path = "app.domain.pipelines"
-depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.actions", "app.domain.artifacts", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
+depends_on = ["app.core.agent_gateway", "app.core.audit_log", "app.core.auth", "app.core.coding_agent", "app.core.config", "app.core.database", "app.core.identity", "app.core.intake", "app.core.notifications", "app.core.sessions", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.vcs", "app.core.webserver", "app.core.workspace", "app.domain.actions", "app.domain.artifacts", "app.domain.attachments", "app.domain.findings", "app.domain.repos", "app.domain.tickets"]
 
 [[modules]]
 path = "app.domain.pr_review"
@@ -777,6 +777,7 @@ expose = [
   "register_vcs_plugin",
   "registered_plugin_ids",
   "resolve_finding_thread",
+  "resolve_plugin_id_for_repo",
   "set_vcs_for_tests",
   "validate_settings",
 ]
@@ -832,6 +833,7 @@ expose = [
   "dispatch_provision",
   "dispatch_push",
   "dispatch_via_workspace",
+  "dispatch_write_files",
   "extend_expiry",
   "get_provider",
   "get_workspace_claim_state",

@@ -65,6 +65,20 @@ def render_stage_prompt(
     lines.append("\n## Input\n")
     lines.append(str(context.get("input") or ""))
 
+    attachments = context.get("attachments") or []
+    if attachments:
+        lines.append("\n## Attachments\n")
+        for att in attachments:
+            path = att.get("path", "")
+            artifact_type = att.get("artifact_type") or "—"
+            produced_by = att.get("produced_by_skill") or "—"
+            role = att.get("role", "context")
+            note = att.get("note")
+            entry = f"- `{path}` · type: {artifact_type} · skill: {produced_by} · role: {role}"
+            if note:
+                entry += f" · {note}"
+            lines.append(entry)
+
     pr = context.get("pr")
     if pr:
         lines.append("\n## Pull request\n")

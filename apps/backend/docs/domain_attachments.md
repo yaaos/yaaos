@@ -46,6 +46,7 @@ HTTP surface: `POST /api/attachments` (201) · `GET /api/attachments?ticket_id=`
 3. **Get single attachment** — `get_attachment`: returns `Attachment` (with body); raises `AttachmentNotFoundError` for cross-org or absent rows (existence not leaked).
 4. **Parse frontmatter from an artifact body** — caller passes the full body string to `parse_frontmatter`; returns VO on success, `None` on any failure (no error surfaced).
 5. **Schema drift detection** — `test/test_schema_files.py` asserts byte-equality of committed `.claude/skills/pipeline-schemas/artifact-frontmatter.schema.json` with `ArtifactFrontmatter.model_json_schema()`.
+6. **Delivery to the agent workspace** — `domain/pipelines`' run engine snapshots attachment IDs into `Kickoff.attachment_ids` at `start_manual_run` time, then materialises the files as `.yaaos-inputs/<filename>` in the provisioned workspace via the `seed-inputs` system stage (a `WriteFilesCommand` after provision; before the first skill stage). See [domain_pipelines.md § Core user flows](domain_pipelines.md#core-user-flows).
 
 ### State machines
 

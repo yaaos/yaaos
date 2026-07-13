@@ -109,6 +109,29 @@ def registered_plugin_ids() -> list[str]:
     return _get().ids()
 
 
+async def resolve_plugin_id_for_repo(org_id: UUID, repo_external_id: str) -> str:
+    """Return the VCS plugin ID that owns `repo_external_id` for `org_id`.
+
+    Single-plugin fast path: if exactly one plugin is registered, return it
+    without an accessibility round-trip. Multi-plugin: iterate registered
+    plugins, calling `is_repo_accessible`; return the first that answers True.
+    Falls back to the first registered plugin when none answers True. Returns
+    `""` when no plugins are registered at all.
+
+    Used by `domain/tickets.create_from_manual` (self-resolution, no caller
+    overhead) and `domain/pipelines.scheduler_jobs` (schedule-tick resolution).
+    """
+    plugin_ids = _get().ids()
+    if not plugin_ids:
+        return ""
+    if len(plugin_ids) == 1:
+        return plugin_ids[0]
+    for pid in plugin_ids:
+        if await is_repo_accessible(pid, org_id, repo_external_id):
+            return pid
+    return plugin_ids[0]
+
+
 async def get_installation_token(plugin_id: str, org_id: UUID) -> str:
     """Top-level dispatcher. Workspace plugins call this for fresh git auth."""
     plugin = get_plugin(plugin_id)

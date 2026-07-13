@@ -48,7 +48,9 @@ async def test_create_from_manual_mints_branch_when_omitted(db_session: AsyncSes
     assert row.status == "pending"
     assert row.type == "manual"
     assert row.source == "manual"
-    assert row.plugin_id == ""
+    # plugin_id is resolved from the registered VCS plugin; in tests the
+    # stub github plugin is always registered, so this is non-empty.
+    assert row.plugin_id != ""
 
 
 @pytest.mark.asyncio

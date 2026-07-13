@@ -18,6 +18,7 @@ from app.core.notifications import fanout
 from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import enqueue
 from app.core.tenancy import list_active_member_ids
+from app.core.vcs import resolve_plugin_id_for_repo
 from app.domain.tickets.models import TicketRow
 from app.domain.tickets.notifications import build_status_change_specs
 from app.domain.tickets.pull_request import PullRequest, PullRequestNotFoundError
@@ -384,6 +385,7 @@ async def create_from_manual(
     Caller commits; never commits here.
     """
     key = idempotency_key if idempotency_key is not None else str(uuid7())
+    plugin_id = await resolve_plugin_id_for_repo(org_id, repo_external_id)
     ticket_id, created = await _insert_ticket_atomic(
         org_id=org_id,
         type="manual",
@@ -392,7 +394,7 @@ async def create_from_manual(
         title=title,
         description=None,
         repo_external_id=repo_external_id,
-        plugin_id="",
+        plugin_id=plugin_id,
         idempotency_key=key,
         payload={},
         status="pending",

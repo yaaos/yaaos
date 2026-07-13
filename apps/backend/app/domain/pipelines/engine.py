@@ -83,7 +83,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.agent_gateway import DispatchContext
+from app.core.agent_gateway import DispatchContext, WriteFilesEntry
 from app.core.audit_log import Actor, audit
 from app.core.coding_agent import CredentialUnavailableError, Invocation, dispatch_invocation, get_plugin
 from app.core.database import session as db_session
@@ -97,6 +97,7 @@ from app.core.workspace import (
     dispatch_auth_refresh,
     dispatch_cleanup,
     dispatch_provision,
+    dispatch_write_files,
     extend_expiry,
     get_workspace_info,
 )
@@ -104,6 +105,8 @@ from app.domain.actions import ActionContext, ActionError, StageVerdict, get_act
 from app.domain.artifacts import get as get_artifact
 from app.domain.artifacts import latest_final, mark_final
 from app.domain.artifacts import store as store_artifact
+from app.domain.attachments import AttachmentNotFoundError
+from app.domain.attachments import get_attachment as _get_attachment
 from app.domain.findings import (
     Finding,
     FindingSpec,
@@ -129,6 +132,7 @@ from app.domain.pipelines.definition import ActionStage, FlattenedDefinition, Re
 from app.domain.pipelines.escalation import resolve_escalation_targets
 from app.domain.pipelines.models import PipelineRunRow, RunPauseRow, StageExecutionRow
 from app.domain.pipelines.types import (
+    AttachmentRef,
     Kickoff,
     PRContext,
     PriorFindingRef,
@@ -163,6 +167,7 @@ PAUSED_RUN_WORKSPACE_GRACE_SECONDS = 1800
 
 # Names of the engine-dispatched `kind='system'` bookkeeping stage executions.
 _SYSTEM_STAGE_PROVISION = "provision-workspace"
+_SYSTEM_STAGE_SEED_INPUTS = "seed-inputs"
 _SYSTEM_STAGE_CLEANUP = "cleanup-workspace"
 _SYSTEM_STAGE_REFRESH_AUTH = "refresh-auth"
 
@@ -977,6 +982,87 @@ async def _dispatch_provision_stage(run: PipelineRunRow, *, kickoff: Kickoff, se
     run.pending_agent_command_id = command_id
 
 
+async def _build_attachment_refs(
+    run: PipelineRunRow, kickoff: Kickoff, *, session: AsyncSession
+) -> tuple[AttachmentRef, ...]:
+    """Build `AttachmentRef` entries from the run's kickoff snapshot.
+
+    Fetches metadata for every id in `kickoff.attachment_ids` (in snapshot
+    order) and returns the corresponding `AttachmentRef` tuples with
+    `role="context"`. IDs absent from the org (deleted after the run
+    started) are silently skipped — the workspace will not receive those
+    files, but the run continues.
+    """
+    if not kickoff.attachment_ids:
+        return ()
+    refs: list[AttachmentRef] = []
+    for att_id in kickoff.attachment_ids:
+        try:
+            att = await _get_attachment(att_id, org_id=run.org_id, session=session)
+        except AttachmentNotFoundError:
+            log.warning(
+                "pipelines.seed_inputs.attachment_not_found",
+                run_id=str(run.id),
+                attachment_id=str(att_id),
+            )
+            continue
+        refs.append(
+            AttachmentRef(
+                path=f".yaaos-inputs/{att.filename}",
+                artifact_type=att.artifact_type,
+                produced_by_skill=att.produced_by_skill,
+                role="context",
+                note=att.note,
+            )
+        )
+    return tuple(refs)
+
+
+async def _dispatch_seed_inputs_stage(
+    run: PipelineRunRow, *, kickoff: Kickoff, session: AsyncSession
+) -> None:
+    """Materialize ticket attachments into the workspace as `.yaaos-inputs/`
+    files via `WriteFilesCommand`, then park on the terminal event.
+
+    Called by `_handle_system_stage_event` after provision success when
+    `kickoff.attachment_ids` is non-empty. On success the terminal event
+    handler enqueues `START_STAGE` to advance to the first user stage.
+    """
+    stage_exec = StageExecutionRow(
+        org_id=run.org_id,
+        run_id=run.id,
+        stage_index=None,
+        kind="system",
+        stage_name=_SYSTEM_STAGE_SEED_INPUTS,
+        status="running",
+    )
+    session.add(stage_exec)
+    await session.flush()
+
+    entries: list[WriteFilesEntry] = []
+    for att_id in kickoff.attachment_ids:
+        try:
+            att = await _get_attachment(att_id, org_id=run.org_id, session=session)
+        except AttachmentNotFoundError:
+            log.warning(
+                "pipelines.seed_inputs.attachment_not_found",
+                run_id=str(run.id),
+                attachment_id=str(att_id),
+            )
+            continue
+        entries.append(WriteFilesEntry(path=f".yaaos-inputs/{att.filename}", content=att.body))
+
+    # Always write `.yaaos-inputs/.gitignore` to keep the seeded files out
+    # of any commit the skill produces.  Written even when some individual
+    # attachment fetches failed so the directory is always ignored.
+    entries.append(WriteFilesEntry(path=".yaaos-inputs/.gitignore", content="*\n"))
+
+    assert run.workspace_id is not None
+    ctx = _system_command_context(run, stage_exec)
+    command_id = await dispatch_write_files(run.workspace_id, entries, ctx, session=session)
+    run.pending_agent_command_id = command_id
+
+
 async def _resolve_stage_input(
     run: PipelineRunRow, stage_index: int, *, kickoff: Kickoff, session: AsyncSession
 ) -> str:
@@ -1034,6 +1120,7 @@ async def _dispatch_skill_stage(
     ticket = await get_ticket(run.ticket_id, org_id=run.org_id)
     input_text = await _resolve_stage_input(run, stage_index, kickoff=kickoff, session=session)
     pr = await _build_pr_context(run, kickoff, ticket, session=session)
+    attachment_refs = await _build_attachment_refs(run, kickoff, session=session)
 
     invocation_ctx = StageInvocationContext(
         ticket_id=run.ticket_id,
@@ -1042,6 +1129,7 @@ async def _dispatch_skill_stage(
         input=input_text,
         pr=pr,
         revision=revision,
+        attachments=attachment_refs,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
     plugin = get_plugin(stage.coding_agent_plugin_id)
@@ -1242,6 +1330,7 @@ async def _dispatch_review_invocation(
     kickoff = Kickoff.model_validate(run.kickoff)
     prior_findings = await _resolve_prior_findings(run, stage_exec, session=session)
     pr = await _build_pr_context(run, kickoff, ticket, session=session)
+    attachment_refs = await _build_attachment_refs(run, kickoff, session=session)
 
     invocation_ctx = StageInvocationContext(
         ticket_id=run.ticket_id,
@@ -1250,6 +1339,7 @@ async def _dispatch_review_invocation(
         input=artifact_body,
         pr=pr,
         prior_findings=prior_findings,
+        attachments=attachment_refs,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
     plugin = get_plugin(stage.coding_agent_plugin_id)
@@ -1305,6 +1395,7 @@ async def _dispatch_fix_invocation(
     revision = RevisionContext(
         source="fix", text=_render_findings_for_fix(residuals), prior_artifact=prior_artifact_body
     )
+    attachment_refs = await _build_attachment_refs(run, kickoff, session=session)
 
     invocation_ctx = StageInvocationContext(
         ticket_id=run.ticket_id,
@@ -1313,6 +1404,7 @@ async def _dispatch_fix_invocation(
         input=input_text,
         pr=pr,
         revision=revision,
+        attachments=attachment_refs,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
     plugin = get_plugin(stage.coding_agent_plugin_id)
@@ -1378,6 +1470,7 @@ async def _dispatch_review_only_stage(
     input_text = await _resolve_stage_input(run, stage_index, kickoff=kickoff, session=session)
     prior_findings = await _resolve_prior_findings(run, stage_exec, session=session)
     pr = await _build_pr_context(run, kickoff, ticket, session=session)
+    attachment_refs = await _build_attachment_refs(run, kickoff, session=session)
 
     invocation_ctx = StageInvocationContext(
         ticket_id=run.ticket_id,
@@ -1387,6 +1480,7 @@ async def _dispatch_review_only_stage(
         pr=pr,
         revision=revision,
         prior_findings=prior_findings,
+        attachments=attachment_refs,
         artifact_path=f"$TMPDIR/{command_id}.md",
     )
     plugin = get_plugin(stage.coding_agent_plugin_id)
@@ -1607,6 +1701,18 @@ async def _handle_system_stage_event(
 
     if stage_exec.stage_name == _SYSTEM_STAGE_PROVISION:
         run.phase = "stages"
+        kickoff = Kickoff.model_validate(run.kickoff)
+        if kickoff.attachment_ids:
+            await _dispatch_seed_inputs_stage(run, kickoff=kickoff, session=session)
+        else:
+            await enqueue(
+                START_STAGE,
+                args={"run_id": str(run.id), "stage_index": run.current_stage_index},
+                session=session,
+            )
+        return
+
+    if stage_exec.stage_name == _SYSTEM_STAGE_SEED_INPUTS:
         await enqueue(
             START_STAGE,
             args={"run_id": str(run.id), "stage_index": run.current_stage_index},

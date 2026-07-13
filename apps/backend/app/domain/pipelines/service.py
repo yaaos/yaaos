@@ -25,6 +25,7 @@ from app.core.audit_log import Actor, audit, audit_for_pipeline
 from app.core.auth import require_org_context
 from app.core.tenancy import get_membership_info
 from app.domain.artifacts import latest_final
+from app.domain.attachments import list_attachments as _list_attachments
 from app.domain.pipelines import defaults, engine
 from app.domain.pipelines.definition import (
     FlattenedDefinition,
@@ -802,10 +803,17 @@ async def start_manual_run(
             raise RunInFlightError(f"ticket {ticket_id} already has a run in state={in_flight.state}")
         await engine.kill_run(in_flight, session=session)
 
+    # Snapshot attachment ids at run-start time so the seed-inputs system
+    # stage can materialize them in the workspace without racing mid-run
+    # re-attaches.
+    attachment_metas = await _list_attachments(ticket_id, org_id=org_id, session=session)
+    attachment_ids = tuple(m.id for m in attachment_metas)
+
     kickoff = Kickoff(
         intake_point_id="manual",
         actor=actor,
         input_text=input_text,
+        attachment_ids=attachment_ids,
         revision=None,
     )
     return await start_run(

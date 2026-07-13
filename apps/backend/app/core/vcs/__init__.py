@@ -24,6 +24,7 @@ from app.core.vcs.registry import (
     register_vcs_plugin,
     registered_plugin_ids,
     resolve_finding_thread,
+    resolve_plugin_id_for_repo,
     set_vcs_for_tests,
     validate_settings,
 )
@@ -102,6 +103,7 @@ __all__ = [
     "register_vcs_plugin",
     "registered_plugin_ids",
     "resolve_finding_thread",
+    "resolve_plugin_id_for_repo",
     "set_vcs_for_tests",
     "validate_settings",
 ]
