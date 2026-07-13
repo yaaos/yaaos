@@ -14,7 +14,7 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import httpx
@@ -22,12 +22,17 @@ import structlog
 import yaml
 from pydantic import SecretStr
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 import app.core.api_keys as _api_keys
+from app.core.agent_gateway import InvokeClaudeCodeCommand, InvokeClaudeCodeLimits
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
     AgentSource,
     BundleFile,
+    CommandBuildContext,
     InvokeCodingAgent,
     RunResult,
     SkillSource,
@@ -463,6 +468,31 @@ class ClaudeCodePlugin:
             env={},
             stdin=prompt,
             wallclock_seconds=invocation.wallclock_seconds,
+        )
+
+    async def build_command(
+        self,
+        *,
+        compiled: InvokeCodingAgent,
+        invocation: _NewInvocation,
+        build: CommandBuildContext,
+        session: AsyncSession,
+    ) -> InvokeClaudeCodeCommand:
+        """Build the wire `InvokeClaudeCodeCommand` for this invocation.
+
+        No credential gating for claude — the Anthropic API key travels via
+        `ConfigUpdate.api_keys`, not a dispatch-time check. `invocation` and
+        `session` are accepted for Protocol parity and unused.
+        """
+        return InvokeClaudeCodeCommand(
+            command_id=build.command_id,
+            workspace_id=build.workspace_id,
+            traceparent=build.traceparent,
+            invocation=build.invocation_body,
+            mcp_servers=(),
+            limits=InvokeClaudeCodeLimits(wallclock_seconds=compiled.wallclock_seconds),
+            result_spec={},
+            skill_path=build.skill_path,
         )
 
     def validate_settings(self, settings: Mapping[str, Any]) -> dict[str, Any]:

@@ -20,24 +20,26 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.core.agent_gateway import HydrationContext
 
 import structlog
 import yaml
 
+from app.core.agent_gateway import InvokeCodexCommand, InvokeCodexLimits
 from app.core.coding_agent import (
     ActivityEvent,
     ActivityLog,
     AgentSource,
     BundleFile,
-    CommandCredentialSpec,
+    CommandBuildContext,
     CredentialUnavailableError,
     InvokeCodingAgent,
     RunResult,
     SkillSource,
     StageOptions,
     Usage,
-    register_credential_provider,
     register_plugin,
 )
 from app.core.coding_agent import (
@@ -306,10 +308,9 @@ class CodexPlugin:
     def compile_invocation(self, invocation: _Invocation) -> InvokeCodingAgent:
         """Translate a high-level `Invocation` into a concrete exec block.
 
-        Passes the rendered stage prompt to `codex exec` via stdin. Sets
-        `output_schema_json` from `context["output_schema"]` when present so
-        the Go agent can write it to `$TMPDIR/<command_id>-schema.json` and
-        append `--output-schema <path>` to argv before spawning.
+        Passes the rendered stage prompt to `codex exec` via stdin. Output
+        schema handling lives in `build_command`, not here — see that
+        method's docstring.
         """
         skill_directive = (
             f'Use the "{invocation.skill}" skill ({self.skill_path(invocation.skill)}) '
@@ -331,8 +332,32 @@ class CodexPlugin:
 
         argv = ["codex", "exec", "--model", invocation.model, "--quiet"]
 
-        # output_schema_json is written to $TMPDIR/<command_id>-schema.json and
-        # --output-schema <path> appended by the Go agent's RunCodex, not here.
+        return InvokeCodingAgent(
+            argv=argv,
+            env={},
+            stdin=prompt,
+            wallclock_seconds=invocation.wallclock_seconds,
+        )
+
+    async def build_command(
+        self,
+        *,
+        compiled: InvokeCodingAgent,
+        invocation: _Invocation,
+        build: CommandBuildContext,
+        session: AsyncSession,
+    ) -> InvokeCodexCommand:
+        """Build the wire `InvokeCodexCommand` for this invocation.
+
+        Gates dispatch on an org-level OpenAI API key via
+        `_require_org_openai_key`, raising `CredentialUnavailableError` when
+        absent. Extracts `output_schema_json` from
+        `invocation.context["output_schema"]` and stamps it on the returned
+        `InvokeCodexCommand` — the vendor-neutral `InvokeCodingAgent` carries
+        no such field; this is the sole place the schema is normalized.
+        """
+        await _require_org_openai_key(build.org_id, session)
+
         output_schema_raw = invocation.context.get("output_schema")
         output_schema_json: str | None = None
         if output_schema_raw is not None:
@@ -341,11 +366,14 @@ class CodexPlugin:
             else:
                 output_schema_json = json.dumps(output_schema_raw)
 
-        return InvokeCodingAgent(
-            argv=argv,
-            env={},
-            stdin=prompt,
-            wallclock_seconds=invocation.wallclock_seconds,
+        return InvokeCodexCommand(
+            command_id=build.command_id,
+            workspace_id=build.workspace_id,
+            traceparent=build.traceparent,
+            invocation=build.invocation_body,
+            limits=InvokeCodexLimits(wallclock_seconds=compiled.wallclock_seconds),
+            result_spec={},
+            skill_path=build.skill_path,
             output_schema_json=output_schema_json,
         )
 
@@ -538,22 +566,11 @@ def _build_agent_toml(agent: AgentSource) -> str:
 _plugin = CodexPlugin()
 
 
-async def _codex_credential_provider(
-    *,
-    org_id: UUID,
-    user_id: UUID | None,
-    wallclock_seconds: int,
-    session: Any,  # AsyncSession
-) -> CommandCredentialSpec:
-    """Dispatch-time credential resolver for Codex invocations.
+async def _require_org_openai_key(org_id: UUID, session: AsyncSession) -> None:
+    """Raise `CredentialUnavailableError` unless the org has an OpenAI API key configured.
 
-    Verifies the org has an OpenAI API key configured; returns
-    ``CommandCredentialSpec(credential_user_id=None)``. Raises
-    ``CredentialUnavailableError`` when no key is present.
-
-    ``user_id`` is accepted for signature parity with the generic
-    ``CredentialProvider`` seam but is unused — Codex has no per-user
-    credential path.
+    The dispatch-time gate: `CodexPlugin.build_command` calls this directly
+    before constructing the wire `InvokeCodexCommand`.
     """
     from app.core.api_keys import get as _api_keys_get  # noqa: PLC0415
 
@@ -562,7 +579,6 @@ async def _codex_credential_provider(
         raise CredentialUnavailableError(
             "No OpenAI API key configured for this org; add one in Settings → Coding Agents → Codex"
         )
-    return CommandCredentialSpec(credential_user_id=None)
 
 
 async def _codex_command_hydrator(
@@ -587,7 +603,6 @@ def bootstrap() -> None:
     register_plugin(_plugin)
     _api_keys_register_validator("openai", validate_openai_key)
     register_command_hydrator("InvokeCodex", _codex_command_hydrator)
-    register_credential_provider("codex", _codex_credential_provider)
 
 
 def get_plugin() -> CodexPlugin:

@@ -13,10 +13,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.agent_gateway import AgentCommand
 
 
 class StageOptions(BaseModel, frozen=True):
@@ -59,23 +64,34 @@ class Invocation(BaseModel):
 class InvokeCodingAgent(BaseModel):
     """Concrete exec block returned by `CodingAgentPlugin.compile_invocation`.
 
-    Carries the exact argv, env overrides, optional stdin, wallclock cap,
-    and an optional output schema the Go agent writes to a temp file before
-    spawning the coding-agent subprocess.
+    Carries the exact argv, env overrides, optional stdin, and wallclock cap.
     `env` carries env overrides — the accepted carve-out for wire-bound exec
     (same contract as `otlp_token` on ConfigUpdate).
-    `output_schema_json` is set by codex's `compile_invocation` from
-    `context["output_schema"]`; claude always leaves it None. The Go agent
-    writes it to `$TMPDIR/<command_id>-schema.json` and appends
-    `--output-schema <path>` to argv before spawning. None → no schema file,
-    no flag appended.
     """
 
     argv: list[str]
     env: Mapping[str, str]
     stdin: str | None = None
     wallclock_seconds: int
-    output_schema_json: str | None = None
+
+
+class CommandBuildContext(BaseModel, frozen=True):
+    """Dispatch-time context `dispatch_invocation` hands to `plugin.build_command`.
+
+    `invocation_body` is the vendor-shared `{"exec": {argv, stdin, env}}` wire
+    body `core/coding_agent` assembles from the plugin's own compiled
+    `InvokeCodingAgent` — the Go agent requires the `exec` wrapper, since a
+    flat argv dict leaves `inv.Exec.Argv` empty after json.Unmarshal.
+    `user_id` is the run's attributed user; `None` for system-actor runs.
+    """
+
+    command_id: UUID
+    workspace_id: UUID
+    traceparent: str
+    org_id: UUID
+    user_id: UUID | None
+    skill_path: str
+    invocation_body: dict[str, Any]
 
 
 class RunStatus(StrEnum):
@@ -200,6 +216,9 @@ class CodingAgentPlugin(Protocol):
     `plugin_id` identifies the plugin in the registry and on run rows.
     `compile_invocation` is a pure function that translates a high-level
     `Invocation` into a concrete `InvokeCodingAgent` exec block.
+    `build_command` constructs the plugin's wire `AgentCommand` from a
+    `CommandBuildContext`, gating on any dispatch-time credential the plugin
+    requires.
     `parse_result` is a pure function that decodes a terminal AgentEvent
     payload dict into a `RunResult`.
     `validate_settings` validates a raw settings dict and returns the
@@ -216,6 +235,24 @@ class CodingAgentPlugin(Protocol):
         to vendor-specific CLI flags, and context encoding for the skill that
         runs inside the workspace. Raises `CodingAgentError` for unknown
         skills or missing configuration that can be verified without IO.
+        """
+        ...
+
+    async def build_command(
+        self,
+        *,
+        compiled: InvokeCodingAgent,
+        invocation: Invocation,
+        build: CommandBuildContext,
+        session: AsyncSession,
+    ) -> AgentCommand:
+        """Construct the wire `AgentCommand` for this invocation.
+
+        The plugin owns wire-command construction and any dispatch-time
+        credential gating (e.g. Codex's org-level OpenAI-key check). Raises
+        `CredentialUnavailableError` when a required credential is missing.
+        Receives `session` so gates can read org state; must not commit —
+        the caller (`dispatch_invocation`) owns the transaction.
         """
         ...
 
@@ -355,20 +392,6 @@ class CredentialUnavailableError(CodingAgentError):
     def __init__(self, user_message: str) -> None:
         super().__init__(user_message)
         self.user_message = user_message
-
-
-class CommandCredentialSpec(BaseModel, frozen=True):
-    """Result returned by a credential provider.
-
-    ``credential_user_id`` is a generic seam for a future provider whose
-    credentials are resolved per-user at claim time (fetched fresh and
-    written to the workspace's auth store before the subprocess launches).
-    No shipped provider currently sets it — every registered provider
-    (including Codex's) returns ``None``, since credentials arrive via the
-    ConfigUpdate ``api_keys`` map instead.
-    """
-
-    credential_user_id: UUID | None
 
 
 class PluginNotFoundError(LookupError):

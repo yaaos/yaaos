@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 import structlog
 
 from app.core.coding_agent.types import (
     CodingAgentPlugin,
-    CommandCredentialSpec,
+    CommandBuildContext,
     PluginNotFoundError,
 )
 
@@ -21,16 +21,6 @@ if TYPE_CHECKING:
 
     from app.core.agent_gateway import DispatchContext
     from app.core.coding_agent.types import Invocation
-
-# A credential provider is an async callable registered per-plugin.  It
-# receives the org_id, user_id (from the dispatch context — may be None),
-# the run's wallclock cap, and a session; it returns a CommandCredentialSpec
-# or raises CredentialUnavailableError.  The callable signature is:
-#   async (*, org_id, user_id, wallclock_seconds, session) -> CommandCredentialSpec
-CredentialProvider = Callable[..., Coroutine[Any, Any, CommandCredentialSpec]]
-
-# Module-private: keyed by plugin_id.
-_credential_providers: dict[str, CredentialProvider] = {}
 
 log = structlog.get_logger("coding_agent")
 
@@ -128,18 +118,6 @@ def list_plugins() -> list[CodingAgentPlugin]:
     return _get().list()
 
 
-def register_credential_provider(plugin_id: str, provider: CredentialProvider) -> None:
-    """Register an async credential-provider callable for ``plugin_id``.
-
-    Called once at bootstrap time by the plugin's ``bootstrap()`` function.
-    Raises ``ValueError`` if a provider is already registered for that
-    ``plugin_id`` (duplicate registration is a programming error).
-    """
-    if plugin_id in _credential_providers:
-        raise ValueError(f"credential provider for {plugin_id!r} already registered")
-    _credential_providers[plugin_id] = provider
-
-
 async def dispatch_invocation(
     *,
     invocation: Invocation,
@@ -148,8 +126,9 @@ async def dispatch_invocation(
     command_id: UUID,
     session: AsyncSession,
 ) -> UUID:
-    """Build an `InvokeClaudeCode` AgentCommand, dispatch via the workspace
-    (Layer 3 → Layer 2 → Layer 1), and insert a run row.
+    """Compile the invocation, delegate wire-command construction to the
+    plugin, dispatch via the workspace (Layer 3 → Layer 2 → Layer 1), and
+    insert a run row.
 
     `command_id` is caller-minted — required, no default. `domain/pipelines`
     mints it before calling this function, since `command_id` also has to
@@ -157,25 +136,23 @@ async def dispatch_invocation(
     ordering impossible.
 
     `workspace_id` is read from `invocation.workspace_id`. Calls
-    `plugin.compile_invocation(invocation)` to get the exec block, builds
-    an `InvokeClaudeCodeCommand`, and delegates to `dispatch_via_workspace`
-    with `claim_workspace=True` — which loads the workspace row (for `org_id`
-    + `owning_agent_id`), enqueues, pins to the owning agent, and atomically
-    claims. Then inserts a `coding_agent_runs` row. Returns `command_id`.
-    Durable iff the caller's transaction commits.
+    `plugin.compile_invocation(invocation)` to get the exec block, assembles
+    the vendor-shared `invocation_body` + a `CommandBuildContext`, and calls
+    `plugin.build_command(...)` to construct the wire `AgentCommand` — the
+    plugin owns command-shape and any dispatch-time credential gating it
+    requires (may raise `CredentialUnavailableError`). Delegates to
+    `dispatch_via_workspace` with `claim_workspace=True` — which loads the
+    workspace row (for `org_id` + `owning_agent_id`), enqueues, pins to the
+    owning agent, and atomically claims. Then inserts a `coding_agent_runs`
+    row. Returns `command_id`. Durable iff the caller's transaction commits.
 
     Raises:
         `CodingAgentError` — `plugin.compile_invocation` failed.
+        `CredentialUnavailableError` — `plugin.build_command` could not
+            resolve a required dispatch-time credential.
         `WorkspaceNotFoundError` — workspace row absent.
         `WorkspaceClaimFailed` — workspace busy or inactive.
     """
-    from app.core.agent_gateway import (  # noqa: PLC0415
-        AgentCommandKind,
-        InvokeClaudeCodeCommand,
-        InvokeClaudeCodeLimits,
-        InvokeCodexCommand,
-        InvokeCodexLimits,
-    )
     from app.core.coding_agent.run_service import create_run  # noqa: PLC0415
     from app.core.workspace import (  # noqa: PLC0415
         WorkspaceNotFoundError,
@@ -197,9 +174,9 @@ async def dispatch_invocation(
     # "skill not found: <path>" when absent — zero agent policy.
     skill_path = plugin.skill_path(invocation.skill)
 
-    # Build the typed command per plugin.command_kind. The Go agent reads
-    # `invocation.exec.{argv,stdin,env}`; the `exec` wrapper is required —
-    # a flat argv dict leaves `inv.Exec.Argv` empty after json.Unmarshal.
+    # The Go agent reads `invocation.exec.{argv,stdin,env}`; the `exec`
+    # wrapper is required — a flat argv dict leaves `inv.Exec.Argv` empty
+    # after json.Unmarshal.
     invocation_body = {
         "exec": {
             "argv": invocation_data.argv,
@@ -208,44 +185,21 @@ async def dispatch_invocation(
         }
     }
 
-    if plugin.command_kind == AgentCommandKind.INVOKE_CODEX:
-        # Resolve credentials via the registered provider (if any).  The
-        # provider raises CredentialUnavailableError when it cannot supply a
-        # usable credential; callers (the run engine) catch that and fail the
-        # stage with the provider's user_message. The returned spec carries
-        # no field on the wire command — Codex has no per-command credential
-        # to propagate; the provider call is purely a dispatch-time gate.
-        provider = _credential_providers.get(plugin.plugin_id)
-        if provider is not None:
-            await provider(
-                org_id=owner.org_id,
-                user_id=ctx.user_id,
-                wallclock_seconds=invocation_data.wallclock_seconds,
-                session=session,
-            )
-
-        cmd = InvokeCodexCommand(
-            command_id=command_id,
-            workspace_id=workspace_id,
-            traceparent=ctx.traceparent or "",
-            invocation=invocation_body,
-            limits=InvokeCodexLimits(wallclock_seconds=invocation_data.wallclock_seconds),
-            result_spec={},
-            skill_path=skill_path,
-            output_schema_json=invocation_data.output_schema_json,
-        )
-    else:
-        # Default: InvokeClaudeCode (and any future plugin that uses this kind).
-        cmd = InvokeClaudeCodeCommand(
-            command_id=command_id,
-            workspace_id=workspace_id,
-            traceparent=ctx.traceparent or "",
-            invocation=invocation_body,
-            mcp_servers=(),
-            limits=InvokeClaudeCodeLimits(wallclock_seconds=invocation_data.wallclock_seconds),
-            result_spec={},
-            skill_path=skill_path,
-        )
+    build_ctx = CommandBuildContext(
+        command_id=command_id,
+        workspace_id=workspace_id,
+        traceparent=ctx.traceparent or "",
+        org_id=owner.org_id,
+        user_id=ctx.user_id,
+        skill_path=skill_path,
+        invocation_body=invocation_body,
+    )
+    cmd = await plugin.build_command(
+        compiled=invocation_data,
+        invocation=invocation,
+        build=build_ctx,
+        session=session,
+    )
 
     # Layer 2: enqueue + pin + claim atomically.
     await dispatch_via_workspace(

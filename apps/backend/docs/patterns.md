@@ -335,7 +335,7 @@ Three layers gate every AgentCommand enqueue in the dispatch path:
 
 - **Layer 1 (`enqueue_command`)** — raw primitive in `core/agent_gateway`. Only `core/workspace.dispatch_provision` (which has no workspace row yet) and `dispatch_via_workspace` call it directly.
 - **Layer 2 (`dispatch_via_workspace`)** — `core/workspace/dispatch.py`. Loads the workspace row, calls `enqueue_command`, pins to the owning agent, optionally claims. `dispatch_cleanup` and `dispatch_auth_refresh` route here with `claim_workspace=False`.
-- **Layer 3 (`coding_agent.dispatch_invocation`)** — `core/coding_agent/service.py`. Builds the plugin-specific command (`InvokeClaudeCodeCommand` for `claude_code`, `InvokeCodexCommand` for `codex`) from a high-level `Invocation`, calls Layer 2 with `claim_workspace=True`, inserts a `coding_agent_runs` row. `domain/pipelines`' skill-stage dispatch routes here.
+- **Layer 3 (`coding_agent.dispatch_invocation`)** — `core/coding_agent/service.py`. Compiles a high-level `Invocation` via `plugin.compile_invocation`, then delegates wire-command construction (and any dispatch-time credential gating) to `plugin.build_command`, calls Layer 2 with `claim_workspace=True`, inserts a `coding_agent_runs` row. `domain/pipelines`' skill-stage dispatch routes here.
 
 `apps/backend/.semgrep/dispatch_helper_discipline.yaml` enforces this: direct calls to `enqueue_command`, `pin_command_to_agent`, `try_claim`, or `create_run` inside any `app/domain/*/commands/*.py` file fail CI. Canary: `app/core/workspace/test/test_dispatch_discipline_semgrep_canary.py`.
 

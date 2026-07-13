@@ -143,7 +143,7 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.database", "app.c
 
 [[modules]]
 path = "app.plugins.claude_code"
-depends_on = ["app.core.api_keys", "app.core.coding_agent", "app.core.config", "app.core.database", "app.domain.orgs", "app.domain.pipelines"]
+depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.coding_agent", "app.core.config", "app.core.database", "app.domain.orgs", "app.domain.pipelines"]
 
 [[modules]]
 path = "app.plugins.codex"
@@ -179,7 +179,7 @@ depends_on = ["app.core.agent_gateway", "app.core.api_keys", "app.core.audit_log
 
 [[modules]]
 path = "app.testing.fake_coding_agent"
-depends_on = ["app.core.coding_agent"]
+depends_on = ["app.core.agent_gateway", "app.core.coding_agent"]
 
 [[modules]]
 path = "app.testing.lifecycle"
@@ -191,7 +191,7 @@ depends_on = []
 
 [[modules]]
 path = "app.testing.stub_coding_agent"
-depends_on = ["app.core.coding_agent"]
+depends_on = ["app.core.agent_gateway", "app.core.coding_agent"]
 
 [[modules]]
 path = "app.testing.stub_vcs"
@@ -406,7 +406,7 @@ expose = [
   "CodingAgentInstall",
   "CodingAgentNotInstalledError",
   "CodingAgentPlugin",
-  "CommandCredentialSpec",
+  "CommandBuildContext",
   "CredentialUnavailableError",
   "Effort",
   "Invocation",
@@ -427,7 +427,6 @@ expose = [
   "install_coding_agent",
   "list_coding_agents",
   "list_plugins",
-  "register_credential_provider",
   "register_plugin",
   "replace_plugin",
   "set_coding_agents_for_tests",

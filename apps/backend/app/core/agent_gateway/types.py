@@ -188,8 +188,9 @@ class InvokeCodexLimits(BaseModel):
 class InvokeCodexCommand(_CommandBase):
     """Command that runs the OpenAI Codex CLI inside the workspace.
 
-    `invocation` carries the exec block (argv, stdin, env) produced by
-    `CodexPlugin.compile_invocation`. Credentials are the org-level
+    `invocation` carries the exec block (argv, stdin, env) that
+    `CodexPlugin.compile_invocation` produces and `CodexPlugin.build_command`
+    wires into this wire command. Credentials are the org-level
     CODEX_API_KEY env var (delivered via ConfigUpdate.api_keys["openai"]) —
     no per-command credential injection. `output_schema_json` is written to
     `$TMPDIR/<command_id>-schema.json` and `--output-schema <path>` appended

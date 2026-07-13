@@ -13,7 +13,7 @@
 
 ## Module architecture
 
-Implements the full `CodingAgentPlugin` Protocol surface: `compile_invocation`, `parse_result`, and `validate_settings`. `compile_invocation` returns a canned `InvokeCodingAgent`. `parse_result` returns a `RunResult` with configurable `output` content — `output` should be the structured JSON response string (e.g. `'{"findings": []}'`) that `CodingAgentCommand.handle_response` will validate against `ExpectedResponse`. `validate_settings` is a no-op pass-through — always returns `dict(settings)` unchanged.
+Implements the full `CodingAgentPlugin` Protocol surface: `compile_invocation`, `build_command`, `parse_result`, and `validate_settings`. `compile_invocation` returns a canned `InvokeCodingAgent`. `build_command` returns a canned `InvokeClaudeCodeCommand` built from the `CommandBuildContext` envelope fields and `compiled.wallclock_seconds` — matches the fake's `command_kind = "InvokeClaudeCode"`; no credential gate. `parse_result` returns a `RunResult` with configurable `output` content — `output` should be the structured JSON response string (e.g. `'{"findings": []}'`) that `CodingAgentCommand.handle_response` will validate against `ExpectedResponse`. `validate_settings` is a no-op pass-through — always returns `dict(settings)` unchanged.
 
 No telemetry, no API key lookup, no DB reads.
 

@@ -15,6 +15,7 @@ EXPECTED_ALL = frozenset(
     [
         # Protocol + types
         "CodingAgentPlugin",
+        "CommandBuildContext",
         "Invocation",
         "InvokeCodingAgent",
         "Effort",
@@ -47,10 +48,8 @@ EXPECTED_ALL = frozenset(
         "set_coding_agents_for_tests",
         # API key secrets provider
         "build_api_key_secrets_for_org",
-        # Credential provider seam
-        "CommandCredentialSpec",
+        # Credential error type (raised by plugin.build_command)
         "CredentialUnavailableError",
-        "register_credential_provider",
         # Per-org install state
         "CodingAgentAlreadyInstalledError",
         "CodingAgentInstall",
@@ -117,6 +116,7 @@ def test_protocol_has_expected_methods() -> None:
     }
     assert proto_methods == {
         "compile_invocation",
+        "build_command",
         "parse_result",
         "parse_activity_line",
         "validate_settings",
