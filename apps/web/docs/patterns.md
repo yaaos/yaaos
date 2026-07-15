@@ -153,6 +153,7 @@ Module-scoped arrays. Canonical keys:
 - `["runs", "stage-activity", run_id, stage_execution_id]` — persisted coding-agent activity blob for one stage execution (lazy-loaded in the Runs tab's per-row accordion)
 - `["artifacts", ticket_id]` — every artifact lineage for a ticket, grouped by stage name (Artifacts tab; invalidated by `artifact_stored` SSE)
 - `["artifacts", "version", artifact_id]` — one artifact version, body included
+- `["attachments", ticket_id]` — ticket attachment metadata list, newest first (Overview tab; invalidated by `attachment_added` SSE)
 - `["reviewer", "metrics"]`, `["reviewer", "agents"]`
 - `["agents", orgSlug]` — slug-scoped so different orgs don't share the entry
 - `["lessons", repos, q, created_by, sort]` — each field is the filter value or `"all"` / `""` as default

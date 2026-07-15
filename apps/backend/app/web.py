@@ -48,7 +48,9 @@ from app.domain import tickets  # noqa: F401, E402
 
 # 5a-pipelines. Run-engine modules. Types-first: findings/artifacts/repos
 # carry no dependencies on the others; pipelines imports findings;
-# actions/pr_review import pipelines + findings.
+# actions/pr_review import pipelines + findings. attachments before pipelines
+# so pipelines can import it for the adoption matcher.
+from app.domain import attachments as _domain_attachments  # noqa: F401, E402
 from app.domain import findings as _domain_findings  # noqa: F401, E402
 from app.domain import artifacts as _domain_artifacts  # noqa: F401, E402
 from app.domain import repos as _domain_repos  # noqa: F401, E402
@@ -69,6 +71,10 @@ from app.core.agent_gateway import get_run_sink as _get_run_sink  # noqa: E402
 assert _get_run_sink() is not None, "coding-agent run sink must be registered"
 from app.domain.integrations import web as _domain_integrations_web  # noqa: F401, E402
 import app.domain.mcp_proxy  # noqa: E402 — triggers mcp_proxy web route registration
+
+# 5c. Inbound MCP server — registers /api/mcp-server/* routes via oauth_web.py
+#     side-effect import. The FastMCP ASGI sub-app is mounted after create_app().
+from app.domain import mcp_server as _domain_mcp_server  # noqa: E402
 from app.core.workspace import web as _core_workspace_web  # noqa: F401, E402
 from app.core.notifications import web as _notifications_web  # noqa: F401, E402
 from app.core.sse import web as _core_sse_web  # noqa: F401, E402
@@ -107,6 +113,13 @@ if get_settings().yaaos_coding_agent_stub:
 
 # 8. Build the FastAPI app.
 app = webserver.create_app()
+
+# 8a. Inbound MCP server — mounts the FastMCP ASGI sub-app at /api/mcp-server/mcp
+#     and the /.well-known/oauth-authorization-server discovery route, and chains
+#     the FastMCP lifespan into the app's lifespan_context. Mounted AFTER
+#     create_app() so the FastAPI routes registered via RouteSpec take priority
+#     over the sub-app Mount. Details in app/domain/mcp_server/asgi.py.
+_domain_mcp_server.mount(app)
 
 # 7b. Test-only HTTP surface (`/api/testing/*`) — reset + seed endpoints used by
 # the e2e Playwright suite (and ad-hoc local seeding). `mount_testing_endpoints`

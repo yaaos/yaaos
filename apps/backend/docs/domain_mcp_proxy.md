@@ -2,6 +2,8 @@
 
 > Per-review MCP bearer + Streamable-HTTP proxy.
 
+Not to be confused with [`domain/mcp_server`](domain_mcp_server.md), which is the *inbound* MCP authorization server and tool host (OAuth 2.1 AS + the yaaos MCP tool roster).
+
 ## Scope
 
 Owns: `mcp_review_tokens` (per-review bearer, 2h TTL), the FastAPI router for `POST /api/mcp/{review_id}/{server}`, authorization against the org's per-tool allowlist, dispatch to the hosted upstream, audit logging.

@@ -23,7 +23,9 @@ Does NOT own: pipeline-run state (`domain/pipelines`), finding state (`domain/fi
 - **Workspace ≠ ticket.** The run engine provisions one workspace per run; it is anonymous from the ticket's perspective — no FK, no column.
 - **`findings_count` + `max_severity` are denormalized, not live-aggregated.** `domain/findings` writes them via `update_findings_summary` after each finding report or verdict. `list_tickets` reads them directly from the row — no cross-module import from tickets → findings.
 - **All ticket reads are org-scoped.** Use `get(ticket_id, org_id=...)` — the unscoped `get_by_id` helper has been removed.
-- Two `source` values are accepted today: `github_pr` (`create_from_pr`) and `schedule` (`create_from_schedule`); further sources need their own `create_from_<source>` constructor + validation.
+- Three `source` values are accepted today: `github_pr` (`create_from_pr`), `schedule` (`create_from_schedule`), and `manual` (`create_from_manual`). Manual tickets have `type="manual"`, `source="manual"`, and use a caller-supplied or auto-minted `idempotency_key` as `source_external_id`. With `idempotency_key=None` (the default) a fresh `uuid7()` is minted on every call, producing a distinct ticket each time. Callers that need replay-safety supply a stable `idempotency_key`. `plugin_id` is resolved at create time via `core/vcs.resolve_plugin_id_for_repo` — the same shared helper `domain/pipelines.scheduler_jobs` uses for schedule tickets — so the provision flow always receives a non-empty `plugin_id` regardless of how the ticket was created.
+- **`create_from_manual`** is Shape-a (caller's session, never commits). Returns `(ticket_id: UUID, created: bool)` — same as the other constructors.
+- **`get_by_branch`** (Shape-a) returns the newest `Ticket` on `branch_name` within `org_id`, or `None`. Orders by `(created_at DESC, id DESC)` so tickets inserted in the same transaction resolve deterministically by UUIDv7 insertion order.
 - **PR mirror invariants (from `pull_request.py`):** `upsert` never commits — the caller composes ticket + PR + audit atomically. `ticket_id` is required on insert, ignored on update. `list_by_ids` silently omits unknown ids and short-circuits on empty input. No state-machine validation on `update_state` — VCS is the source of truth. Immutable after insert: `plugin_id`, `external_id`, `number`, `repo_external_id`, `ticket_id`, `author_*`, `base_branch`, `head_branch`, `is_fork`.
 
 ## State machine
@@ -32,7 +34,9 @@ Does NOT own: pipeline-run state (`domain/pipelines`), finding state (`domain/fi
 |---|---|
 | (none) → `pending` | `create_from_pr` (GitHub PR intake) |
 | (none) → `pending` | `create_from_schedule` (schedule-kind trigger binding firing) |
+| (none) → `pending` | `create_from_manual` (user-initiated kickoff via `POST /api/tickets`) |
 | `pending` → `running` | `transition_ticket_on_run_start(...)` — called directly by the run engine when a `pipeline_runs` row is promoted to `running` |
+| `cancelled` → `running` | `transition_ticket_on_run_start(...)` — also accepts `cancelled` source state (set when a kill+replace run-start kills the current run) |
 | `running` → `done` | `complete` (PR closed/merged) |
 | `running` → `cancelled` | `abandon(reason=...)` |
 | `running` → `failed` | `fail(reason=...)` — orphan sweep (never-dispatched tickets only) |
@@ -48,12 +52,25 @@ Does NOT own: pipeline-run state (`domain/pipelines`), finding state (`domain/fi
 
 `pull_requests` — `(id, org_id, plugin_id, external_id, …)`. Unique on `(plugin_id, external_id)`. FK `ticket_id → tickets.id`. Implemented in `tickets/pull_request.py`; table name unchanged from previous module location.
 
+## HTTP routes
+
+`RouteSpec.url_prefix` resolves to `/api/tickets`.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/tickets` | `REVIEWER_WRITE` | Create a manual ticket. Body: `{title, repo_external_id, branch_name?, idempotency_key?}`. Returns `{id, created}`. 201 on success. |
+| `GET` | `/api/tickets` | `REVIEWER_READ` | List tickets. Query params: `status?`, `author?`, `q?`, `cursor?`, `branch_name?`. |
+| `GET` | `/api/tickets/dashboard` | `REVIEWER_READ` | Dashboard projection (stats + in_flight + needs_attention). |
+| `GET` | `/api/tickets/{ticket_id}` | `REVIEWER_READ` | Ticket detail including enriched PR fields and builder info. |
+| `GET` | `/api/tickets/{ticket_id}/audit` | `REVIEWER_READ` | Ticket + PR audit entries for the given ticket. |
+
 ## How it's tested
 
 - `test/test_service.py` — `create_from_pr` (create + idempotent race-loser re-SELECT), `attach_pr_to_ticket`, `list_tickets` reads row-backed rollup + DB sort.
 - `test/test_create_from_pr_idempotent_service.py` (`@pytest.mark.service`) — concurrent `create_from_pr` calls produce exactly one TicketRow; race loser returns winner's id.
 - `test/test_attach_pr_to_ticket_idempotent_service.py` (`@pytest.mark.service`) — concurrent `attach_pr_to_ticket` calls produce at most one `ticket.pr_bound` audit row.
 - `test/test_status_change_producer_service.py` — `notifications.fanout` outbox row; exactly two SSE events for create+start (None→pending, pending→done) with no duplicates; no SSE on rollback.
+- `test/test_manual_ticket_service.py` (`@pytest.mark.service`) — `create_from_manual`: mints `branch_name` when omitted, respects caller-supplied branch, writes `ticket.created` audit row, idempotency-key replay returns `created=False`, no-key calls produce distinct tickets, `plugin_id` is non-empty (resolved by `core/vcs.resolve_plugin_id_for_repo`). `get_by_branch`: newest ticket on branch, `None` for unknown branch.
 - `create_from_schedule`'s redelivery-idempotency + branch-minting are exercised end-to-end by [`domain/pipelines/test/test_schedule_tick_service.py`](domain_pipelines.md#how-its-tested) via the consuming `pipeline_schedule_tick`.
 - `test/test_pr_upsert_session.py` — session-ownership (insert + update, FK safety, missing ticket_id guard).
 - `test/test_pull_request_service.py` (`@pytest.mark.service`) — `list_by_ids`: full match, empty input, unknown ids, partial match.

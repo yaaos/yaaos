@@ -13,6 +13,7 @@ from app.core.workspace.dispatch import (
     dispatch_provision,
     dispatch_push,
     dispatch_via_workspace,
+    dispatch_write_files,
     release_claim,
     try_claim,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "dispatch_provision",
     "dispatch_push",
     "dispatch_via_workspace",
+    "dispatch_write_files",
     "extend_expiry",
     "get_provider",
     "get_workspace_claim_state",

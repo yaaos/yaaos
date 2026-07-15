@@ -65,7 +65,7 @@ from app.core.auth import org_context
 from app.core.config import get_settings
 from app.core.database import session as db_session
 from app.core.tasks import enqueue, scheduled
-from app.core.vcs import is_repo_accessible, registered_plugin_ids
+from app.core.vcs import resolve_plugin_id_for_repo
 from app.domain.pipelines import engine
 from app.domain.pipelines import service as pipelines_service
 from app.domain.pipelines.models import PipelineRunRow, StageExecutionRow
@@ -82,18 +82,8 @@ log = structlog.get_logger("domain.pipelines.scheduler_jobs")
 
 
 async def _resolve_plugin_id(org_id: UUID, repo_external_id: str) -> str:
-    """The VCS plugin that owns `repo_external_id`. Mirrors the
-    `domain/repos/web.py` accordion's own resolution (iterate every
-    registered plugin) — a schedule binding carries no plugin id of its own
-    (its intake point, unlike GitHub's, has no vendor namespace). Skips the
-    per-plugin accessibility round trip in the common single-plugin case."""
-    plugin_ids = registered_plugin_ids()
-    if len(plugin_ids) == 1:
-        return plugin_ids[0]
-    for plugin_id in plugin_ids:
-        if await is_repo_accessible(plugin_id, org_id, repo_external_id):
-            return plugin_id
-    return plugin_ids[0]
+    """Delegate to the shared `core/vcs.resolve_plugin_id_for_repo` helper."""
+    return await resolve_plugin_id_for_repo(org_id, repo_external_id)
 
 
 async def _fire_one(fire: DueFire) -> None:

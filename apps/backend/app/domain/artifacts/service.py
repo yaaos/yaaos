@@ -31,10 +31,16 @@ async def store(
     body: str,
     iteration: int,
     session: AsyncSession,
+    adopted_from_attachment_id: UUID | None = None,
 ) -> UUID:
     """Insert a new non-final artifact version; version = per-(ticket,
     stage_name) max+1. One-run-per-ticket serializes writers, so there's no
-    concurrent-insert race to guard against here."""
+    concurrent-insert race to guard against here.
+
+    `adopted_from_attachment_id` is set when the artifact body was synthesised
+    directly from a ticket attachment (adoption path) rather than produced by a
+    live coding-agent invocation.
+    """
     current_max = (
         await session.execute(
             select(func.max(ArtifactRow.version)).where(
@@ -51,6 +57,7 @@ async def store(
         version=(current_max or 0) + 1,
         iteration=iteration,
         body=body,
+        adopted_from_attachment_id=adopted_from_attachment_id,
     )
     session.add(row)
     await session.flush()
@@ -107,10 +114,30 @@ async def list_for_ticket(org_id: UUID, ticket_id: UUID, *, session: AsyncSessio
                 run_id=row.run_id,
                 iteration=row.iteration,
                 is_final=row.is_final,
+                adopted_from_attachment_id=row.adopted_from_attachment_id,
                 created_at=row.created_at,
             )
         )
     return [ArtifactGroup(stage_name=name, versions=tuple(versions)) for name, versions in groups.items()]
+
+
+async def adopted_attachment_ids_for_run(run_id: UUID, *, session: AsyncSession) -> set[UUID]:
+    """Return the set of `adopted_from_attachment_id` values for all adopted
+    artifacts in this run. Used by `_build_attachment_refs` to flip the role
+    of matched attachment refs from ``"context"`` to ``"adopted"``."""
+    rows = (
+        (
+            await session.execute(
+                select(ArtifactRow.adopted_from_attachment_id).where(
+                    ArtifactRow.run_id == run_id,
+                    ArtifactRow.adopted_from_attachment_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {r for r in rows if r is not None}
 
 
 async def get(artifact_id: UUID, *, org_id: UUID, session: AsyncSession) -> Artifact:

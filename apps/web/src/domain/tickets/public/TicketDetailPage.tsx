@@ -107,7 +107,11 @@ function TicketDetailContent() {
       <div className="mt-4">
         {tab === "overview" && (
           <div data-testid="ticket-overview">
-            <OverviewTab ticketId={ticketId} onShowRuns={() => setTab("runs")} />
+            <OverviewTab
+              ticketId={ticketId}
+              ticketType={ticket.type}
+              onShowRuns={() => setTab("runs")}
+            />
           </div>
         )}
         {tab === "runs" && (

@@ -51,6 +51,8 @@ export type Ticket = {
   // collapsed status — 6-state UI vocab: pending (queued, awaiting run start),
   // running, hitl, done, failed, cancelled.
   status: "pending" | "running" | "hitl" | "done" | "failed" | "cancelled";
+  // "pr_review" for PR-triggered tickets; "manual" for user-created ones.
+  type: string;
   plugin_id: string;
   repo_external_id: string;
   pr_id: string | null;

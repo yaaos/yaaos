@@ -170,3 +170,76 @@ def test_output_schema_empty_dict_renders_valid_json() -> None:
     result = render_stage_prompt(ctx, skill_directive=_DIRECTIVE)
     # The schema block should contain the serialised empty dict
     assert json.dumps({}, indent=2) in result
+
+
+def test_attachments_section_rendered_when_present() -> None:
+    """Attachments block appears when the context carries a non-empty `attachments` list."""
+    ctx = {
+        **_BASE_CTX,
+        "attachments": [
+            {
+                "path": ".yaaos-inputs/spec.md",
+                "artifact_type": "requirements",
+                "produced_by_skill": "requirements",
+                "role": "context",
+                "note": "Initial spec draft",
+            },
+            {
+                "path": ".yaaos-inputs/notes.txt",
+                "artifact_type": None,
+                "produced_by_skill": None,
+                "role": "context",
+                "note": None,
+            },
+        ],
+    }
+    result = render_stage_prompt(ctx, skill_directive=_DIRECTIVE)
+    assert "## Attachments" in result
+    assert ".yaaos-inputs/spec.md" in result
+    assert "role: context" in result
+    assert "Initial spec draft" in result
+    assert ".yaaos-inputs/notes.txt" in result
+    # Absent metadata renders the placeholder dash
+    assert "type: —" in result
+    assert "skill: —" in result
+
+
+def test_attachments_section_absent_when_empty() -> None:
+    """No `## Attachments` section when the context carries an empty list."""
+    ctx = {**_BASE_CTX, "attachments": []}
+    result = render_stage_prompt(ctx, skill_directive=_DIRECTIVE)
+    assert "## Attachments" not in result
+
+
+def test_attachments_section_absent_when_key_missing() -> None:
+    """No `## Attachments` section when the `attachments` key is absent."""
+    result = render_stage_prompt(_BASE_CTX, skill_directive=_DIRECTIVE)
+    assert "## Attachments" not in result
+
+
+def test_attachments_section_appears_after_input_before_pr() -> None:
+    """The `## Attachments` section appears immediately after `## Input` and
+    before `## Pull request` in the rendered output."""
+    ctx = {
+        **_BASE_CTX,
+        "attachments": [
+            {
+                "path": ".yaaos-inputs/a.md",
+                "artifact_type": None,
+                "produced_by_skill": None,
+                "role": "context",
+                "note": None,
+            }
+        ],
+        "pr": {
+            "pr_external_id": "PR-1",
+            "base_sha": "aaa",
+            "head_sha": "bbb",
+            "prev_reviewed_head_sha": None,
+        },
+    }
+    result = render_stage_prompt(ctx, skill_directive=_DIRECTIVE)
+    input_pos = result.index("## Input")
+    attachments_pos = result.index("## Attachments")
+    pr_pos = result.index("## Pull request")
+    assert input_pos < attachments_pos < pr_pos

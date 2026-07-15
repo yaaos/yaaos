@@ -474,6 +474,18 @@
       },
       "ArtifactDetailResponse": {
         "properties": {
+          "adopted_from_attachment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adopted From Attachment Id"
+          },
           "body": {
             "title": "Body",
             "type": "string"
@@ -518,6 +530,7 @@
           "is_final",
           "body",
           "run_id",
+          "adopted_from_attachment_id",
           "created_at"
         ],
         "title": "ArtifactDetailResponse",
@@ -548,6 +561,18 @@
       "ArtifactMeta": {
         "description": "Metadata-only view of one artifact version — no body.",
         "properties": {
+          "adopted_from_attachment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adopted From Attachment Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -582,9 +607,102 @@
           "run_id",
           "iteration",
           "is_final",
+          "adopted_from_attachment_id",
           "created_at"
         ],
         "title": "ArtifactMeta",
+        "type": "object"
+      },
+      "AttachmentMeta": {
+        "description": "Metadata projection — all fields except `body`. Used by list reads, SPA, and MCP.",
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Type"
+          },
+          "attached_at": {
+            "format": "date-time",
+            "title": "Attached At",
+            "type": "string"
+          },
+          "attached_by": {
+            "format": "uuid",
+            "title": "Attached By",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "produced_by_skill": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced By Skill"
+          },
+          "repo_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Commit"
+          },
+          "skill_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "produced_by_skill",
+          "skill_version",
+          "artifact_type",
+          "repo_commit",
+          "note",
+          "attached_by",
+          "attached_at"
+        ],
+        "title": "AttachmentMeta",
         "type": "object"
       },
       "AuditEntryView": {
@@ -675,6 +793,107 @@
           "display_name"
         ],
         "title": "AvailablePluginView",
+        "type": "object"
+      },
+      "Body_authorize_consent_api_mcp_server_authorize_consent_post": {
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "code_challenge": {
+            "title": "Code Challenge",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "title": "Redirect Uri",
+            "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "required": [
+          "client_id",
+          "org_id",
+          "code_challenge",
+          "redirect_uri"
+        ],
+        "title": "Body_authorize_consent_api_mcp_server_authorize_consent_post",
+        "type": "object"
+      },
+      "Body_token_endpoint_api_mcp_server_token_post": {
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "code_verifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Verifier"
+          },
+          "grant_type": {
+            "title": "Grant Type",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uri"
+          },
+          "refresh_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
+          }
+        },
+        "required": [
+          "grant_type",
+          "client_id"
+        ],
+        "title": "Body_token_endpoint_api_mcp_server_token_post",
         "type": "object"
       },
       "BoundaryControl": {
@@ -972,6 +1191,65 @@
           "id"
         ],
         "title": "CreatePipelineResponse",
+        "type": "object"
+      },
+      "CreateTicketRequest": {
+        "properties": {
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "repo_external_id": {
+            "title": "Repo External Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "repo_external_id"
+        ],
+        "title": "CreateTicketRequest",
+        "type": "object"
+      },
+      "CreateTicketResponse": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created"
+        ],
+        "title": "CreateTicketResponse",
         "type": "object"
       },
       "Decision": {
@@ -1852,6 +2130,22 @@
         "title": "ListArtifactsResponse",
         "type": "object"
       },
+      "ListAttachmentsResponse": {
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentMeta"
+            },
+            "title": "Attachments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "attachments"
+        ],
+        "title": "ListAttachmentsResponse",
+        "type": "object"
+      },
       "ListIntakePointsResponse": {
         "properties": {
           "points": {
@@ -2384,6 +2678,11 @@
       "PipelineSummary": {
         "description": "One `list_pipelines` element — definition rows, unflattened.",
         "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -2427,6 +2726,114 @@
           "referenced"
         ],
         "title": "PipelineSummary",
+        "type": "object"
+      },
+      "PostAttachmentRequest": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "title": "Ticket Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "filename",
+          "body"
+        ],
+        "title": "PostAttachmentRequest",
+        "type": "object"
+      },
+      "PostAttachmentResponse": {
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Type"
+          },
+          "attached_at": {
+            "format": "date-time",
+            "title": "Attached At",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "produced_by_skill": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced By Skill"
+          },
+          "repo_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Commit"
+          },
+          "skill_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "produced_by_skill",
+          "skill_version",
+          "artifact_type",
+          "repo_commit",
+          "attached_at"
+        ],
+        "title": "PostAttachmentResponse",
         "type": "object"
       },
       "ProtectedPathSet": {
@@ -3292,6 +3699,56 @@
           "completed_at"
         ],
         "title": "StageExecution",
+        "type": "object"
+      },
+      "StartRunRequest": {
+        "properties": {
+          "input_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Text"
+          },
+          "pipeline_id": {
+            "format": "uuid",
+            "title": "Pipeline Id",
+            "type": "string"
+          },
+          "replace_in_flight": {
+            "default": false,
+            "title": "Replace In Flight",
+            "type": "boolean"
+          },
+          "ticket_id": {
+            "format": "uuid",
+            "title": "Ticket Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "pipeline_id"
+        ],
+        "title": "StartRunRequest",
+        "type": "object"
+      },
+      "StartRunResponse": {
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "StartRunResponse",
         "type": "object"
       },
       "StepActivityResponse": {
@@ -4638,6 +5095,154 @@
         "summary": "Get Artifact Endpoint",
         "tags": [
           "artifacts"
+        ]
+      }
+    },
+    "/api/attachments": {
+      "get": {
+        "operationId": "list_attachments_endpoint_api_attachments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ticket_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Ticket Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAttachmentsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Attachments Endpoint",
+        "tags": [
+          "attachments"
+        ]
+      },
+      "post": {
+        "operationId": "post_attachment_api_attachments_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostAttachmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Attachment",
+        "tags": [
+          "attachments"
         ]
       }
     },
@@ -7008,6 +7613,200 @@
         ]
       }
     },
+    "/api/mcp-server/authorize": {
+      "get": {
+        "description": "Authorization endpoint.\n\nUnauthenticated → 302 to /login?next=<this URL>.\nAuthenticated → render the consent page with an org picker.",
+        "operationId": "authorize_api_mcp_server_authorize_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "response_type",
+            "required": true,
+            "schema": {
+              "title": "Response Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "redirect_uri",
+            "required": true,
+            "schema": {
+              "title": "Redirect Uri",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code_challenge",
+            "required": true,
+            "schema": {
+              "title": "Code Challenge",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code_challenge_method",
+            "required": false,
+            "schema": {
+              "default": "S256",
+              "title": "Code Challenge Method",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Authorize",
+        "tags": [
+          "mcp_server"
+        ]
+      }
+    },
+    "/api/mcp-server/authorize/consent": {
+      "post": {
+        "description": "Consent form submission.\n\nVerifies session, client, redirect_uri, and org membership; mints a\none-time auth code (sha256-stored, 10-minute TTL); redirects to\n`redirect_uri?code=…[&state=…]`.",
+        "operationId": "authorize_consent_api_mcp_server_authorize_consent_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_authorize_consent_api_mcp_server_authorize_consent_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Authorize Consent",
+        "tags": [
+          "mcp_server"
+        ]
+      }
+    },
+    "/api/mcp-server/register": {
+      "post": {
+        "description": "RFC 7591 dynamic client registration.  No prior auth required.\n\nRate-limited per source IP (burst + sustained windows) because the endpoint\nis unauthenticated and every accepted call creates a row.\n\nBody is parsed manually so metadata violations return the RFC 7591 §3.2.2\nerror shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.\nReturns the minted `client_id` (UUID) which drives the rest of the flow.",
+        "operationId": "register_client_api_mcp_server_register_post",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Register Client",
+        "tags": [
+          "mcp_server"
+        ]
+      }
+    },
+    "/api/mcp-server/token": {
+      "post": {
+        "description": "Token endpoint — authorization_code (PKCE S256) or refresh_token grant.\n\nPublic clients only (`token_endpoint_auth_method=\"none\"`).",
+        "operationId": "token_endpoint_api_mcp_server_token_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_token_endpoint_api_mcp_server_token_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Token Endpoint",
+        "tags": [
+          "mcp_server"
+        ]
+      }
+    },
     "/api/mcp/{review_id}/{server}": {
       "post": {
         "description": "The single proxy entry point. Bearer in `Authorization: Bearer ...`.",
@@ -8861,6 +9660,82 @@
         ]
       }
     },
+    "/api/pipelines/runs/start": {
+      "post": {
+        "description": "Kick off a pipeline run on an existing ticket.\n\n`replace_in_flight=false` (default): returns 409 `run_in_flight` if a\nrunning or paused run already exists on the ticket.\n`replace_in_flight=true`: kills the in-flight run and immediately starts\nthe new one.\n\nRegistered BEFORE `/{pipeline_id}` — the latter is a bare single-segment\nmatch that would otherwise swallow the literal `/runs/start` path.",
+        "operationId": "start_run_endpoint_api_pipelines_runs_start_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Run Endpoint",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
     "/api/pipelines/runs/{run_id}/cancel": {
       "post": {
         "operationId": "cancel_run_endpoint_api_pipelines_runs__run_id__cancel_post",
@@ -10366,6 +11241,22 @@
           },
           {
             "in": "query",
+            "name": "branch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -10433,6 +11324,80 @@
           }
         },
         "summary": "List ",
+        "tags": [
+          "tickets"
+        ]
+      },
+      "post": {
+        "description": "Create a manual ticket. `idempotency_key` is optional — omitting it\ncreates a distinct ticket on every call; supplying the same key twice\nreturns the existing ticket with `created=false` (HTTP 200, not 201, for\nthat case — the 201 is only emitted on the winning insert).",
+        "operationId": "create__api_tickets_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Yaaos-Org-Slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Yaaos-Org-Slug"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "yaaos_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Yaaos Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTicketRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateTicketResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create ",
         "tags": [
           "tickets"
         ]

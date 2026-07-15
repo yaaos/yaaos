@@ -48,6 +48,14 @@ class ArtifactRow(Base):
     iteration: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     is_final: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    # Set when the artifact body was synthesised from an attachment rather than
+    # produced by a live coding-agent invocation (adoption path).  NULL on
+    # engine-produced artifacts.
+    adopted_from_attachment_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("ticket_attachments.id"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

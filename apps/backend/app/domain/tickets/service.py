@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid7
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
@@ -18,6 +18,7 @@ from app.core.notifications import fanout
 from app.core.sse import GeneralEventKind, publish_general_after_commit
 from app.core.tasks import enqueue
 from app.core.tenancy import list_active_member_ids
+from app.core.vcs import resolve_plugin_id_for_repo
 from app.domain.tickets.models import TicketRow
 from app.domain.tickets.notifications import build_status_change_specs
 from app.domain.tickets.pull_request import PullRequest, PullRequestNotFoundError
@@ -104,10 +105,12 @@ class TicketFilter(BaseModel):
     created_after: datetime | None = None
     created_before: datetime | None = None
     statuses: list[TicketStatus] | None = None
-    # additions — see .
     q: str | None = None
     sort: TicketSort = "updated_desc"
     cursor: str | None = None
+    # Filter by exact branch name — used by manual-kickoff flow to look up an
+    # existing branch before creating a new ticket.
+    branch_name: str | None = None
 
 
 class TicketNotFoundError(LookupError):
@@ -360,6 +363,93 @@ async def create_from_schedule(
     return ticket_id, created
 
 
+async def create_from_manual(
+    *,
+    org_id: UUID,
+    title: str,
+    repo_external_id: str,
+    actor: Actor,
+    session: AsyncSession,
+    branch_name: str | None = None,
+    idempotency_key: str | None = None,
+) -> tuple[UUID, bool]:
+    """Race-safe ticket INSERT for a user-initiated manual task.
+
+    Each call with `idempotency_key=None` creates a distinct ticket — a fresh
+    `uuid7()` is minted as `source_external_id` so there is no collision
+    target. Supplying an `idempotency_key` makes repeated calls idempotent:
+    the second call returns `(winner_id, False)` without further work.
+    When `branch_name` is omitted, one is minted deterministically via
+    `mint_branch_name(title, ticket_id)`. On `created=True` writes the
+    `ticket.created` audit row and fires `notify_ticket_status_change`.
+    Caller commits; never commits here.
+    """
+    key = idempotency_key if idempotency_key is not None else str(uuid7())
+    plugin_id = await resolve_plugin_id_for_repo(org_id, repo_external_id)
+    ticket_id, created = await _insert_ticket_atomic(
+        org_id=org_id,
+        type="manual",
+        source="manual",
+        source_external_id=key,
+        title=title,
+        description=None,
+        repo_external_id=repo_external_id,
+        plugin_id=plugin_id,
+        idempotency_key=key,
+        payload={},
+        status="pending",
+        conflict_target=("org_id", "source", "source_external_id"),
+        session=session,
+        branch_name=branch_name,
+    )
+    if created:
+        if branch_name is None:
+            minted_branch_name = mint_branch_name(title, ticket_id)
+            await session.execute(
+                update(TicketRow).where(TicketRow.id == ticket_id).values(branch_name=minted_branch_name)
+            )
+        await audit_for_ticket(
+            ticket_id,
+            "ticket.created",
+            _TicketCreatedPayload(
+                type="manual",
+                source="manual",
+                source_external_id=key,
+                idempotency_key=key,
+            ),
+            actor=actor,
+            org_id=org_id,
+            session=session,
+        )
+        await notify_ticket_status_change(
+            ticket_id=ticket_id,
+            org_id=org_id,
+            new_status="pending",
+            previous_status=None,
+            session=session,
+        )
+    return ticket_id, created
+
+
+async def get_by_branch(branch_name: str, *, org_id: UUID, session: AsyncSession) -> Ticket | None:
+    """Return the most recently created ticket on `branch_name` in `org_id`, or None.
+
+    Shape (a): caller supplies the session so this composes inside a larger
+    transaction. When multiple tickets share the same branch (a manual
+    ticket re-using an existing branch, or a test suite seeding several),
+    the newest row wins so callers always see the latest work.
+    """
+    row = (
+        await session.execute(
+            select(TicketRow)
+            .where(TicketRow.branch_name == branch_name, TicketRow.org_id == org_id)
+            .order_by(TicketRow.created_at.desc(), TicketRow.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return Ticket.from_row(row) if row is not None else None
+
+
 async def notify_ticket_status_change(
     *,
     ticket_id: UUID,
@@ -543,6 +633,8 @@ async def list_tickets(
             stmt = stmt.where(TicketRow.created_at < filter.created_before)
         if filter.q:
             stmt = stmt.where(TicketRow.title.ilike(f"%{filter.q}%"))
+        if filter.branch_name:
+            stmt = stmt.where(TicketRow.branch_name == filter.branch_name)
 
         sort_clause = {
             "updated_desc": TicketRow.updated_at.desc(),
@@ -622,7 +714,10 @@ async def transition_ticket_on_run_start(
         return False
     if row.current_run_id != run_id:
         return False
-    if row.status != "pending":
+    # Allow "cancelled" as a valid from-state: a kill+replace flow leaves the
+    # ticket "cancelled" after the kill; the replacement run's promotion should
+    # flip it back to "running".
+    if row.status not in ("pending", "cancelled"):
         return False
     await _apply_transition(
         session,

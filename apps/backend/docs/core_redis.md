@@ -43,5 +43,5 @@ Each primitive is a single async function in its own file, mirroring `sliding_wi
 ## Gotchas
 
 - **`subscriber_count(channel)` is process-local** — not cluster-wide (`PUBSUB NUMSUB`); don't use it for load decisions.
-- **`sliding_window_hit` owns the ZSET mechanics, not the policy** — it returns `True`/`False`; the caller (e.g. `core/agent_gateway/rate_limit.py`) decides the limit, the axis, and what to raise. Approximate at sub-second resolution.
+- **`sliding_window_hit` owns the ZSET mechanics, not the policy** — it returns `True`/`False`; the caller decides the limit, the axis, and what to raise. Approximate at sub-second resolution. Policy layers: `core/agent_gateway/rate_limit.py` (identity exchange, per-IP) and `app/domain/mcp_server/rate_limit.py` (OAuth client registration, per-IP burst + sustained).
 - **`_get()` creates on first call per context** — the `default=None` ContextVar plus lazy-init pattern ensures each asyncio context gets exactly one `_RedisPubsub` on demand. Tests use `set_pubsub_for_tests()` to inject a fresh instance; production needs no startup call.

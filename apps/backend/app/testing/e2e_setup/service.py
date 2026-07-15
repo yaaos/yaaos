@@ -758,7 +758,12 @@ async def delete_user(user_id: UUID) -> None:
     """Hard-delete a user row. Opens its own session and commits. Cascades at
     the DB level to emails, OAuth identities, and sessions — callers that
     need cross-module cleanup (e.g. memberships) must call those separately
-    before this."""
+    before this.
+
+    Inbound MCP token revocation runs via the user-deletion hook that
+    `domain/mcp_server` registers with `core/identity` at import time (the
+    composition root imports `domain/mcp_server` before this can be reached).
+    """
     from app.core.identity import delete_user as _identity_delete_user  # noqa: PLC0415
 
     async with db_session() as s:

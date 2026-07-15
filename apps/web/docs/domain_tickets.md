@@ -7,7 +7,7 @@
 - `/tickets` — filterable list.
 - `/tickets/$ticketId` — detail: three tabs — Overview, Runs, Artifacts.
 
-Consumes: `GET /api/tickets`, `GET /api/tickets/:id`, `GET /api/tickets/:id/audit`, `GET /api/pipelines/runs`, `GET /api/pipelines/runs/overview`, `GET /api/pipelines/runs/:runId/stages/:stageExecutionId/activity`, `POST /api/pipelines/runs/:runId/cancel`, `POST /api/pipelines/runs/pauses/:pauseId/respond`, `POST /api/pipelines/runs/rerun`, `POST /api/pipelines/runs/:runId/rerun`, `GET /api/artifacts`, `GET /api/artifacts/:id`. Owns no data.
+Consumes: `GET /api/tickets`, `POST /api/tickets`, `GET /api/tickets/:id`, `GET /api/tickets/:id/audit`, `GET /api/pipelines`, `GET /api/pipelines/runs`, `GET /api/pipelines/runs/overview`, `POST /api/pipelines/runs/start`, `GET /api/pipelines/runs/:runId/stages/:stageExecutionId/activity`, `POST /api/pipelines/runs/:runId/cancel`, `POST /api/pipelines/runs/pauses/:pauseId/respond`, `POST /api/pipelines/runs/rerun`, `POST /api/pipelines/runs/:runId/rerun`, `GET /api/artifacts`, `GET /api/artifacts/:id`, `GET /api/attachments`. Owns no data.
 
 ## List page
 
@@ -25,13 +25,17 @@ Three tabs: **Overview** (default), **Runs**, **Artifacts**. Each tab body is wr
 
 ### Overview tab (`overview.tsx`)
 
-`useRunOverview(ticketId)` — a plain (non-Suspense) query; a 404 resolves to `null` (a legitimate "no run yet" empty state, not an error). Branches on `RunOverview.status`:
+`useRunOverview(ticketId)` — a plain (non-Suspense) query; a 404 resolves to `null` (a legitimate "no run yet" empty state, not an error). When `overview === null` AND `ticket.type === "manual"`, renders a **KickoffCard** (wrapped in `<ErrorBoundary>` + `<Suspense>`) instead of the default empty state: a pipeline Select (`data-testid="kickoff-pipeline"`, options from `usePipelines()`), a prompt Textarea (`data-testid="kickoff-prompt"`), and a **Run** button (`data-testid="kickoff-run"`). On submit fires `useStartRun(ticketId)` → `POST /api/pipelines/runs/start`. A 409 (`run_in_flight`) surfaces a `ConfirmModal` (`data-testid="kickoff-confirm"`) — "Replace in-flight run?" — re-submitting with `replace_in_flight=true` on confirm. When `overview === null` AND `ticket.type !== "manual"`, the existing empty-state prose renders.
+
+Branches on `RunOverview.status`:
 
 - **`paused`** — the attention block: tripped-condition badges, the pausing stage's artifact in a `<details>` disclosure (`useArtifactVersion`), open residual findings, and four actions — Approve, Instruct (+ `Textarea`), Send back (+ `Select` of earlier skill/review stage names, sourced from the ticket's current run via `useRuns`), and Kill (destructive, behind `ConfirmModal` — "Kill run?" / "This can't be undone."). All four disabled with a `pause-waiting-on` "Waiting on {escalation logins}." line when the server-sent `PauseDetail.can_respond` is `false` — no client role math; `resolve_pause`'s own authorization (escalation set ∪ org admins) is the sole source of truth.
 - **`in_flight`** — a live card naming the pipeline + current stage, with a Cancel action behind `ConfirmModal` ("Cancel run?"). Also shows a `data-testid="overview-live-ticker"` line when at least one activity frame has arrived for the run's current stage — displays the most recent frame's `message`. Clicking the ticker switches to the Runs tab. The `in_flight` branch also carries `data-connected="true"|"false"` on the `attention-block` element (driven by `useRunActivityTail.connected` / EventSource `onopen`).
 - **`terminal`** — an outcome card: state + a PR link when `RunOutcome.pr_url` is set, else a mono `failure_reason`. A `failed`/`cancelled`/`killed` outcome also shows a **Re-run** action behind `ConfirmModal` ("Re-run pipeline?" / "Starts a new run from the beginning.") → `useRerunRun(ticketId)` → `POST /api/pipelines/runs/{run_id}/rerun`, targeting `RunOutcome.run_id`.
 
 The card always carries `data-testid="attention-block"` with `data-state` set to `paused` / `in_flight` / the terminal run state (`completed`/`failed`/`killed`/`cancelled`) — one selector regardless of branch.
+
+Below the run-state card, the Overview tab renders a **read-only attachments section** (`AttachmentsSection`). Renders nothing when there are no attachments. When present: an `<h3>` label + `<ul data-testid="attachments-list">` with one `<li data-testid="attachment-row-${a.id}">` per attachment showing filename, optional `produced_by_skill`, and `ago(attached_at)`. Populated by `useAttachments(ticketId)` (Suspense) → `GET /api/attachments?ticket_id=`. Live updates: `attachment_added` SSE invalidates `["attachments", ticketId]`.
 
 ### Runs tab (`runs.tsx`)
 
@@ -73,4 +77,4 @@ Router imports each directly by path; no barrel.
 - `test/runs-tab.test.tsx` — component/MSW: the Runs tab card's Re-run button renders for `failed`/`cancelled`/`killed` runs, is absent for `completed`/`running` runs, confirm-then-mutation fires `POST /api/pipelines/runs/{id}/rerun`, clicking it does not toggle the card's accordion, and rendered timing (summary total duration + per-stage timing column).
 - `test/live-activity.test.tsx` — component/MSW: `stage-activity-live` renders when the stage is running and the Activity accordion is opened; persisted branch ("No activity recorded.") renders when the stage is completed; `overview-live-ticker` appears with the most recent frame message; ticker hidden when no frames arrived.
 - `test/activity-event-row.test.tsx` — component: icon-by-kind mapping, long-message collapse.
-- Page composition (browser-visible): `apps/e2e/tests/pipeline-run-overview.spec.ts` (attention block, live SSE-driven pause resolution, role-gated actions), `apps/e2e/tests/pipeline-run-tabs.spec.ts` (Runs tab stage rows, Artifacts tab version dropdown), `apps/e2e/tests/pipeline-live-activity.spec.ts` (live activity rows appear in `stage-activity-live` without reload; overview ticker shows message + switches to Runs tab).
+- Page composition (browser-visible): `apps/e2e/tests/pipeline-run-overview.spec.ts` (attention block, live SSE-driven pause resolution, role-gated actions), `apps/e2e/tests/pipeline-run-tabs.spec.ts` (Runs tab stage rows, Artifacts tab version dropdown), `apps/e2e/tests/pipeline-live-activity.spec.ts` (live activity rows appear in `stage-activity-live` without reload; overview ticker shows message + switches to Runs tab), `apps/e2e/tests/manual-kickoff.spec.ts` (KickoffCard renders for a manual ticket with no run; picking a pipeline + clicking Run starts a run; a 409 shows `kickoff-confirm`).

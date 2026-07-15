@@ -67,6 +67,22 @@ Mechanics: a caller mints a bearer via `mcp_proxy.mint_token(review_id, org_id=.
 
 **Audit shape.** One row per JSON-RPC method: `{kind: "mcp.<provider>.dispatched", payload: {provider, method, tool, args_hash, result_summary, upstream_account}}`. Never the full upstream response.
 
+### Inbound MCP server — local agent OAuth 2.1 flow
+
+`domain/mcp_server` exposes yaaos itself as an MCP server to locally-running coding agents (e.g. Claude Code in a developer's terminal). The backend acts as an OAuth 2.1 authorization server (RFC 8414 + RFC 7591 + PKCE S256); the FastMCP sub-app hosts tools over Streamable HTTP at `/api/mcp-server/mcp`.
+
+Flow (happy path):
+
+1. Agent discovers endpoints from `GET /.well-known/oauth-authorization-server` (RFC 8414 metadata).
+2. Agent registers via `POST /api/mcp-server/register` → receives `client_id`.
+3. Agent opens a browser to `GET /api/mcp-server/authorize?client_id=…&code_challenge=…`. The backend reads the `yaaos_session` cookie; unauthenticated → redirect to `/login?next=…`. Authenticated → consent form with org picker.
+4. User submits the consent form → `POST /api/mcp-server/authorize/consent` → yaaos mints a one-time auth code and redirects to the agent's `redirect_uri?code=…`.
+5. Agent exchanges code at `POST /api/mcp-server/token` with `grant_type=authorization_code` + `code_verifier` (PKCE S256 verification). Receives `{access_token, refresh_token, expires_in}`.
+6. Agent calls MCP tools with `Authorization: Bearer <access_token>`. FastMCP's `YaaosTokenVerifier` does a sha256 lookup in `mcp_access_tokens` and resolves the `McpPrincipal(user_id, org_id, role)`. A revoked/expired bearer returns HTTP 401; a `McpError(code=-32004)` from tool handlers maps to JSON-RPC -32004.
+7. Token rotation via `POST /api/mcp-server/token` with `grant_type=refresh_token`.
+
+Not to be confused with `domain/mcp_proxy` (outbound: proxies coding-agent CLI calls to Linear/Notion). See [`domain_mcp_server.md`](../apps/backend/docs/domain_mcp_server.md).
+
 ### WorkspaceAgent + run engine
 
 Three concepts span all apps:
@@ -105,6 +121,7 @@ Cluster-safe recurring tasks run in every worker process via `core/tasks.schedul
 - `identity_purge` (hourly, `0 * * * *`, `core/identity`) — purges expired sessions, unverified TOTP secrets older than 24h, and audit entries older than `AUDIT_LOG_RETENTION`.
 - `workspace_reaper` (per minute, `* * * * *`, `core/workspace`) — TTL expiry, idle-timeout, agent-loss detection, destroy retries.
 - `coding_agent_activity_partition_maintenance` (daily, `0 1 * * *`, `core/coding_agent`) — creates the current ISO week + the next two partitions of `coding_agent_activity`, drops partitions >4 weeks old; raw partition DDL is in `core/database`.
+- `mcp_server_token_sweep` (hourly, `0 * * * *`, `domain/mcp_server`) — drops expired `mcp_access_tokens` and `mcp_refresh_tokens` rows.
 
 See [`apps/backend/docs/core_tasks.md`](../apps/backend/docs/core_tasks.md).
 

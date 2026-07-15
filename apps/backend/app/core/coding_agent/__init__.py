@@ -59,7 +59,7 @@ from app.core.coding_agent.service import (
     replace_plugin,
     set_coding_agents_for_tests,
 )
-from app.core.coding_agent.skills_bundle import build_skills_bundle_zip
+from app.core.coding_agent.skills_bundle import build_skills_bundle_zip, get_shipped_skill_version
 from app.core.coding_agent.types import (
     ACTIVITY_EVENT_KINDS,
     ActivityEvent,
@@ -116,6 +116,7 @@ __all__ = [
     "dispatch_invocation",
     "finalize_run",
     "get_plugin",
+    "get_shipped_skill_version",
     "get_stage_activity",
     "install_coding_agent",
     "list_coding_agents",

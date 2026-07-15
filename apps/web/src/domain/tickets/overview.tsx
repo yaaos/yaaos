@@ -1,6 +1,10 @@
 /**
  * Overview tab — branches on `RunOverview.status`:
  *
+ *   - no run yet + manual ticket — kickoff card: pipeline picker, optional
+ *     prompt, Run button. A 409 from a stale-overview race shows a
+ *     kill-and-restart confirm (`kickoff-confirm`).
+ *   - no run yet + non-manual ticket — empty state (run starts automatically).
  *   - `paused` — attention block: tripped conditions, the pausing stage's
  *     artifact, open residual findings, and four actions (approve / instruct
  *     / send back / kill). All four are disabled with "Waiting on {names}."
@@ -8,8 +12,6 @@
  *   - `in_flight` — live card with a Cancel action (destructive confirm).
  *   - `terminal` — outcome card: PR link on success, mono `failure_reason`
  *     on failure/kill/cancel.
- *
- * No run yet (`useRunOverview` resolves `null`) renders an empty state.
  */
 
 import {
@@ -17,11 +19,14 @@ import {
   type PipelineRunView,
   type RunOutcomeView,
   useArtifactVersion,
+  useAttachments,
   useCancelRun,
+  usePipelines,
   useRerunRun,
   useRespondPause,
   useRunOverview,
   useRuns,
+  useStartRun,
 } from "@core/api/public/queries";
 import { useRunActivityTail } from "@core/sse/public/run_activity";
 import { ConfirmModal } from "@shared/components/public/layout/confirm-modal";
@@ -40,38 +45,59 @@ import {
 import { Skeleton } from "@shared/components/ui/skeleton";
 import { Textarea } from "@shared/components/ui/textarea";
 import { ago } from "@shared/utils/public/ago";
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2, XCircle } from "lucide-react";
-import { Suspense, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  Paperclip,
+  Play,
+  XCircle,
+} from "lucide-react";
+import { type ReactNode, Suspense, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 
 export function OverviewTab({
   ticketId,
+  ticketType,
   onShowRuns,
-}: { ticketId: string; onShowRuns: () => void }) {
+}: { ticketId: string; ticketType: string; onShowRuns: () => void }) {
   const { data: overview, isLoading, isError } = useRunOverview(ticketId);
 
+  let mainContent: ReactNode;
+
   if (isLoading) {
-    return (
+    mainContent = (
       <div className="flex flex-col gap-2">
         <Skeleton className="h-40" />
       </div>
     );
-  }
-  if (isError) {
-    return <ErrorBanner message="Couldn't load this ticket's run." />;
-  }
-  if (!overview) {
-    return (
-      <EmptyState
-        icon={AlertCircle}
-        headline="No runs yet."
-        body="When a pipeline starts on this ticket, it'll appear here."
-      />
-    );
-  }
-
-  if (overview.status === "paused" && overview.pause) {
-    return (
+  } else if (isError) {
+    mainContent = <ErrorBanner message="Couldn't load this ticket's run." />;
+  } else if (!overview) {
+    if (ticketType === "manual") {
+      mainContent = (
+        <ErrorBoundary
+          fallbackRender={({ resetErrorBoundary }) => (
+            <ErrorBanner message="Couldn't load pipelines." onRetry={resetErrorBoundary} />
+          )}
+        >
+          <Suspense fallback={<Skeleton className="h-40" />}>
+            <KickoffCard ticketId={ticketId} />
+          </Suspense>
+        </ErrorBoundary>
+      );
+    } else {
+      mainContent = (
+        <EmptyState
+          icon={AlertCircle}
+          headline="No runs yet."
+          body="When a pipeline starts on this ticket, it'll appear here."
+        />
+      );
+    }
+  } else if (overview.status === "paused" && overview.pause) {
+    mainContent = (
       <ErrorBoundary
         fallbackRender={({ resetErrorBoundary }) => (
           <ErrorBanner message="Couldn't load the pausing stage." onRetry={resetErrorBoundary} />
@@ -82,14 +108,28 @@ export function OverviewTab({
         </Suspense>
       </ErrorBoundary>
     );
+  } else if (overview.status === "in_flight" && overview.run) {
+    mainContent = <InFlightCard ticketId={ticketId} run={overview.run} onShowRuns={onShowRuns} />;
+  } else if (overview.status === "terminal" && overview.outcome) {
+    mainContent = <OutcomeCard ticketId={ticketId} outcome={overview.outcome} />;
+  } else {
+    mainContent = null;
   }
-  if (overview.status === "in_flight" && overview.run) {
-    return <InFlightCard ticketId={ticketId} run={overview.run} onShowRuns={onShowRuns} />;
-  }
-  if (overview.status === "terminal" && overview.outcome) {
-    return <OutcomeCard ticketId={ticketId} outcome={overview.outcome} />;
-  }
-  return null;
+
+  return (
+    <div className="flex flex-col gap-4">
+      {mainContent}
+      <ErrorBoundary
+        fallbackRender={({ resetErrorBoundary }) => (
+          <ErrorBanner message="Couldn't load attachments." onRetry={resetErrorBoundary} />
+        )}
+      >
+        <Suspense fallback={<Skeleton className="h-16" />}>
+          <AttachmentsSection ticketId={ticketId} />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
+  );
 }
 
 function waitingOnLabel(pause: PauseDetailView): string {
@@ -378,6 +418,142 @@ function OutcomeCard({ ticketId, outcome }: { ticketId: string; outcome: RunOutc
         confirmLabel="Re-run"
         pending={rerun.isPending}
         onConfirm={() => rerun.mutate(outcome.run_id, { onSettled: () => setRerunOpen(false) })}
+      />
+    </div>
+  );
+}
+
+/** Read-only attachments list for the ticket Overview tab. Renders nothing
+ *  (no header, no empty state) when the ticket has no attachments yet. */
+function AttachmentsSection({ ticketId }: { ticketId: string }) {
+  const { data: attachments } = useAttachments(ticketId);
+  if (attachments.length === 0) return null;
+
+  return (
+    <div>
+      <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
+        <Paperclip className="w-3 h-3" aria-hidden />
+        Attachments
+      </h3>
+      <ul className="flex flex-col gap-1" data-testid="attachments-list">
+        {attachments.map((a) => (
+          <li
+            key={a.id}
+            className="flex items-center gap-2 rounded border border-border px-3 py-2 text-sm"
+            data-testid={`attachment-row-${a.id}`}
+          >
+            <span className="font-medium truncate">{a.filename}</span>
+            {a.produced_by_skill && (
+              <span className="text-xs text-muted-foreground">· {a.produced_by_skill}</span>
+            )}
+            <span className="ml-auto text-xs text-muted-foreground shrink-0">
+              {ago(a.attached_at)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Kickoff form for manual tickets that have no run yet. */
+function KickoffCard({ ticketId }: { ticketId: string }) {
+  const { data: pipelines } = usePipelines();
+  const startRun = useStartRun(ticketId);
+  const [pipelineId, setPipelineId] = useState<string>("");
+  const [prompt, setPrompt] = useState<string>("");
+  const [showReplace, setShowReplace] = useState(false);
+  const [pendingVars, setPendingVars] = useState<{
+    pipeline_id: string;
+    input_text: string;
+  } | null>(null);
+
+  function handleRun() {
+    if (!pipelineId) return;
+    const vars = { pipeline_id: pipelineId, input_text: prompt.trim() };
+    setPendingVars(vars);
+    startRun.mutate(
+      { ...vars, replace_in_flight: false },
+      {
+        onError: (err) => {
+          // 409 = a run is already in flight; prompt to kill & restart.
+          if ((err as Error)?.message?.startsWith("409")) {
+            setShowReplace(true);
+          }
+        },
+      },
+    );
+  }
+
+  function handleReplace() {
+    if (!pendingVars) return;
+    startRun.mutate(
+      { ...pendingVars, replace_in_flight: true },
+      { onSettled: () => setShowReplace(false) },
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-border p-4 flex flex-col gap-3">
+      <h2 className="text-sm font-medium">Start a run</h2>
+
+      <div>
+        <label htmlFor="kickoff-pipeline" className="text-xs text-muted-foreground mb-1 block">
+          Pipeline
+        </label>
+        <Select value={pipelineId} onValueChange={setPipelineId}>
+          <SelectTrigger id="kickoff-pipeline" data-testid="kickoff-pipeline" className="w-64 h-9">
+            <SelectValue placeholder="Pick a pipeline…" />
+          </SelectTrigger>
+          <SelectContent>
+            {pipelines.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div>
+        <label htmlFor="kickoff-prompt" className="text-xs text-muted-foreground mb-1 block">
+          Prompt (optional)
+        </label>
+        <Textarea
+          id="kickoff-prompt"
+          data-testid="kickoff-prompt"
+          className="min-h-[80px]"
+          placeholder="Add instructions for the agent…"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+        />
+      </div>
+
+      {startRun.isError && !(startRun.error as Error)?.message?.startsWith("409") && (
+        <ErrorBanner message="Couldn't start the run. Try again." />
+      )}
+
+      <div>
+        <Button
+          data-testid="kickoff-run"
+          disabled={!pipelineId || startRun.isPending}
+          onClick={handleRun}
+        >
+          <Play className="w-4 h-4 mr-2" aria-hidden />
+          {startRun.isPending ? "Starting…" : "Run"}
+        </Button>
+      </div>
+
+      <ConfirmModal
+        open={showReplace}
+        onOpenChange={setShowReplace}
+        title="Kill existing run?"
+        body="A run is already in progress. Kill it and start a new one from the beginning?"
+        confirmLabel="Kill & restart"
+        tone="destructive"
+        pending={startRun.isPending}
+        onConfirm={handleReplace}
+        testId="kickoff-confirm"
       />
     </div>
   );

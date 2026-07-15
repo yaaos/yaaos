@@ -112,6 +112,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Attachments Endpoint */
+        get: operations["list_attachments_endpoint_api_attachments_get"];
+        put?: never;
+        /** Post Attachment */
+        post: operations["post_attachment_api_attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit": {
         parameters: {
             query?: never;
@@ -729,6 +747,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp-server/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Authorize
+         * @description Authorization endpoint.
+         *
+         *     Unauthenticated → 302 to /login?next=<this URL>.
+         *     Authenticated → render the consent page with an org picker.
+         */
+        get: operations["authorize_api_mcp_server_authorize_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-server/authorize/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authorize Consent
+         * @description Consent form submission.
+         *
+         *     Verifies session, client, redirect_uri, and org membership; mints a
+         *     one-time auth code (sha256-stored, 10-minute TTL); redirects to
+         *     `redirect_uri?code=…[&state=…]`.
+         */
+        post: operations["authorize_consent_api_mcp_server_authorize_consent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-server/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register Client
+         * @description RFC 7591 dynamic client registration.  No prior auth required.
+         *
+         *     Rate-limited per source IP (burst + sustained windows) because the endpoint
+         *     is unauthenticated and every accepted call creates a row.
+         *
+         *     Body is parsed manually so metadata violations return the RFC 7591 §3.2.2
+         *     error shape (HTTP 400, `invalid_client_metadata`) rather than FastAPI's 422.
+         *     Returns the minted `client_id` (UUID) which drives the rest of the flow.
+         */
+        post: operations["register_client_api_mcp_server_register_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp-server/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Token Endpoint
+         * @description Token endpoint — authorization_code (PKCE S256) or refresh_token grant.
+         *
+         *     Public clients only (`token_endpoint_auth_method="none"`).
+         */
+        post: operations["token_endpoint_api_mcp_server_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/{review_id}/{server}": {
         parameters: {
             query?: never;
@@ -1169,6 +1283,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pipelines/runs/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Run Endpoint
+         * @description Kick off a pipeline run on an existing ticket.
+         *
+         *     `replace_in_flight=false` (default): returns 409 `run_in_flight` if a
+         *     running or paused run already exists on the ticket.
+         *     `replace_in_flight=true`: kills the in-flight run and immediately starts
+         *     the new one.
+         *
+         *     Registered BEFORE `/{pipeline_id}` — the latter is a bare single-segment
+         *     match that would otherwise swallow the literal `/runs/start` path.
+         */
+        post: operations["start_run_endpoint_api_pipelines_runs_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pipelines/runs/{run_id}/cancel": {
         parameters: {
             query?: never;
@@ -1548,7 +1690,14 @@ export interface paths {
          */
         get: operations["list__api_tickets_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create
+         * @description Create a manual ticket. `idempotency_key` is optional — omitting it
+         *     creates a distinct ticket on every call; supplying the same key twice
+         *     returns the existing ticket with `created=false` (HTTP 200, not 201, for
+         *     that case — the 201 is only emitted on the winning insert).
+         */
+        post: operations["create__api_tickets_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2184,6 +2333,8 @@ export interface components {
         };
         /** ArtifactDetailResponse */
         ArtifactDetailResponse: {
+            /** Adopted From Attachment Id */
+            adopted_from_attachment_id: string | null;
             /** Body */
             body: string;
             /**
@@ -2225,6 +2376,8 @@ export interface components {
          * @description Metadata-only view of one artifact version — no body.
          */
         ArtifactMeta: {
+            /** Adopted From Attachment Id */
+            adopted_from_attachment_id: string | null;
             /**
              * Created At
              * Format: date-time
@@ -2246,6 +2399,39 @@ export interface components {
             run_id: string;
             /** Version */
             version: number;
+        };
+        /**
+         * AttachmentMeta
+         * @description Metadata projection — all fields except `body`. Used by list reads, SPA, and MCP.
+         */
+        AttachmentMeta: {
+            /** Artifact Type */
+            artifact_type: string | null;
+            /**
+             * Attached At
+             * Format: date-time
+             */
+            attached_at: string;
+            /**
+             * Attached By
+             * Format: uuid
+             */
+            attached_by: string;
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Note */
+            note: string | null;
+            /** Produced By Skill */
+            produced_by_skill: string | null;
+            /** Repo Commit */
+            repo_commit: string | null;
+            /** Skill Version */
+            skill_version: string | null;
         };
         /** AuditEntryView */
         AuditEntryView: {
@@ -2285,6 +2471,34 @@ export interface components {
             display_name: string;
             /** Plugin Id */
             plugin_id: string;
+        };
+        /** Body_authorize_consent_api_mcp_server_authorize_consent_post */
+        Body_authorize_consent_api_mcp_server_authorize_consent_post: {
+            /** Client Id */
+            client_id: string;
+            /** Code Challenge */
+            code_challenge: string;
+            /** Org Id */
+            org_id: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+            /** State */
+            state?: string | null;
+        };
+        /** Body_token_endpoint_api_mcp_server_token_post */
+        Body_token_endpoint_api_mcp_server_token_post: {
+            /** Client Id */
+            client_id: string;
+            /** Code */
+            code?: string | null;
+            /** Code Verifier */
+            code_verifier?: string | null;
+            /** Grant Type */
+            grant_type: string;
+            /** Redirect Uri */
+            redirect_uri?: string | null;
+            /** Refresh Token */
+            refresh_token?: string | null;
         };
         /**
          * BoundaryControl
@@ -2433,6 +2647,27 @@ export interface components {
         };
         /** CreatePipelineResponse */
         CreatePipelineResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /** CreateTicketRequest */
+        CreateTicketRequest: {
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Idempotency Key */
+            idempotency_key?: string | null;
+            /** Repo External Id */
+            repo_external_id: string;
+            /** Title */
+            title: string;
+        };
+        /** CreateTicketResponse */
+        CreateTicketResponse: {
+            /** Created */
+            created: boolean;
             /**
              * Id
              * Format: uuid
@@ -2809,6 +3044,11 @@ export interface components {
             /** Artifacts */
             artifacts: components["schemas"]["ArtifactGroup"][];
         };
+        /** ListAttachmentsResponse */
+        ListAttachmentsResponse: {
+            /** Attachments */
+            attachments: components["schemas"]["AttachmentMeta"][];
+        };
         /** ListIntakePointsResponse */
         ListIntakePointsResponse: {
             /** Points */
@@ -3027,6 +3267,11 @@ export interface components {
          */
         PipelineSummary: {
             /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
              * Id
              * Format: uuid
              */
@@ -3044,6 +3289,43 @@ export interface components {
             updated_at: string;
             /** Updated By Login */
             updated_by_login: string | null;
+        };
+        /** PostAttachmentRequest */
+        PostAttachmentRequest: {
+            /** Body */
+            body: string;
+            /** Filename */
+            filename: string;
+            /** Note */
+            note?: string | null;
+            /**
+             * Ticket Id
+             * Format: uuid
+             */
+            ticket_id: string;
+        };
+        /** PostAttachmentResponse */
+        PostAttachmentResponse: {
+            /** Artifact Type */
+            artifact_type: string | null;
+            /**
+             * Attached At
+             * Format: date-time
+             */
+            attached_at: string;
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Produced By Skill */
+            produced_by_skill: string | null;
+            /** Repo Commit */
+            repo_commit: string | null;
+            /** Skill Version */
+            skill_version: string | null;
         };
         /**
          * ProtectedPathSet
@@ -3418,6 +3700,34 @@ export interface components {
             started_at: string;
             /** Status */
             status: string;
+        };
+        /** StartRunRequest */
+        StartRunRequest: {
+            /** Input Text */
+            input_text?: string | null;
+            /**
+             * Pipeline Id
+             * Format: uuid
+             */
+            pipeline_id: string;
+            /**
+             * Replace In Flight
+             * @default false
+             */
+            replace_in_flight: boolean;
+            /**
+             * Ticket Id
+             * Format: uuid
+             */
+            ticket_id: string;
+        };
+        /** StartRunResponse */
+        StartRunResponse: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
         };
         /**
          * StepActivityResponse
@@ -3956,6 +4266,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_attachments_endpoint_api_attachments_get: {
+        parameters: {
+            query: {
+                ticket_id: string;
+            };
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAttachmentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_attachment_api_attachments_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostAttachmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostAttachmentResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5146,6 +5528,128 @@ export interface operations {
             };
         };
     };
+    authorize_api_mcp_server_authorize_get: {
+        parameters: {
+            query: {
+                client_id: string;
+                response_type: string;
+                redirect_uri: string;
+                code_challenge: string;
+                code_challenge_method?: string;
+                state?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authorize_consent_api_mcp_server_authorize_consent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_authorize_consent_api_mcp_server_authorize_consent_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_client_api_mcp_server_register_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    token_endpoint_api_mcp_server_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_token_endpoint_api_mcp_server_token_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dispatch_api_mcp__review_id___server__post: {
         parameters: {
             query?: never;
@@ -6070,6 +6574,43 @@ export interface operations {
             };
         };
     };
+    start_run_endpoint_api_pipelines_runs_start_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cancel_run_endpoint_api_pipelines_runs__run_id__cancel_post: {
         parameters: {
             query?: never;
@@ -6783,6 +7324,7 @@ export interface operations {
                 cursor?: string | null;
                 created_after?: string | null;
                 created_before?: string | null;
+                branch?: string | null;
                 limit?: number;
             };
             header?: {
@@ -6804,6 +7346,43 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create__api_tickets_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Yaaos-Org-Slug"?: string | null;
+            };
+            path?: never;
+            cookie?: {
+                yaaos_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateTicketResponse"];
                 };
             };
             /** @description Validation Error */

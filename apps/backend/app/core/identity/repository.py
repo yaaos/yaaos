@@ -8,6 +8,7 @@ boundaries belong to the caller.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -113,12 +114,33 @@ async def delete_email(session: AsyncSession, *, user_id: UUID, email_id: UUID) 
     return result.first() is not None
 
 
+# Registered by higher layers at import time (e.g. `domain/mcp_server`
+# registers `revoke_tokens_for_user`) so user deletion can clean up rows that
+# carry no FK to `users` without a core→domain import. Same inversion pattern
+# as `core/api_keys.register_on_change` and `domain/repos.register_pipeline_lookup`.
+# Callback signature: ``async (user_id: UUID, *, session: AsyncSession) -> None``.
+_UserDeletionHook = Callable[..., Awaitable[None]]
+_USER_DELETION_HOOKS: list[_UserDeletionHook] = []
+
+
+def register_user_deletion_hook(hook: _UserDeletionHook) -> None:
+    """Register a callback invoked inside `delete_user`'s transaction, before
+    the user row is deleted. Idempotent — re-registering the same callable is
+    a no-op (reload tolerance, mirroring `core/api_keys.register_on_change`)."""
+    if hook not in _USER_DELETION_HOOKS:
+        _USER_DELETION_HOOKS.append(hook)
+
+
 async def delete_user(db: AsyncSession, *, user_id: UUID) -> None:
     """Hard-delete a user row. Cascades at the DB level to emails, OAuth
-    identities, and sessions — callers that need cross-module cleanup
+    identities, and sessions; registered user-deletion hooks run first in the
+    same transaction (e.g. MCP token revocation — those tables have no FK to
+    `users`). Callers that need cross-module cleanup beyond the hooks
     (e.g. memberships) must handle those separately."""
     from sqlalchemy import delete as _sql_delete  # noqa: PLC0415
 
+    for hook in _USER_DELETION_HOOKS:
+        await hook(user_id, session=db)
     await db.execute(_sql_delete(UserRow).where(UserRow.id == user_id))
 
 

@@ -30,6 +30,8 @@ interface ConfirmModalProps {
   tone?: ConfirmTone;
   onConfirm: () => void;
   pending?: boolean;
+  /** Applied as `data-testid` on the dialog content element. */
+  testId?: string;
 }
 
 export function ConfirmModal({
@@ -41,10 +43,11 @@ export function ConfirmModal({
   tone = "default",
   onConfirm,
   pending,
+  testId,
 }: ConfirmModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent data-testid={testId}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{body}</DialogDescription>

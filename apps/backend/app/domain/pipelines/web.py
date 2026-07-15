@@ -16,6 +16,7 @@ engine's HTTP surface.
 | POST   | `/api/pipelines/runs/pauses/{pause_id}/respond` | `REVIEWER_WRITE` — resolve a HITL pause; responders = the pause's escalation set union org admins (`403 not_escalation_target` otherwise) |
 | POST   | `/api/pipelines/runs/rerun` | `REVIEWER_WRITE` — instruct & re-run from an earlier stage on a fresh run (queues if one's in flight) |
 | POST   | `/api/pipelines/runs/{run_id}/rerun` | `REVIEWER_WRITE` — re-run a failed/cancelled/killed run from the top on a fresh run; 409 unless `run_id` is the ticket's current run |
+| POST   | `/api/pipelines/runs/start` | `REVIEWER_WRITE` — kick off a pipeline run on a ticket; 409 `run_in_flight` if one's already running and `replace_in_flight=false` |
 | GET    | `/api/pipelines/runs/{run_id}/stages/{stage_execution_id}/activity` | `REVIEWER_READ` — persisted coding-agent activity blob for one stage execution |
 
 Request bodies for create/update are the `PipelineDefinition` model itself:
@@ -51,12 +52,14 @@ from app.domain.pipelines.service import (
     PipelineNotFoundError,
     PipelineReferencedError,
     RunAlreadyTerminalError,
+    RunInFlightError,
     RunNotFoundError,
     RunNotRerunnableError,
     StageNotInDefinitionError,
     TemplateNotFoundError,
 )
 from app.domain.pipelines.types import PauseResolution, Pipeline, PipelineRun, PipelineSummary, RunOverview
+from app.domain.tickets import TicketNotFoundError
 
 router = APIRouter()
 
@@ -339,6 +342,55 @@ async def rerun_run_endpoint(run_id: UUID) -> RerunResponse:
             raise _err(404, "pipeline_not_found") from exc
         await s.commit()
     return RerunResponse(run_id=new_run_id)
+
+
+class StartRunRequest(BaseModel):
+    ticket_id: UUID
+    pipeline_id: UUID
+    input_text: str | None = None
+    replace_in_flight: bool = False
+
+
+class StartRunResponse(BaseModel):
+    run_id: UUID
+
+
+@router.post("/runs/start", status_code=201, dependencies=[Depends(require(Action.REVIEWER_WRITE))])
+async def start_run_endpoint(body: StartRunRequest) -> StartRunResponse:
+    """Kick off a pipeline run on an existing ticket.
+
+    `replace_in_flight=false` (default): returns 409 `run_in_flight` if a
+    running or paused run already exists on the ticket.
+    `replace_in_flight=true`: kills the in-flight run and immediately starts
+    the new one.
+
+    Registered BEFORE `/{pipeline_id}` — the latter is a bare single-segment
+    match that would otherwise swallow the literal `/runs/start` path.
+    """
+    org_id = org_id_var.get()
+    if org_id is None:
+        raise _err(400, "no_org_context")
+    actor = current_actor()
+    async with db_session() as s:
+        try:
+            run_id = await pipelines.start_manual_run(
+                org_id=org_id,
+                ticket_id=body.ticket_id,
+                pipeline_id=body.pipeline_id,
+                actor=actor,
+                input_text=body.input_text,
+                replace_in_flight=body.replace_in_flight,
+                triggered_by_user_id=actor.user_id,
+                session=s,
+            )
+        except TicketNotFoundError as exc:
+            raise _err(404, "ticket_not_found") from exc
+        except PipelineNotFoundError as exc:
+            raise _err(404, "pipeline_not_found") from exc
+        except RunInFlightError as exc:
+            raise _err(409, "run_in_flight") from exc
+        await s.commit()
+    return StartRunResponse(run_id=run_id)
 
 
 class StepActivityResponse(BaseModel):

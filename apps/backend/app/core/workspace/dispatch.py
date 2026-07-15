@@ -14,6 +14,7 @@ claims the workspace. All workspace dispatch helpers except `ProvisionWorkspace`
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid7
 
@@ -27,7 +28,7 @@ from app.core.workspace.models import WorkspaceRow
 from app.core.workspace.types import WorkspaceClaimFailed, WorkspaceNotFoundError
 
 if TYPE_CHECKING:
-    from app.core.agent_gateway import AgentCommand, DispatchContext
+    from app.core.agent_gateway import AgentCommand, DispatchContext, WriteFilesEntry
 
 log = structlog.get_logger("core.workspace.dispatch")
 
@@ -271,6 +272,33 @@ async def dispatch_push(workspace_id: UUID, ctx: DispatchContext, *, session: As
     from app.core.agent_gateway import PushBranchCommand  # noqa: PLC0415
 
     cmd = PushBranchCommand(command_id=uuid7(), workspace_id=workspace_id, traceparent=ctx.traceparent or "")
+    return await dispatch_via_workspace(
+        command=cmd, workspace_id=workspace_id, ctx=ctx, session=session, claim_workspace=False
+    )
+
+
+async def dispatch_write_files(
+    workspace_id: UUID,
+    files: Sequence[WriteFilesEntry],
+    ctx: DispatchContext,
+    *,
+    session: AsyncSession,
+) -> UUID:
+    """Enqueue a `WriteFiles` AgentCommand for `workspace_id`.
+
+    Never claims the workspace — file materialization happens between
+    commands in the run lifecycle (after provision, before first skill stage).
+    The Go agent writes each entry to the checkout via `os.WriteFile` (full
+    overwrite, creating parent directories as needed).
+    """
+    from app.core.agent_gateway import WriteFilesCommand  # noqa: PLC0415
+
+    cmd = WriteFilesCommand(
+        command_id=uuid7(),
+        workspace_id=workspace_id,
+        traceparent=ctx.traceparent or "",
+        files=tuple(files),
+    )
     return await dispatch_via_workspace(
         command=cmd, workspace_id=workspace_id, ctx=ctx, session=session, claim_workspace=False
     )

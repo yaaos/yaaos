@@ -16,6 +16,7 @@ function makeTicket(overrides: Partial<Ticket> = {}): Ticket {
     title: "Fix bug",
     description: null,
     status: "running",
+    type: "pr_review",
     plugin_id: "github",
     repo_external_id: "acme/api",
     pr_id: "p1",

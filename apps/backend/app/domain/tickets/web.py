@@ -1,10 +1,11 @@
 """HTTP routes for tickets.
 
-| Method | Path                                                                       | Action          |
-|--------|----------------------------------------------------------------------------|-----------------|
-| GET    | `/api/tickets`                                                             | `TICKETS_READ`  |
-| GET    | `/api/tickets/{ticket_id}`                                                 | `TICKETS_READ`  |
-| GET    | `/api/tickets/{ticket_id}/audit`                                           | `TICKETS_READ`  |
+| Method | Path                                                                       | Action               |
+|--------|----------------------------------------------------------------------------|----------------------|
+| GET    | `/api/tickets`                                                             | `TICKETS_READ`       |
+| POST   | `/api/tickets`                                                             | `REVIEWER_WRITE`     |
+| GET    | `/api/tickets/{ticket_id}`                                                 | `TICKETS_READ`       |
+| GET    | `/api/tickets/{ticket_id}/audit`                                           | `TICKETS_READ`       |
 
 Org context arrives via `X-Yaaos-Org-Slug` (RouteSecurity.ORG_SCOPED).
 """
@@ -16,15 +17,18 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from app.core.audit_log import list_for_entity
 from app.core.auth import Action, org_id_var
-from app.core.sessions import require
+from app.core.database import session as db_session
+from app.core.sessions import current_actor, require
 from app.core.webserver import RouteSpec, register_routes
 from app.domain.tickets.service import (
     Ticket,
     TicketFilter,
     TicketNotFoundError,
+    create_from_manual,
     get,
     list_tickets,
 )
@@ -92,6 +96,41 @@ async def dashboard() -> dict[str, Any]:
     }
 
 
+class CreateTicketRequest(BaseModel):
+    title: str
+    repo_external_id: str
+    idempotency_key: str | None = None
+    branch_name: str | None = None
+
+
+class CreateTicketResponse(BaseModel):
+    id: UUID
+    created: bool
+
+
+@router.post("", status_code=201, dependencies=[Depends(require(Action.REVIEWER_WRITE))])
+async def create_(body: CreateTicketRequest) -> CreateTicketResponse:
+    """Create a manual ticket. `idempotency_key` is optional — omitting it
+    creates a distinct ticket on every call; supplying the same key twice
+    returns the existing ticket with `created=false` (HTTP 200, not 201, for
+    that case — the 201 is only emitted on the winning insert).
+    """
+    org_id = _org()
+    actor = current_actor()
+    async with db_session() as s:
+        ticket_id, created = await create_from_manual(
+            org_id=org_id,
+            title=body.title,
+            repo_external_id=body.repo_external_id,
+            actor=actor,
+            session=s,
+            branch_name=body.branch_name,
+            idempotency_key=body.idempotency_key,
+        )
+        await s.commit()
+    return CreateTicketResponse(id=ticket_id, created=created)
+
+
 @router.get("")
 async def list_(
     repo_external_id: list[str] | None = Query(default=None),
@@ -101,6 +140,7 @@ async def list_(
     cursor: str | None = Query(default=None),
     created_after: datetime | None = Query(default=None),
     created_before: datetime | None = Query(default=None),
+    branch: str | None = Query(default=None),
     limit: int = Query(default=50, le=200),
 ) -> dict[str, Any]:
     """List tickets per the contract.
@@ -118,6 +158,7 @@ async def list_(
         cursor=cursor,
         created_after=created_after,
         created_before=created_before,
+        branch_name=branch,
     )
     items = await list_tickets(filter_, org_id=_org(), limit=limit)
     return {

@@ -28,6 +28,7 @@ def main() -> int:
     # position in this block).
     import app.domain.actions  # noqa: PLC0415
     import app.domain.artifacts  # noqa: PLC0415
+    import app.domain.attachments  # noqa: PLC0415
     import app.domain.findings  # noqa: PLC0415
     import app.domain.pipelines  # noqa: PLC0415
     import app.domain.pr_review  # noqa: PLC0415

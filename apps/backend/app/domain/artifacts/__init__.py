@@ -9,6 +9,7 @@ revisions arrive only via instruct/re-run once the run engine drives them.
 import app.domain.artifacts.web  # noqa: F401
 from app.domain.artifacts.service import (
     ArtifactNotFoundError,
+    adopted_attachment_ids_for_run,
     get,
     latest_final,
     list_for_ticket,
@@ -22,6 +23,7 @@ __all__ = [
     "ArtifactGroup",
     "ArtifactMeta",
     "ArtifactNotFoundError",
+    "adopted_attachment_ids_for_run",
     "get",
     "latest_final",
     "list_for_ticket",

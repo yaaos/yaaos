@@ -36,6 +36,7 @@ None. Transport only — Redis is the substrate.
 - `run_state_changed` — `pipeline_runs` row state transition; payload carries `{ticket_id, run_id, state}`; published by [`domain/pipelines`](domain_pipelines.md) at every run-state write (promotion to `running`, and every terminal)
 - `stage_state_changed` — a `stage_executions` row reached a terminal status (`completed`/`failed`); payload carries `{ticket_id, run_id}`; published by [`domain/pipelines`](domain_pipelines.md)
 - `artifact_stored` — a new `artifacts` row was written; payload carries `{ticket_id}`; published by [`domain/pipelines`](domain_pipelines.md) after `domain/artifacts.store`
+- `attachment_added` — a new `ticket_attachments` row was written; payload carries `{ticket_id, attachment_id}`; published by [`domain/attachments`](domain_attachments.md) after `add_attachment`
 
 ## How it's tested
 
@@ -46,6 +47,6 @@ None. Transport only — Redis is the substrate.
 `test/test_workspace_activity_endpoint_service.py` — non-owned wfx yields empty stream (channel-key isolation); happy-path streaming via `_workspace_activity_stream`.
 `test/test_serialize_for_sse_service.py` — `data: <json>\n\n` shape.
 `test/test_shutdown_service.py` — `shutdown()` on a live general stream and a live workspace-activity stream each emit the final frame and raise `StopAsyncIteration`; idle shutdown doesn't raise. Test isolation is structural: the `sse_shutdown_event_isolation` autouse fixture binds a fresh event per test.
-`test/test_activity_lifecycle_service.py` — `register_activity_subscriber_lifecycle` hooks: missing route returns `None` (on_detach not called); found route returns token (on_detach called with token).
+`test/test_activity_lifecycle_service.py` — `register_activity_subscriber_lifecycle` hooks: missing route returns `None` (on_detach not called); found route returns token (on_detach called with token). Uses `redis_or_skip` — the stream connects to Redis before yielding the prelude.
 
 The pub/sub transport itself (round-trip, fan-out, subscriber bookkeeping, singleton lifecycle, shutdown) is tested in [`core/redis`](core_redis.md).

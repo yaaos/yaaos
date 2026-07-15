@@ -10,9 +10,9 @@ cases:
   `on_detach` when the stream closes.
 
 Lifecycle hooks are registered via `register_activity_subscriber_lifecycle`.
-This test registers spy callables instead of the real `agent_gateway` hooks
-so it requires no Redis and no extra DB rows — the seam is tested in
-isolation.
+The spy callables replace the real `agent_gateway` lifecycle hooks; however,
+the stream itself calls `subscribe_workspace_activity` which connects to Redis
+before yielding the prelude, so a live Redis instance is required.
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ import pytest
 
 from app.core.sse import register_activity_subscriber_lifecycle
 from app.core.sse.web import _workspace_activity_stream
+
+pytestmark = [pytest.mark.service, pytest.mark.usefixtures("redis_or_skip")]
 
 
 async def _drive_stream_then_cancel(
@@ -61,7 +63,6 @@ async def _drive_stream_then_cancel(
 
 
 @pytest.mark.asyncio
-@pytest.mark.service
 async def test_no_route_stream_serves_frames_without_detach() -> None:
     """When `on_attach` returns `None` (no resolvable route for the run):
     - The stream still yields the prelude SSE frame.
@@ -104,7 +105,6 @@ async def test_no_route_stream_serves_frames_without_detach() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.service
 async def test_route_found_detach_receives_token_on_close() -> None:
     """When `on_attach` returns a non-None token:
     - `on_detach` is called with `(run_id, token)` when the stream closes.

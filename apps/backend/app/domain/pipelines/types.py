@@ -41,6 +41,7 @@ class PipelineSummary(BaseModel, frozen=True):
 
     id: UUID
     name: str
+    description: str = ""
     stage_count: int
     updated_at: datetime
     updated_by_login: str | None
@@ -66,6 +67,12 @@ class Kickoff(BaseModel, frozen=True):
     pr_base_sha: str | None = None
     pr_head_sha: str | None = None
     notify_user_ids: tuple[UUID, ...] = ()
+    # Snapshot of `ticket_attachments` ids at run-start time. Only populated
+    # by `start_manual_run`; the engine's `seed-inputs` system stage reads
+    # this snapshot to materialize the attachment bodies in the workspace.
+    # Mid-run re-attaches are not visible — only what was attached when the
+    # run started.
+    attachment_ids: tuple[UUID, ...] = ()
     # Single-use carrier for a re-entry's revision text across an async
     # provision hop: `start_rerun_from_stage` stashes it here at run
     # creation so the provision-terminal handler (`engine._start_stage_impl`)
@@ -124,6 +131,22 @@ class PriorFindingRef(BaseModel, frozen=True):
     artifact_section: str | None = None
 
 
+class AttachmentRef(BaseModel, frozen=True):
+    """One attachment offered to a skill invocation as context material.
+
+    `path` is the relative workspace path written by the `seed-inputs` system
+    stage (e.g. `.yaaos-inputs/<filename>`). `role` is always `"context"` for
+    user-supplied attachments in this generation; `"adopted"` is reserved for
+    pipeline-produced artifacts offered upstream.
+    """
+
+    path: str
+    artifact_type: str | None
+    produced_by_skill: str | None
+    role: Literal["context", "adopted"]
+    note: str | None
+
+
 class StageInvocationContext(BaseModel, frozen=True):
     """Engine-assembled input to every skill/review invocation — rides
     `Invocation.context` (via `.model_dump(mode="json")`); the output schema
@@ -138,6 +161,7 @@ class StageInvocationContext(BaseModel, frozen=True):
     upstream_stages: tuple[UpstreamStageRef, ...] = ()
     revision: RevisionContext | None = None
     prior_findings: tuple[PriorFindingRef, ...] = ()
+    attachments: tuple[AttachmentRef, ...] = ()
     artifact_path: str
 
 

@@ -41,6 +41,7 @@ import type { ServerEvent } from "./types";
  *   ["tickets", ticket_id] (status pill re-read)
  * - `stage_state_changed` → ["runs", ticket_id], ["runs", "stage-activity"] (flush cached blobs)
  * - `artifact_stored` → ["artifacts", ticket_id]
+ * - `attachment_added` → ["attachments", ticket_id]
  * - `review_requested` | `review_started` | `review_completed` |
  *   `review_failed` | `review_superseded` → ["tickets"], ["tickets", "dashboard"]
  * - `finding_raised` | `finding_re_observed` | `finding_anchor_updated` |
@@ -175,6 +176,9 @@ function _handleEvent(evt: ServerEvent): void {
       break;
     case "artifact_stored":
       if (tid) _scheduleInvalidate(["artifacts", tid]);
+      break;
+    case "attachment_added":
+      if (tid) _scheduleInvalidate(["attachments", tid]);
       break;
     case "review_requested":
     case "review_started":

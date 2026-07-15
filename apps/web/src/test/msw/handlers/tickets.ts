@@ -9,6 +9,7 @@ export const TICKET_FIXTURE: Ticket = {
   title: "Add /metrics endpoint",
   description: null,
   status: "running",
+  type: "pr_review",
   plugin_id: "github",
   repo_external_id: "x/y",
   pr_id: "p1",
