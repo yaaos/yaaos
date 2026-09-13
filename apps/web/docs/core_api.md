@@ -30,6 +30,7 @@ Private (non-`public/`): `generated/` (only `core/api` may import it).
 
 - Only `core/api` may import from `generated/` — the boundary is enforced by `.dependency-cruiser.cjs`.
 - The generated dir is excluded from Biome lint/format (`biome.json`).
+- Operation descriptions are generated alongside type shapes; refresh both artifacts when backend API documentation changes, even if routes and payloads stay unchanged.
 - `client.ts` re-exports generated types under consumer-facing names (`Lesson`).
 - The backend spec returns `unknown` for the notification and popover endpoints; those stay hand-typed in `queries.ts` until the spec is annotated.
 

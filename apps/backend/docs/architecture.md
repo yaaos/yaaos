@@ -34,6 +34,7 @@ Each plugin exposes `plugin_id: str`. The `plugin_id` is the registry key, URL p
 - **Run engine** — every pipeline run passes through [`domain/pipelines`](domain_pipelines.md); stages (`skill`/`review`/`action`/`call`) are data-defined and dispatched by kind.
 - **Durable findings** — `domain/findings` owns the ticket-level `pipeline_findings` table; survives restarts; a review stage's reported findings materialize immediately, independent of the run.
 - **Plugin registry** — ContextVar-bound instances (`CodingAgentRegistry`, `VCSRegistry`, `WorkspaceRegistry`) keyed by `plugin_id`; per-test isolation binds a fresh copy so tests never share state.
+- **Shared coordination boundary** — [`core/cache`](core_cache.md) owns provider mechanics; consumers own key/channel naming and typed record payloads. Taskiq's independent broker remains in [`core/tasks`](core_tasks.md).
 - **Two process lifecycles** — web (`app/web.py`) and worker (`app/worker.py`); each registers shutdown hooks independently via `app.core.shutdown_registry`.
 - **Composition roots** — `app/web.py` and `app/worker.py` own all side-effect imports; bootstrap order is load-bearing (see [`patterns.md § Bootstrap composition order`](patterns.md#bootstrap-composition-order)).
 
@@ -51,4 +52,4 @@ Each flow is a labeled hop-list. Module docs have the detail.
 [`core/tasks`](core_tasks.md) worker dequeues `ROUTE_RUN` → [`domain/pipelines`](domain_pipelines.md) resolves the next stage → `START_STAGE` dispatches it (skill/review/action/system) → outcome persisted → enqueues the next `ROUTE_RUN`
 
 **SSE fanout**:
-domain module publishes `ActivityEvent` → [`core/sse`](core_sse.md) Redis pub/sub → SSE subscriber generators → browser
+domain module publishes an event → [`core/sse`](core_sse.md) names the org/run channel → [`core/cache`](core_cache.md) JSON pub/sub → SSE subscriber generators → browser

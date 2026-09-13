@@ -5,7 +5,7 @@
 ## Scope
 
 - **Owns:** `@task` decorator, `enqueue` API, outbox table (`outbox_entries`), drain loop, worker process scaffolding, `OrgContextMiddleware`, `TaskMetricsMiddleware`, `TaskSpanMiddleware`, recurring-task scheduler (`@scheduled` / `schedule_task` / `scheduler_loop`), `scheduled_runs` dedup ledger.
-- **Does not own:** task bodies (owned by callers); broker topology (Redis detail hidden here).
+- **Does not own:** task bodies (owned by callers); shared coordination and event transport (owned by [`core/cache`](core_cache.md)). Taskiq's Redis broker connection stays independent of cache provider substitution.
 - **Boundary:** `enqueue` writes a row in the caller's transaction; the drain pump pushes to Redis; taskiq pops and executes. The entire durable path is self-contained. The scheduler tick loop runs alongside the drain in every worker and gates per-slot enqueue via an atomic `INSERT … ON CONFLICT DO NOTHING` on `scheduled_runs`.
 
 ## Why / invariants
@@ -83,7 +83,7 @@ On SIGTERM `runtime.run()` executes an ordered shutdown sequence so in-flight ta
 3. **Stop the liveness ticker** — cancelled; health check no longer needed during drain.
 4. **Set `consume_stop`** — the Receiver's prefetcher stops accepting new messages from the broker.
 5. **AWAIT the consume task (not cancel)** — `Receiver.listen` calls `asyncio.wait(in_flight_tasks, timeout=_WORKER_DRAIN_GRACE_SECONDS)`. Bodies that finish within the grace window complete normally; bodies that exceed it are **abandoned, not cancelled** — the worker exits regardless.
-6. **Run reverse-order shutdown hooks** — broker, Redis, DB.
+6. **Run reverse-order shutdown hooks** — dependent modules before shared cache and DB infrastructure.
 
 `_WORKER_DRAIN_GRACE_SECONDS = 60` is the constant in `runtime.py`. `fly.production.toml kill_timeout` must exceed this value plus the OTel flush budget or Fly will hard-kill mid-drain.
 
@@ -96,7 +96,7 @@ Shutdown hooks must tolerate in-flight work — `_WORKER_DRAIN_GRACE_SECONDS` bo
 `runtime.run()` starts two additional tasks alongside drain / consume / scheduler:
 
 - **Liveness ticker** — `_liveness_ticker(heartbeat, stop)` advances `WorkerHeartbeat.tick()` every `TICKER_INTERVAL_SECONDS` (5 s). Because it runs as a peer asyncio task in the same event loop as the consume loop, a wedged loop stops the ticker too, making the health check return 503 within two missed ticks (~10–60 s depending on the stale threshold).
-- **Worker health server** — a minimal single-route Starlette app run via a background `uvicorn.Server` task on `0.0.0.0:<yaaos_worker_health_port>` (default `8081`). The handler (`worker_health.py`) runs `database.ping()` + `redis.ping()` and checks `WorkerHeartbeat.is_fresh()`. Returns 200 `{status:"ok",…}` when all pass; 503 `{status:"degraded",…}` when any fail. Response body always includes `db_ok`, `redis_ok`, `heartbeat_ok`, `status`.
+- **Worker health server** — a minimal single-route Starlette app run via a background `uvicorn.Server` task on `0.0.0.0:<yaaos_worker_health_port>` (default `8081`). The handler (`worker_health.py`) runs `database.ping()` + [`cache.is_healthy()`](core_cache.md) and checks `WorkerHeartbeat.is_fresh()`. Tests inject `cache_health`; the `redis_ok` wire field remains stable. Returns 200 `{status:"ok",…}` when all pass; 503 `{status:"degraded",…}` when any fail. Response body always includes `db_ok`, `redis_ok`, `heartbeat_ok`, `status`.
 - The health server is NOT the main FastAPI app — no auth middleware, no Cloudflare ingress gate — so Fly's machine checker reaches it directly. As a bare Starlette app it gets no FastAPI HTTP span, and `database.ping()` suppresses its own SQLAlchemy span, so probes leave no trace footprint. `access_log=False` on its uvicorn server keeps probe access lines out of logs.
 - `yaaos_worker_health_port: int = 8081` in `core/config` controls the bind port.
 
@@ -113,5 +113,5 @@ Shutdown hooks must tolerate in-flight work — `_WORKER_DRAIN_GRACE_SECONDS` bo
 `test/test_task_metrics_service.py` — `TaskMetricsMiddleware` with injected `InMemoryMetricReader` instruments: successful body increments `task.started` + `task.succeeded` + records `task.duration`; failing body increments `task.failed` instead.
 `test/test_task_span_service.py` — `TaskSpanMiddleware` with injected `InMemorySpanExporter` tracer: failing body produces a span with ERROR status + exception event; successful body produces a span with no exception events; a span opened inside the body nests under the task span (shared trace + parent = task span); when `metadata.traceparent` is supplied the task span's `trace_id` matches the producer's trace_id (traceparent propagation pin).
 `test/test_enqueue_metadata_service.py` — metadata auto-fill from contextvar, explicit override, no-context path, `TaskMetadata` traceparent round-trip (JSON + dict), `enqueue` auto-fills `traceparent` from the current OTel span.
-`test/test_worker_health_service.py` — `build_worker_health_app` with stub ping callables: 200 when all pass; 503 on DB failure; 503 on Redis failure; 503 when heartbeat is stale. Also unit-tests `WorkerHeartbeat.is_fresh()` transitions.
+`test/test_worker_health_service.py` — `build_worker_health_app` with injected DB/cache health callables: 200 when all pass; 503 on DB or cache failure; 503 when heartbeat is stale. Also unit-tests `WorkerHeartbeat.is_fresh()` transitions.
 `test/test_graceful_drain_service.py` — drain loop exits cleanly on stop signal; in-flight body completes before worker exits (await-not-cancel); over-grace body is abandoned, not cancelled, and the worker still exits.

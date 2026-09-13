@@ -1,7 +1,7 @@
 """Service tests: worker health server returns correct status codes.
 
 Covers three contracts:
-  - 200 when database ping + redis ping pass and the heartbeat is fresh.
+  - 200 when database ping + cache health pass and the heartbeat is fresh.
   - 503 when the database ping fails.
   - 503 when the heartbeat timestamp is stale (liveness ticker stopped).
 
@@ -24,14 +24,14 @@ from app.core.tasks.worker_health import WorkerHeartbeat, build_worker_health_ap
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_health_returns_200_when_pings_pass_and_heartbeat_fresh() -> None:
-    """200 with status=ok when DB + Redis pass and last_tick is recent."""
+    """200 with status=ok when DB + cache pass and last_tick is recent."""
     heartbeat = WorkerHeartbeat(stale_threshold_seconds=30.0)
     heartbeat.tick()  # mark fresh
 
     app = build_worker_health_app(
         heartbeat=heartbeat,
         db_ping=lambda: _async_ok(True),
-        redis_ping=lambda: _async_ok(True),
+        cache_health=lambda: _async_ok(True),
     )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://worker") as client:
@@ -55,7 +55,7 @@ async def test_health_returns_503_when_db_ping_fails() -> None:
     app = build_worker_health_app(
         heartbeat=heartbeat,
         db_ping=lambda: _async_ok(False),
-        redis_ping=lambda: _async_ok(True),
+        cache_health=lambda: _async_ok(True),
     )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://worker") as client:
@@ -71,15 +71,15 @@ async def test_health_returns_503_when_db_ping_fails() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_health_returns_503_when_redis_ping_fails() -> None:
-    """503 with status=degraded when Redis ping returns False."""
+async def test_health_returns_503_when_cache_health_fails() -> None:
+    """503 with status=degraded when cache health returns False."""
     heartbeat = WorkerHeartbeat(stale_threshold_seconds=30.0)
     heartbeat.tick()
 
     app = build_worker_health_app(
         heartbeat=heartbeat,
         db_ping=lambda: _async_ok(True),
-        redis_ping=lambda: _async_ok(False),
+        cache_health=lambda: _async_ok(False),
     )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://worker") as client:
@@ -105,7 +105,7 @@ async def test_health_returns_503_when_heartbeat_stale() -> None:
     app = build_worker_health_app(
         heartbeat=heartbeat,
         db_ping=lambda: _async_ok(True),
-        redis_ping=lambda: _async_ok(True),
+        cache_health=lambda: _async_ok(True),
     )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://worker") as client:

@@ -1,6 +1,6 @@
 """Rate limiting for `/identity/exchange`.
 
-Sliding-window counter per source IP, backed by Redis. Burst guard against
+Shared sliding-window counter per source IP, backed by core/cache. Burst guard against
 credential-stuffing and STS-replay flooding.
 
 Limit: 10 attempts / minute per source IP.
@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.core.redis import delete_keys_with_prefix, sliding_window_hit
+from app.core.cache import allow_hit, clear_prefix
 
-# Redis key prefix for all identity-exchange rate-limit windows.
+# Cache key prefix for all identity-exchange rate-limit windows.
 KEY_PREFIX = "rl:identity_exchange:"
 
 PER_IP_LIMIT = 10
@@ -40,9 +40,8 @@ class RateLimitedError(Exception):
 
 
 async def _hit(key: str, limit: int, window_seconds: int) -> None:
-    """Record a rate-limit hit via `core/redis.sliding_window_hit`; raise
-    `RateLimitedError` (axis="ip") when the window is already at its limit."""
-    if not await sliding_window_hit(key, limit=limit, window_seconds=window_seconds):
+    """Admit a hit via core/cache; raise when the window is already at its limit."""
+    if not await allow_hit(key, limit=limit, window_seconds=window_seconds):
         raise RateLimitedError(axis="ip", limit=limit, window_seconds=window_seconds)
 
 
@@ -57,13 +56,13 @@ async def check_identity_exchange(*, source_ip: str | None) -> None:
 
 
 async def delete_rate_limits() -> int:
-    """Delete all identity-exchange rate-limit keys from Redis.
+    """Clear the identity-exchange rate-limit namespace.
 
     Used by the test-reset path to flush the agent IP's sliding-window
     counters between test runs so a fresh seed isn't blocked by a prior
     run's burst. Returns the number of keys deleted.
     """
-    return await delete_keys_with_prefix(KEY_PREFIX)
+    return await clear_prefix(KEY_PREFIX)
 
 
 __all__ = [

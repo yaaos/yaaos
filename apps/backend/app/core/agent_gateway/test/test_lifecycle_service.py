@@ -168,10 +168,7 @@ async def test_mark_agent_configured_noop_on_draining(db_session) -> None:
 async def test_mark_agent_configured_publishes_agent_changed_on_cas_win(db_session, redis_or_skip) -> None:
     """CAS win publishes agent_changed SSE; no-op does not publish."""
     from app.core.agent_gateway.service import mark_agent_configured  # noqa: PLC0415
-    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import GeneralEventKind, subscribe_general  # noqa: PLC0415
-
-    await redis_shutdown()
 
     org_id = uuid4()
     row = await _create_agent_row(db_session, org_id=org_id, lifecycle="unconfigured")
@@ -304,10 +301,8 @@ async def test_record_heartbeat_no_publish_when_state_and_count_unchanged(db_ses
     """
     from app.core.agent_gateway.service import record_heartbeat  # noqa: PLC0415
     from app.core.agent_gateway.types import HeartbeatRequest  # noqa: PLC0415
-    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import GeneralEventKind  # noqa: PLC0415
 
-    await redis_shutdown()
     org_id = uuid4()
     row = await _create_agent_row(db_session, org_id=org_id, lifecycle="active")
     await db_session.commit()
@@ -338,10 +333,8 @@ async def test_record_heartbeat_publishes_on_claimed_workspace_count_change(
     """
     from app.core.agent_gateway.service import record_heartbeat  # noqa: PLC0415
     from app.core.agent_gateway.types import HeartbeatRequest, HeartbeatWorkspaceEntry  # noqa: PLC0415
-    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import GeneralEventKind  # noqa: PLC0415
 
-    await redis_shutdown()
     org_id = uuid4()
     row = await _create_agent_row(db_session, org_id=org_id, lifecycle="active")
     await db_session.commit()
@@ -374,10 +367,8 @@ async def test_record_heartbeat_publishes_on_state_recovery(db_session, redis_or
     """
     from app.core.agent_gateway.service import record_heartbeat  # noqa: PLC0415
     from app.core.agent_gateway.types import HeartbeatRequest  # noqa: PLC0415
-    from app.core.redis import shutdown as redis_shutdown  # noqa: PLC0415
     from app.core.sse import GeneralEventKind  # noqa: PLC0415
 
-    await redis_shutdown()
     org_id = uuid4()
     row = await _create_agent_row(db_session, org_id=org_id, lifecycle="active")
     row.state = "stale"

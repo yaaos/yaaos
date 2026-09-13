@@ -10,11 +10,11 @@ from app.core import config  # noqa: F401
 # 2. Configure core infrastructure.
 # Shutdown hooks register at import time; the runtime iterates them in
 # reverse registration order. Pin the foundational modules here so
-# database shuts down LAST (most depended-on) and redis shuts down before
+# database shuts down LAST (most depended-on) and cache shuts down before
 # database — anything imported later (tasks, sse, agent_gateway)
 # registers afterwards and therefore shuts down first.
 from app.core import database  # noqa: F401
-from app.core import redis  # noqa: F401
+from app.core import cache  # noqa: F401
 from app.core import observability
 
 from app.core import sse as _core_sse  # noqa: F401 — registers shutdown hook

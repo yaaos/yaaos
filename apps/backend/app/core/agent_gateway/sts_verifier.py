@@ -55,8 +55,8 @@ from enum import StrEnum
 import httpx
 import structlog
 
+from app.core.cache import claim_once
 from app.core.config import get_settings
-from app.core.redis import set_if_absent
 
 log = structlog.get_logger("core.agent_gateway.sts_verifier")
 
@@ -204,13 +204,13 @@ async def _check_and_add_nonce(authorization_header: str, x_amz_date_header: str
     """Return True if the envelope is fresh (caller proceeds), False on replay.
 
     Builds a canonical envelope string, sha256-hashes it (hash-before-store
-    matches the bearer-token-discipline pattern), and atomically sets the key
-    in Redis with a TTL. Returns True on first-seen (key inserted), False when
-    the key already exists (replay detected).
+    matches the bearer-token-discipline pattern), and atomically claims the key
+    with a TTL. Returns True on first-seen, False on replay. Storage failures
+    propagate rather than permitting authentication.
     """
     envelope = f"{authorization_header}|{x_amz_date_header}"
     digest = hashlib.sha256(envelope.encode()).hexdigest()
-    return await set_if_absent(f"sts_nonce:{digest}", ttl_seconds)
+    return await claim_once(f"sts_nonce:{digest}", ttl_seconds=ttl_seconds)
 
 
 # ── Parsing + replay ──────────────────────────────────────────────────

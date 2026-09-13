@@ -9772,7 +9772,7 @@
     },
     "/api/sse/general": {
       "get": {
-        "description": "Subscribe an SSE client to the general org-scoped event stream.\n\nReturns `text/event-stream`; closes when the client disconnects. Each\nframe is `data: <json>\\n\\n` carrying a `GeneralEventKind`-typed payload.\nOnly events published to the caller's resolved org reach this stream —\ncross-org isolation is enforced by the per-org Redis channel shape.",
+        "description": "Subscribe an SSE client to the general org-scoped event stream.\n\nReturns `text/event-stream`; closes when the client disconnects. Each\nframe is `data: <json>\\n\\n` carrying a `GeneralEventKind`-typed payload.\nOnly events published to the caller's resolved org reach this stream —\ncross-org isolation is enforced by the per-org channel shape.",
         "operationId": "stream_general_api_sse_general_get",
         "parameters": [
           {

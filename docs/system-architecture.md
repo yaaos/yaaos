@@ -14,7 +14,7 @@
 
 - One Docker image: FastAPI + built SPA + background work as in-process `asyncio` coroutines via `core/primitives.spawn()`. Periodic loops start in FastAPI's `lifespan`.
 - Claude Code CLI runs inside the WorkspaceAgent container (customer-deployed); spawned once per pipeline skill/review stage by the agent. The backend never execs the CLI in-process. It does make its own direct, single-shot LLM calls for text-only reasoning that doesn't need code access — `core/llm` (mechanics) + a calling domain module's `<module>/llm/` (prompts + schemas), e.g. `domain/pr_review`'s inbound-comment classifier.
-- Postgres holds all state. Single DB; each module owns its tables by convention.
+- Postgres holds durable application state. Single DB; each module owns its tables by convention. Cache-backed coordination holds shared presence, replay claims, and rate-limit windows; it is not a durable event store.
 - OTel collector optional; backend `core/observability` attaches OTLP exporters only when `YAAOS_DASH0_ENDPOINT`, `YAAOS_DASH0_DATASET`, and `YAAOS_BACKEND_DASH0_BEARER_TOKEN` are all set. The web SPA also runs an OTel SDK (`core/observability`); export is triple-gated on `VITE_OTEL_COLLECTOR_ENDPOINT` + `VITE_DASH0_AUTH_TOKEN` + `VITE_DASH0_DATASET`.
 
 ## Inter-app flows
@@ -30,6 +30,8 @@
 Every state transition writes to `audit_log`. SSE events publish for the SPA.
 
 ### UI live update via SSE
+
+Backend [`core/sse`](../apps/backend/docs/core_sse.md) delivers org/run-scoped events through [`core/cache`](../apps/backend/docs/core_cache.md). Redis is the production shared provider; delivery is at-most-once, without replay. The independent Taskiq broker remains in `core/tasks`.
 
 SPA mounts one org-keyed `EventSource` on `GET /api/sse/general?org=<slug>` (`withCredentials: true`) from the root `AppShell`. The `?org=` query param carries the org because the browser `EventSource` API cannot set the `X-Yaaos-Org-Slug` header that `/api/sse` routes otherwise require; the backend accepts it for SSE routes and applies the same membership check. Each event invalidates TanStack Query caches:
 

@@ -1,9 +1,7 @@
 """SubscriberReconciler._reconcile_once() correctness.
 
-Constructs a registry with a registered sender, pre-populates the Redis
-ZSET and route HASH / agent-routes SET directly (simulating what `track`
-would do on another pod), then calls `_reconcile_once()` and asserts the
-sender receives the expected subscribe or unsubscribe envelope.
+Seeds shared memberships and route records without a control publication,
+then reconciles and asserts that the sender receives the missing envelope.
 """
 
 from __future__ import annotations
@@ -15,37 +13,26 @@ from uuid import uuid4, uuid7
 import pytest
 
 from app.core.agent_gateway import set_subscriber_registry_for_tests
-from app.core.agent_gateway.subscribers import SubscriberReconciler
-from app.core.redis import (
-    hash_delete,
-    hash_set,
-    zset_add_member,
-    zset_remove_member,
-)
+from app.core.agent_gateway.subscribers import RunRouteFields, SubscriberReconciler
+from app.core.cache import delete_record, remove_member, touch_member, update_record
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """If ZSET has ≥1 member and the agent is not streaming, reconciler
+async def test_reconcile_once_sends_subscribe_when_members_present(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """If members exist and the agent is not streaming, reconciler
     publishes a subscribe control message and the local sender receives it."""
     agent_id = uuid4()
     run_id = uuid4()
     workspace_id = uuid7()
 
-    # Pre-populate Redis as if `track` ran on another pod.
+    # Seed as if another pod tracked without delivering its control message.
     run_key = f"run_subscribers:{run_id}"
     route_key = f"run_route:{run_id}"
     routes_key = f"agent_routes:{agent_id}"
     member = f"other-pod:{uuid4()}"
-    score = time.time()
-
-    await zset_add_member(run_key, member, score)
-    await hash_set(route_key, {"workspace_id": str(workspace_id), "agent_id": str(agent_id)})
-    await zset_add_member(routes_key, str(run_id), time.time())
-
     sent: list[dict] = []
     received = asyncio.Event()
 
@@ -55,6 +42,12 @@ async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) 
 
     with set_subscriber_registry_for_tests() as reg:
         await reg.register_sender(agent_id, _sender)
+        assert sent == []
+        # Seed AFTER registration: reconnect replay cannot satisfy this test.
+        await touch_member(run_key, member, last_seen=time.time())
+        await update_record(route_key, fields=RunRouteFields(workspace_id=workspace_id, agent_id=agent_id))
+        await touch_member(routes_key, str(run_id), last_seen=time.time())
+        assert not reg.is_streaming(agent_id, run_id)
 
         # Reconciler reads from _get() — must be the same instance as reg.
         reconciler = SubscriberReconciler()
@@ -70,27 +63,26 @@ async def test_reconcile_once_sends_subscribe_when_zcard_nonzero(redis_or_skip) 
     assert sub["run_id"] == str(run_id)
     assert sub["workspace_id"] == str(workspace_id)
 
-    # Cleanup Redis state.
-    await zset_remove_member(run_key, member)
-    await hash_delete(route_key)
-    await zset_remove_member(routes_key, str(run_id))
+    # Cleanup shared state.
+    await remove_member(run_key, member)
+    await delete_record(route_key)
+    await remove_member(routes_key, str(run_id))
 
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """If ZSET is empty and the agent IS streaming, reconciler publishes
+async def test_reconcile_once_sends_unsubscribe_when_no_members(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """If membership is empty and the agent IS streaming, reconciler publishes
     unsubscribe and the local sender receives it."""
     agent_id = uuid4()
     run_id = uuid4()
     workspace_id = uuid7()
 
-    # Pre-populate agent_routes ZSET only — no run_subscribers ZSET members (ZCARD=0).
+    # Seed a route with no subscriber membership.
     routes_key = f"agent_routes:{agent_id}"
     route_key = f"run_route:{run_id}"
-    await zset_add_member(routes_key, str(run_id), time.time())
-    # Route HASH must be present for reconciler to resolve workspace_id.
-    await hash_set(route_key, {"workspace_id": str(workspace_id), "agent_id": str(agent_id)})
+    await touch_member(routes_key, str(run_id), last_seen=time.time())
+    await update_record(route_key, fields=RunRouteFields(workspace_id=workspace_id, agent_id=agent_id))
 
     sent: list[dict] = []
     unsub_received = asyncio.Event()
@@ -121,5 +113,5 @@ async def test_reconcile_once_sends_unsubscribe_when_zcard_zero(redis_or_skip) -
     assert unsubs[-1]["run_id"] == str(run_id)
 
     # Cleanup.
-    await zset_remove_member(routes_key, str(run_id))
-    await hash_delete(route_key)
+    await remove_member(routes_key, str(run_id))
+    await delete_record(route_key)

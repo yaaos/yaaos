@@ -1,6 +1,6 @@
 """core/sse — SSE semantics for general events and workspace-activity streams.
 
-Channel naming and event shapes over the `core/redis` JSON pub/sub bus, so a
+Channel naming and event shapes over the `core/cache` JSON event bus, so a
 publish from the worker process reaches an SSE subscriber attached to a
 different web process. Two channel shapes in active use:
 - `{org_id}:general` — org-scoped general events with typed `GeneralEventKind`.

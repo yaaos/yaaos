@@ -12,8 +12,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import app.core.cache as cache
 import app.core.database as database
-import app.core.redis as redis_client
 from app.core.config import get_settings
 
 health_router = APIRouter()
@@ -30,14 +30,14 @@ async def _db_ping() -> bool:
     return await database.ping()
 
 
-async def _redis_ping() -> bool:
-    return await redis_client.ping()
+async def _cache_health() -> bool:
+    return await cache.is_healthy()
 
 
 @health_router.get("/api/health", response_model=HealthResponse, tags=["health"])
 async def get_health(
     db_ok: Annotated[bool, Depends(_db_ping)],
-    redis_ok: Annotated[bool, Depends(_redis_ping)],
+    redis_ok: Annotated[bool, Depends(_cache_health)],
 ) -> JSONResponse:
     healthy = db_ok and redis_ok
     body = HealthResponse(

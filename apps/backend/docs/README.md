@@ -24,11 +24,11 @@ Modules are organized in four layers — **core · domain · plugins · testing*
 | [core_llm](core_llm.md) | Direct LLM call mechanics: `FilePrompt`, `PromptRunnable`, gateway routing. |
 | [core_auth](core_auth.md) | Default-deny middleware, contextvars, `Action` enum, `RouteSecurity` taxonomy, `org_context()`. |
 | [core_tenancy](core_tenancy.md) | IAM access graph — `orgs` + `memberships` tables; `resolve_auth_org`, membership VOs. |
-| [core_redis](core_redis.md) | The single seam in front of Redis — client stays private; JSON pub/sub bus, sliding-window counter, health ping. |
+| [core_cache](core_cache.md) | Provider-neutral records, presence, expiring claims, rate limits, JSON pub/sub, and health. |
 | [core_tasks](core_tasks.md) | `@task` decorator + atomic-in-session `enqueue()` over taskiq + Redis; owns the outbox table and worker process. |
 | [core_agent_gateway](core_agent_gateway.md) | Wire protocol to customer-deployed WorkspaceAgents (skeleton). |
 | [core_vcs](core_vcs.md) | Abstract VCS types + `VCSPlugin` Protocol + registry. |
-| [core_sse](core_sse.md) | Redis pub/sub for ActivityEvent fanout to SSE subscribers; declares `/api/sse` as org-scoped. |
+| [core_sse](core_sse.md) | Cache-backed event fanout to SSE subscribers; declares `/api/sse` as org-scoped. |
 | [core_identity](core_identity.md) | Users, emails, OAuth identities, sessions, login orchestrator, TOTP. |
 | [core_sessions](core_sessions.md) | `require(action)` + `public_route` dependency factories; `/api/auth/*` endpoints. |
 | [core_coding_agent](core_coding_agent.md) | `CodingAgentPlugin` Protocol + registry. |
