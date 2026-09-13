@@ -11,6 +11,8 @@
 
 **Required fields raise at construction** — `database_url`, `yaaos_encryption_key`, `redis_url`, `yaaos_public_origin` must be set; absence crashes boot immediately with a pydantic `ValidationError`.
 
+**`REDIS_URL` remains the deployment setting** for the production [`core/cache`](core_cache.md) provider and the independent [`core/tasks`](core_tasks.md) broker. Cache consumers use the neutral facade, not connection settings.
+
 **All sensitive fields are `SecretStr`** — `repr`, `model_dump`, and `model_dump_json` all render as `'**********'`. Call `.get_secret_value()` only at the byte boundary (Fernet construction, JWT sign, HTTP Authorization header). Verified by `test_secret_redaction.py`.
 
 **`.env` file precedence** — `.env` → `.env.local` → `.env.dev` → `.env.dev.local`. Later overrides earlier; process env overrides all. `extra="ignore"` so unknown vars don't error.

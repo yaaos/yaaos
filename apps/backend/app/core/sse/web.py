@@ -24,9 +24,10 @@ ContextVar with an eager default; tests rebind via the
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import aclosing, contextmanager
 from contextvars import ContextVar
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -145,7 +146,14 @@ async def _general_stream(org_id: UUID) -> AsyncIterator[str]:
             return
 
 
-async def _workspace_activity_stream(org_id: UUID, run_id: UUID) -> AsyncIterator[str]:
+async def _workspace_activity_stream(
+    org_id: UUID,
+    run_id: UUID,
+    *,
+    subscribe_activity: Callable[
+        [UUID, UUID, asyncio.Event | None], AsyncIterator[dict[str, Any]]
+    ] = subscribe_workspace_activity,
+) -> AsyncIterator[str]:
     """Translate workspace-activity pub/sub events into SSE frames.
 
     Yields a connect prelude first (see `sse_prelude`) for the same
@@ -162,47 +170,57 @@ async def _workspace_activity_stream(org_id: UUID, run_id: UUID) -> AsyncIterato
     run. When no lifecycle hooks are registered (or `on_attach` resolves no
     route, returning `None`), streams exactly as before this seam existed.
 
-    The Redis SUBSCRIBE is established (via `on_subscribed` event) BEFORE
-    yielding the prelude so the browser's `onopen` fires only after the
-    subscription is ready — preventing a race where a test (or fast publisher)
-    publishes between the prelude being sent and the SUBSCRIBE completing.
+    Subscription readiness is established BEFORE the prelude. Startup races
+    readiness against receive failure and shutdown, so a failed subscription
+    cannot leave the browser waiting forever. Iterator/task cleanup also covers
+    cancellation or close before lifecycle attachment.
     """
     subscribed = asyncio.Event()
-    it = subscribe_workspace_activity(org_id, run_id, on_subscribed=subscribed).__aiter__()
-    next_task = asyncio.create_task(it.__anext__())
-    # Await the Redis SUBSCRIBE confirmation before emitting the prelude.
-    # This is fast (<1ms, local Redis), and guarantees no events are missed
-    # between onopen and the subscription being ready.
-    await subscribed.wait()
-    yield sse_prelude()
-    conn_token = await _attach_activity_subscriber(org_id, run_id)
-    try:
+    async with aclosing(subscribe_activity(org_id, run_id, subscribed)) as it:
+        next_task = asyncio.create_task(it.__anext__())
+        ready_task = asyncio.create_task(subscribed.wait())
         shutdown_task = asyncio.create_task(_get_event().wait())
-        while True:
+        conn_token: str | None = None
+        try:
             done, _pending = await asyncio.wait(
-                {next_task, shutdown_task},
-                timeout=_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS,
+                {next_task, ready_task, shutdown_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if not done:
-                # Heartbeat window elapsed with neither task done — re-stamp
-                # subscriber liveness and keep waiting on the same tasks.
-                if conn_token is not None:
-                    await _heartbeat_activity_subscriber(run_id, conn_token)
-                continue
+            if next_task in done:
+                try:
+                    next_task.result()
+                except StopAsyncIteration:
+                    return
             if shutdown_task in done:
-                next_task.cancel()
                 yield _SHUTDOWN_FRAME
                 return
-            try:
-                yield serialize_for_sse(next_task.result())
-            except StopAsyncIteration:
-                shutdown_task.cancel()
-                return
-            next_task = asyncio.create_task(it.__anext__())
-    finally:
-        if conn_token is not None:
-            await _detach_activity_subscriber(run_id, conn_token)
+            await ready_task
+            yield sse_prelude()
+            conn_token = await _attach_activity_subscriber(org_id, run_id)
+            while True:
+                done, _pending = await asyncio.wait(
+                    {next_task, shutdown_task},
+                    timeout=_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    if conn_token is not None:
+                        await _heartbeat_activity_subscriber(run_id, conn_token)
+                    continue
+                if shutdown_task in done:
+                    yield _SHUTDOWN_FRAME
+                    return
+                try:
+                    yield serialize_for_sse(next_task.result())
+                except StopAsyncIteration:
+                    return
+                next_task = asyncio.create_task(it.__anext__())
+        finally:
+            for task in (next_task, ready_task, shutdown_task):
+                task.cancel()
+            await asyncio.gather(next_task, ready_task, shutdown_task, return_exceptions=True)
+            if conn_token is not None:
+                await _detach_activity_subscriber(run_id, conn_token)
 
 
 @router.get("/general", dependencies=[Depends(require(Action.ORG_READ))])
@@ -212,7 +230,7 @@ async def stream_general() -> StreamingResponse:
     Returns `text/event-stream`; closes when the client disconnects. Each
     frame is `data: <json>\\n\\n` carrying a `GeneralEventKind`-typed payload.
     Only events published to the caller's resolved org reach this stream —
-    cross-org isolation is enforced by the per-org Redis channel shape.
+    cross-org isolation is enforced by the per-org channel shape.
     """
     org_id = org_id_var.get()
     return StreamingResponse(_general_stream(org_id), media_type="text/event-stream")

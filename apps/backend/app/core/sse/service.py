@@ -1,5 +1,5 @@
 """General-event and workspace-activity pipelines — channel naming + SSE
-semantics over the `core/redis` JSON pub/sub bus.
+semantics over the `core/cache` JSON pub/sub bus.
 
 General-event pipeline: `publish_general` / `subscribe_general` use a
 per-org channel (`{org_id}:general`) with typed `GeneralEventKind`
@@ -18,7 +18,7 @@ frame (`data: <json>\n\n`). Both general and activity subscribers use this
 before writing to the HTTP response.
 
 This module owns channel naming and event shapes only. JSON encode/decode,
-the pub/sub singleton, and connection management all live in `core/redis`.
+the pub/sub provider, and connection management all live in `core/cache`.
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ from uuid import UUID
 import structlog
 from sqlalchemy import event as sa_event
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 
-import app.core.redis as redis_client
+import app.core.cache as cache
 from app.core.observability import spawn
 
 log = structlog.get_logger("core.sse")
@@ -76,6 +76,7 @@ class GeneralEventKind(StrEnum):
 # ---------------------------------------------------------------------------
 
 _GENERAL_AFTER_COMMIT_KEY = "yaaos_sse_general_pending"
+type _PendingGeneralEvent = tuple[SessionTransaction | None, UUID, GeneralEventKind, dict[str, Any]]
 
 
 def _channel_for_general(org_id: UUID) -> str:
@@ -96,11 +97,11 @@ async def publish_general(
 ) -> None:
     """Publish a general org-scoped event to all subscribers on that org's channel.
 
-    Stamps `ts` server-side (ISO UTC). Redis semantics: fire-and-forget, no persistence.
+    Stamps `ts` server-side (ISO UTC). At-most-once delivery; no persistence.
     """
     ts = datetime.datetime.now(datetime.UTC).isoformat()
     event: dict[str, Any] = {"kind": kind.value, "ts": ts, **payload}
-    await redis_client.publish(_channel_for_general(org_id), event)
+    await cache.publish(_channel_for_general(org_id), event)
 
 
 def publish_general_after_commit(
@@ -116,17 +117,36 @@ def publish_general_after_commit(
     never emit SPA events. No await needed at the call site; the flush runs
     fire-and-forget via `spawn()` on the next event-loop tick after commit.
     """
-    pending: list[tuple[UUID, GeneralEventKind, dict[str, Any]]] = session.sync_session.info.setdefault(
-        _GENERAL_AFTER_COMMIT_KEY, []
-    )
-    pending.append((org_id, kind, payload))
+    pending: list[_PendingGeneralEvent] = session.sync_session.info.setdefault(_GENERAL_AFTER_COMMIT_KEY, [])
+    pending.append((session.sync_session.get_nested_transaction(), org_id, kind, payload))
+
+
+@sa_event.listens_for(Session, "after_rollback")
+def _discard_general_pending(sync_session: Session) -> None:
+    # Session.info outlives transactions. A savepoint rollback discards only
+    # events from that savepoint (including its committed descendants).
+    rolled_back = sync_session.get_nested_transaction()
+    if rolled_back is None:
+        sync_session.info.pop(_GENERAL_AFTER_COMMIT_KEY, None)
+        return
+    pending: list[_PendingGeneralEvent] = sync_session.info.get(_GENERAL_AFTER_COMMIT_KEY, [])
+    retained: list[_PendingGeneralEvent] = []
+    for entry in pending:
+        ancestor = entry[0]
+        while ancestor is not None and ancestor is not rolled_back:
+            ancestor = ancestor.parent
+        if ancestor is None:
+            retained.append(entry)
+    sync_session.info[_GENERAL_AFTER_COMMIT_KEY] = retained
 
 
 @sa_event.listens_for(Session, "after_commit")
 def _flush_general_pending(sync_session: Session) -> None:
-    pending: list[tuple[UUID, GeneralEventKind, dict[str, Any]]] | None = sync_session.info.pop(
-        _GENERAL_AFTER_COMMIT_KEY, None
-    )
+    # Releasing a savepoint is not a durable commit; retain its events until
+    # the outer transaction commits, or discard them if it rolls back.
+    if sync_session.in_nested_transaction():
+        return
+    pending: list[_PendingGeneralEvent] | None = sync_session.info.pop(_GENERAL_AFTER_COMMIT_KEY, None)
     if not pending:
         return
     try:
@@ -136,8 +156,18 @@ def _flush_general_pending(sync_session: Session) -> None:
         # is awaited). Drop with a warning rather than crash the commit path.
         log.warning("sse.general.flush.no_loop", count=len(pending))
         return
-    for org_id, kind, payload in pending:
-        spawn("sse.publish_general", publish_general(org_id=org_id, kind=kind, payload=payload))
+    spawn("sse.publish_general", _publish_general_batch(pending))
+
+
+async def _publish_general_batch(pending: list[_PendingGeneralEvent]) -> None:
+    # Concurrent publications can use different connections and overtake each
+    # other. Preserve the transaction's event order without delaying its commit.
+    for _transaction, org_id, kind, payload in pending:
+        try:
+            await publish_general(org_id=org_id, kind=kind, payload=payload)
+        except Exception:
+            # Delivery is best-effort; one failed event cannot strand the rest.
+            log.exception("sse.general_publish_failed")
 
 
 def subscribe_general(org_id: UUID) -> AsyncIterator[dict[str, Any]]:
@@ -146,7 +176,7 @@ def subscribe_general(org_id: UUID) -> AsyncIterator[dict[str, Any]]:
     Returns an async iterator — consumers do
     `async for event in subscribe_general(org_id)`.
     """
-    return redis_client.subscribe(_channel_for_general(org_id))
+    return cache.subscribe(_channel_for_general(org_id))
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +198,9 @@ async def publish_workspace_activity(
     """Publish a workspace-activity event for a specific org + pipeline run.
 
     Passes `payload` through unchanged — no envelope, no `ts` stamping.
-    Redis fire-and-forget semantics apply.
+    At-most-once, non-replayed delivery applies.
     """
-    await redis_client.publish(_channel_for_workspace_activity(org_id, run_id), payload)
+    await cache.publish(_channel_for_workspace_activity(org_id, run_id), payload)
 
 
 def subscribe_workspace_activity(
@@ -180,15 +210,15 @@ def subscribe_workspace_activity(
 ) -> AsyncIterator[dict[str, Any]]:
     """Async iterator over workspace-activity events for `org_id` + `run_id`.
 
-    `on_subscribed`, when provided, is set after the Redis SUBSCRIBE handshake
-    completes — before the first message is delivered. Callers that need to
+    `on_subscribed`, when provided, is set when the subscription can receive
+    publications — before the first message is delivered. Callers that need to
     guarantee no messages are lost between subscription setup and a subsequent
     publish should pass an event and await it before publishing.
 
     Returns an async iterator — consumers do
     `async for event in subscribe_workspace_activity(org_id, run_id)`.
     """
-    return redis_client.subscribe(
+    return cache.subscribe(
         _channel_for_workspace_activity(org_id, run_id),
         on_subscribed=on_subscribed,
     )
@@ -286,7 +316,7 @@ def sse_prelude() -> str:
     Flushes the response headers so the client's `EventSource` transitions to
     OPEN and fires `onopen` immediately — without it a stream that blocks
     waiting for its first event never flushes, so a client that missed the
-    triggering event (Redis pub/sub has no replay) never learns it is
+    triggering event (pub/sub has no replay) never learns it is
     connected and never reconciles. Comment frames (lines starting with `:`)
     are ignored by `EventSource` message handlers, so this never surfaces as
     a spurious event.

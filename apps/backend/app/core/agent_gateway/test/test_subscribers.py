@@ -1,32 +1,43 @@
-"""SubscriberRegistry demand-pull semantics: ZSET presence tracks subscriber
-count; pub/sub backplane routes subscribe/unsubscribe to the WS-owning pod.
+"""SubscriberRegistry presence and subscribe/unsubscribe routing.
 
-Tests marked `service` + `redis_or_skip` require a live Redis instance — the
-new registry writes ZSET/HASH/SET state and delivers control messages via
-Redis pub/sub, so process-local unit testing is not possible for anything
-that crosses the pub/sub boundary.
-
-Tests that only exercise the local sender registration (no track/untrack) do
-not require Redis and run in-process.
+Service tests use shared cache state and live pub/sub. Pure registry identity
+checks do not need an external service.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
+from typing import Literal
 from uuid import uuid4, uuid7
 
 import pytest
+from pydantic import BaseModel
 
 from app.core.agent_gateway.subscribers import (
+    SubscriberReconciler,
     SubscriberRegistry,
+    _agent_routes_key,
+    _run_route_key,
     _run_subscribers_key,
+    set_subscriber_registry_for_tests,
 )
 from app.core.agent_gateway.subscribers import (
     _get as _get_subscriber_registry,
 )
-from app.core.redis import zset_card
+from app.core.cache import (
+    count_members,
+    delete_record,
+    list_members,
+    read_record,
+    remove_member,
+    set_cache_for_tests,
+    shutdown,
+    touch_member,
+    update_record,
+)
 
-# ── Tests that don't require Redis (no track/untrack) ─────────────────────────
+# ── Registry identity and sender registration ─────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -37,7 +48,7 @@ async def test_subscriber_registry_eager_default_is_stable() -> None:
 
 @pytest.mark.asyncio
 async def test_register_sender_no_active_routes_sends_nothing(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """With no active routes in Redis, register_sender sends nothing."""
+    """With no active routes, register_sender sends nothing."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
     sent: list[dict] = []
@@ -51,7 +62,7 @@ async def test_register_sender_no_active_routes_sends_nothing(redis_or_skip) -> 
     assert sent == []
 
 
-# ── Tests that require Redis (track/untrack cross the pub/sub boundary) ────────
+# ── Shared presence and pub/sub routing ───────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -88,10 +99,8 @@ async def test_first_track_sends_subscribe(redis_or_skip) -> None:  # type: igno
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_second_track_does_not_resend_subscribe(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """A second track() for the same run_id from the same pod still publishes
-    a subscribe message (different ZSET member), but the ZSET ZADD update is
-    idempotent. The send count reflects both publishes."""
+async def test_second_track_publishes_idempotent_subscribe(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """A second connection publishes another subscribe; the agent handles it idempotently."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
     run_id = uuid4()
@@ -127,8 +136,7 @@ async def test_second_track_does_not_resend_subscribe(redis_or_skip) -> None:  #
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_last_untrack_sends_unsubscribe(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """After two tracks and two untracks, the second untrack (ZCARD drops to 0)
-    publishes an unsubscribe control message to the sender."""
+    """Removing the last connection publishes an unsubscribe control message."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
     run_id = uuid4()
@@ -147,14 +155,14 @@ async def test_last_untrack_sends_unsubscribe(redis_or_skip) -> None:  # type: i
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
-    # Wait for the first subscribe to arrive so the ZSET is populated.
+    # Wait for the first subscribe to arrive.
     for _ in range(20):
         await asyncio.sleep(0.05)
         if sent:
             break
 
     # Track returns a unique conn_id per call; untrack requires it.
-    # One track → one ZSET member → untrack drops ZCARD to 0 → unsubscribe fires.
+    # One track → one member → untrack drops count to 0 → unsubscribe fires.
     await reg.untrack(run_id=run_id, conn_id=conn1)
     await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
     reg.unregister_sender(agent_id)
@@ -188,7 +196,7 @@ async def test_untrack_below_zero_is_noop(redis_or_skip) -> None:  # type: ignor
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_track_without_sender_doesnt_raise(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """track() with no sender registered writes to Redis without raising.
+    """track() with no sender registered writes shared presence without raising.
     The subscribe message is published to the pub/sub channel but no local
     sender receives it (that's the cross-pod case)."""
     reg = SubscriberRegistry()
@@ -202,7 +210,7 @@ async def test_track_without_sender_doesnt_raise(redis_or_skip) -> None:  # type
         workspace_id=workspace_id,
         agent_id=agent_id,
     )
-    # No assertions on count — count is Redis ZCARD, not a local field.
+    assert await count_members(_run_subscribers_key(run_id)) == 1
     # Verify cleanup.
     await reg.untrack(run_id=run_id, conn_id=conn)
 
@@ -318,21 +326,7 @@ async def test_register_sender_filters_routes_by_agent_id(redis_or_skip) -> None
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_register_sender_subscribes_before_snapshot(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """register_sender must subscribe to the pub/sub channel BEFORE snapshotting
-    Redis state, so a concurrent track() from a second pod whose publish lands
-    between register_sender returning and the snapshot is still delivered.
-
-    Behavioral proof: two registry instances sharing real Redis.
-
-    1. pod_a calls register_sender — which now awaits the SUBSCRIBE handshake
-       before reading agent_routes.
-    2. Immediately after register_sender returns on pod_a, pod_b calls track().
-       The publish happens AFTER the subscribe is active.
-    3. The sender on pod_a must receive the subscribe message within the timeout —
-       under the old (snapshot-first) ordering this would be a race; under the
-       new ordering it is guaranteed because the subscribe handshake completed
-       before track() published.
-    """
+    """A publication after sender registration reaches the ready subscriber."""
     agent_id = uuid4()
     run_id = uuid4()
     workspace_id = uuid4()
@@ -347,7 +341,7 @@ async def test_register_sender_subscribes_before_snapshot(redis_or_skip) -> None
         sent.append(msg)
         received.set()
 
-    # register_sender now establishes the Redis SUBSCRIBE before returning.
+    # register_sender establishes the subscription before returning.
     await pod_a.register_sender(agent_id, _sender)
 
     # After register_sender has returned the subscribe handshake is complete.
@@ -374,15 +368,7 @@ async def test_register_sender_subscribes_before_snapshot(redis_or_skip) -> None
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_two_subscribers_same_pod_same_run(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """Two concurrent SSE subscribers from the same pod to the same run_id
-    are each counted independently.
-
-    Regression test for the old bug where _connections was dict[UUID, str]
-    and the second track() silently overwrote the first conn_id, leaving the
-    first subscriber's ZSET member orphaned until the sweeper evicted it.
-    The fix: _connections is dict[UUID, set[str]]; track() returns a per-call
-    conn_id; untrack() removes exactly that member.
-    """
+    """Each connection is removed independently; the last removes shared routes."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
     run_id = uuid4()
@@ -413,12 +399,26 @@ async def test_two_subscribers_same_pod_same_run(redis_or_skip) -> None:  # type
     # conn_ids are unique per call.
     assert conn1 != conn2
 
-    # Both members are in the ZSET.
-    assert await zset_card(_run_subscribers_key(run_id)) == 2
+    run_key = _run_subscribers_key(run_id)
+    route_key = _run_route_key(run_id)
+    routes_key = _agent_routes_key(agent_id)
+    assert await count_members(run_key) == 2
+    assert {entry.member for entry in await list_members(run_key)} == {
+        f"{reg._pod_id}:{conn1}",
+        f"{reg._pod_id}:{conn2}",
+    }
 
-    # Untrack conn1 — should drop ZCARD to 1, NOT fire unsubscribe.
+    # Removing conn1 preserves conn2 and the shared route.
     await reg.untrack(run_id=run_id, conn_id=conn1)
-    assert await zset_card(_run_subscribers_key(run_id)) == 1
+    assert await count_members(run_key) == 1
+    assert [entry.member for entry in await list_members(run_key)] == [f"{reg._pod_id}:{conn2}"]
+    assert await read_record(route_key) == {
+        "workspace_id": str(workspace_id),
+        "agent_id": str(agent_id),
+    }
+    assert [entry.member for entry in await list_members(routes_key)] == [str(run_id)]
+    await reg.untrack(run_id=run_id, conn_id=conn1)
+    assert await count_members(run_key) == 1
 
     # Give the pub/sub consumer a moment — no unsubscribe should arrive.
     await asyncio.sleep(0.1)
@@ -426,9 +426,91 @@ async def test_two_subscribers_same_pod_same_run(redis_or_skip) -> None:  # type
         "unsubscribe was published prematurely after first untrack"
     )
 
-    # Untrack conn2 — ZCARD drops to 0, unsubscribe fires.
+    # Removing conn2 cleans the route and sends exactly one unsubscribe.
     await reg.untrack(run_id=run_id, conn_id=conn2)
     await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
-    assert await zset_card(_run_subscribers_key(run_id)) == 0
+    assert await count_members(run_key) == 0
+    assert await read_record(route_key) == {}
+    assert await list_members(routes_key) == []
+    assert len([msg for msg in sent if msg["type"] == "unsubscribe"]) == 1
 
     reg.unregister_sender(agent_id)
+
+
+class _StoredRunRoute(BaseModel):
+    """Typed fixtures for incomplete or malformed stored routing data."""
+
+    workspace_id: str = ""
+    agent_id: str = ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.service
+@pytest.mark.parametrize("scenario", ["default", "memory"])
+@pytest.mark.parametrize(
+    "route_case", ["missing_workspace", "invalid_workspace", "missing_agent", "invalid_agent"]
+)
+async def test_malformed_route_readers_preserve_parsing_contracts(
+    redis_or_skip: None, scenario: Literal["default", "memory"], route_case: str
+) -> None:
+    """Bad routes do not hide valid routes; readers retain their distinct validation."""
+    agent_id, run_id, workspace_id, valid_run = uuid4(), uuid4(), uuid7(), uuid4()
+    if route_case == "missing_workspace":
+        fields = _StoredRunRoute(agent_id=str(agent_id))
+    elif route_case == "invalid_workspace":
+        fields = _StoredRunRoute(workspace_id="invalid", agent_id=str(agent_id))
+    elif route_case == "missing_agent":
+        fields = _StoredRunRoute(workspace_id=str(workspace_id))
+    else:
+        fields = _StoredRunRoute(workspace_id=str(workspace_id), agent_id="invalid")
+
+    sent: list[dict] = []
+    received = asyncio.Event()
+
+    async def sender(message: dict) -> None:
+        sent.append(message)
+        received.set()
+
+    with set_cache_for_tests(scenario=scenario), set_subscriber_registry_for_tests() as reg:
+        conn = await reg.track(run_id=run_id, workspace_id=workspace_id, agent_id=agent_id)
+        valid_conn = await reg.track(run_id=valid_run, workspace_id=workspace_id, agent_id=agent_id)
+        route_key = _run_route_key(run_id)
+        routes_key = _agent_routes_key(agent_id)
+        await delete_record(route_key)
+        await update_record(route_key, fields=fields)
+        await touch_member(routes_key, "not-a-uuid", last_seen=time.time())
+        try:
+            await reg.register_sender(agent_id, sender)
+            replay_runs = {str(valid_run)}
+            if route_case == "invalid_agent":
+                replay_runs.add(str(run_id))
+            assert {message["run_id"] for message in sent} == replay_runs
+
+            # Reconciliation needs only a parseable workspace, not the agent field.
+            sent.clear()
+            reg._streaming[agent_id].clear()
+            expected_runs = {str(valid_run)}
+            if route_case in ("missing_agent", "invalid_agent"):
+                expected_runs.add(str(run_id))
+            await SubscriberReconciler()._reconcile_once()
+            while len(sent) < len(expected_runs):
+                received.clear()
+                await asyncio.wait_for(received.wait(), timeout=2.0)
+            assert {message["run_id"] for message in sent} == expected_runs
+            assert all(message["type"] == "subscribe" for message in sent)
+
+            # Last-connection cleanup requires BOTH UUIDs; malformed data is skipped.
+            await reg.untrack(run_id=run_id, conn_id=conn)
+            assert await count_members(_run_subscribers_key(run_id)) == 0
+            assert await read_record(route_key) == fields.model_dump(mode="json", exclude_unset=True)
+            assert str(run_id) in {entry.member for entry in await list_members(routes_key)}
+            await reg.untrack(run_id=valid_run, conn_id=valid_conn)
+            assert await read_record(_run_route_key(valid_run)) == {}
+        finally:
+            reg.unregister_sender(agent_id)
+            await reg.untrack(run_id=run_id, conn_id=conn)
+            await reg.untrack(run_id=valid_run, conn_id=valid_conn)
+            await delete_record(route_key)
+            await remove_member(routes_key, str(run_id))
+            await remove_member(routes_key, "not-a-uuid")
+            await shutdown()

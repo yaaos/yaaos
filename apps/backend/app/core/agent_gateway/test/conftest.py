@@ -1,6 +1,6 @@
 """Test isolation for `agent_gateway` — flush identity-exchange rate limits.
 
-The per-IP / per-ARN identity-exchange counters live in Redis, which (unlike
+The per-IP identity-exchange counters live in the shared cache, which (unlike
 Postgres) is not transaction-rolled-back between tests. Without a per-test
 flush, counters accumulate across tests sharing a source IP and trip
 `PER_IP_LIMIT`, making rate-limit and identity-exchange tests order-dependent

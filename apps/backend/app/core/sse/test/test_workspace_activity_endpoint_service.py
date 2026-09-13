@@ -22,6 +22,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.core.auth import AuthMiddleware, Role, register_handler
+from app.core.cache import CacheError, set_cache_for_tests, subscriber_count
 from app.core.identity import create_user, mint_session
 from app.core.sse import publish_workspace_activity
 from app.core.sse.web import _workspace_activity_stream
@@ -106,7 +107,7 @@ async def test_workspace_activity_endpoint_streams_org_scoped(redis_or_skip) -> 
     gen = _workspace_activity_stream(org_id, run_id)
     # Drain the connect prelude.  The subscription is established BEFORE the
     # prelude is sent (see _workspace_activity_stream), so by the time we
-    # get the prelude the Redis SUBSCRIBE is already confirmed.
+    # get the prelude the subscription is already ready.
     prelude = await asyncio.wait_for(gen.__anext__(), timeout=3.0)
     assert prelude.startswith(":"), f"expected comment prelude first; got {prelude!r}"
     collector = asyncio.create_task(gen.__anext__())
@@ -126,3 +127,74 @@ async def test_workspace_activity_endpoint_streams_org_scoped(redis_or_skip) -> 
 
     assert frame.startswith("data: "), f"SSE frame must start with 'data: '; got {frame!r}"
     assert payload["id"] in frame, f"published payload not in frame: {frame!r}"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_activity_subscription_failure_before_readiness_propagates() -> None:
+    """A failed subscription cannot leave the connect prelude waiting forever."""
+    closed = asyncio.Event()
+
+    class FailingEvents:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> dict:
+            raise CacheError("subscription unavailable")
+
+        async def aclose(self) -> None:
+            closed.set()
+
+    def failing_subscription(org_id, run_id, on_subscribed=None):
+        return FailingEvents()
+
+    gen = _workspace_activity_stream(uuid.uuid4(), uuid.uuid4(), subscribe_activity=failing_subscription)
+    with pytest.raises(CacheError, match="subscription unavailable"):
+        await asyncio.wait_for(anext(gen), timeout=1.0)
+    assert closed.is_set()
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_activity_close_at_prelude_releases_subscription() -> None:
+    """Closing before lifecycle attachment still cleans up the ready subscription."""
+    with set_cache_for_tests(scenario="memory"):
+        org_id, run_id = uuid.uuid4(), uuid.uuid4()
+        channel = f"{org_id}:workspace_activity:{run_id}"
+        gen = _workspace_activity_stream(org_id, run_id)
+        prelude = await asyncio.wait_for(anext(gen), timeout=1.0)
+        assert prelude.startswith(":")
+        assert subscriber_count(channel) == 1
+        await gen.aclose()
+        assert subscriber_count(channel) == 0
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_activity_cancel_before_readiness_closes_iterator() -> None:
+    """Cancellation while waiting for readiness cancels the pending receive."""
+    entered = asyncio.Event()
+    closed = asyncio.Event()
+
+    class WaitingEvents:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> dict:
+            entered.set()
+            await asyncio.Event().wait()
+            return {}
+
+        async def aclose(self) -> None:
+            closed.set()
+
+    def waiting_subscription(org_id, run_id, on_subscribed=None):
+        return WaitingEvents()
+
+    gen = _workspace_activity_stream(uuid.uuid4(), uuid.uuid4(), subscribe_activity=waiting_subscription)
+    consumer = asyncio.create_task(anext(gen))
+    await asyncio.wait_for(entered.wait(), timeout=1.0)
+    consumer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+    assert closed.is_set()

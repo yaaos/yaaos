@@ -10,7 +10,7 @@
 
 ## Health endpoint (`/api/health`)
 
-- Returns **200** when both `db_ok` and `redis_ok` are true; returns **503** when either is false.
+- Returns **200** when both `db_ok` and `redis_ok` are true; returns **503** when either is false. `_cache_health` delegates to [`core/cache.is_healthy`](core_cache.md); provider failures return false while the `redis_ok` wire name stays stable.
 - Body shape: `{status: "ok"|"degraded", db_ok: bool, redis_ok: bool, version: str}` — unchanged regardless of status code.
 - `version` is read from `settings.service_version` (`SERVICE_VERSION` env var, default `"0.0.0-dev"`). Set by the deploy pipeline (e.g. git SHA or semver tag).
 - Exempt from Cloudflare ingress middleware; no auth required.

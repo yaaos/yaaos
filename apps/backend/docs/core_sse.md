@@ -1,30 +1,31 @@
 # core/sse
 
-> Redis-backed pub/sub for org-scoped general events and workspace-activity streams.
+> Org-scoped general events and workspace-activity streams over the shared cache bus.
 
 ## Scope
 
 - **Owns:** two pub/sub pipelines, channel naming, event shapes (`GeneralEventKind`), `serialize_for_sse`, the connect prelude (`sse_prelude`), the process-wide shutdown event + graceful-close frame.
-- **Does not own:** the pub/sub transport, JSON encode/decode, or singleton lifecycle — all in [`core/redis`](core_redis.md); event persistence (none — Redis only); domain event definitions; auth enforcement (delegated to `core/auth` via `ORG_SCOPED` classification).
-- **Boundary:** publishes land on the `core/redis` JSON bus; subscribers consume via async iterators; no backpressure — slow consumers do not block publishers; no event persistence.
+- **Does not own:** pub/sub transport, JSON encode/decode, or provider lifecycle — all in [`core/cache`](core_cache.md); domain event definitions; auth enforcement (delegated to `core/auth` via `ORG_SCOPED` classification).
+- **Boundary:** publishes land on the cache JSON bus; subscribers consume via async iterators. Delivery is at-most-once without replay or event persistence.
 
 ## Why / invariants
 
-- **`publish_general_after_commit` ties publish lifetime to a transaction** — events are stashed on `session.info`; an `after_commit` listener drains and dispatches them fire-and-forget via `spawn("sse.publish_general", …)`. Rollback discards silently — rolled-back transactions never emit SPA events. The `spawn()` call propagates the calling span's trace context so the publish appears as a `spawn:sse.publish_general` child span in the calling request's trace.
+- **`publish_general_after_commit` ties publish lifetime to a transaction** — events are stashed on `session.info`; an `after_commit` listener drains and dispatches them fire-and-forget via `spawn("sse.publish_general", …)`. Events stay queued until the outer transaction commits, then publish in queue order as a best-effort background batch; one failed publication does not prevent later attempts. Savepoint rollback discards only that savepoint's events and descendants; outer rollback discards all pending events, including before session reuse — rolled-back transactions never emit SPA events. The `spawn()` call propagates the calling span's trace context so the publish appears as a `spawn:sse.publish_general` child span in the calling request's trace.
 - **Channel isolation by org (+ run for activity) is the boundary.** Cross-org and cross-run events cannot leak by construction. Shapes: `{org_id}:general`, `{org_id}:workspace_activity:{run_id}`. A caller requesting another org's run subscribes to `{caller_org}:…:{run_id_other}` — a channel nobody publishes to — so the stream is empty rather than 404.
-- **Every stream yields `sse_prelude()` (a `: comment` frame) as its first data.** This flushes response headers so the client's `EventSource` fires `onopen` immediately; otherwise a stream blocked waiting for its first event never flushes, and a client that missed the triggering event (pub/sub has no replay) never learns it is connected. The two streams differ on when the subscription is established: the **general stream** yields the prelude before subscribing (a publish racing the connect can be missed on the bus — the client reconciles via a full refetch on `onopen`); the **workspace-activity stream** establishes its Redis subscription first (using `on_subscribed`), then yields the prelude — so by the time `onopen` fires the subscription is confirmed and no event published after that point is missed.
+- **Every stream yields `sse_prelude()` (a `: comment` frame) as its first data.** This flushes response headers so the client's `EventSource` fires `onopen` immediately; otherwise a stream blocked waiting for its first event never flushes, and a client that missed the triggering event (pub/sub has no replay) never learns it is connected. The two streams differ on when the subscription is established: the **general stream** yields the prelude before subscribing (a publish racing the connect can be missed on the bus — the client reconciles via a full refetch on `onopen`); the **workspace-activity stream** establishes its cache subscription first (using `on_subscribed`), then yields the prelude — so by the time `onopen` fires the subscription is confirmed and no event published after that point is missed.
+- **Activity startup races readiness, receive failure, and shutdown.** A provider failure propagates instead of hanging before the prelude; close/cancellation cleans the iterator and pending tasks even before lifecycle attachment.
 - **`shutdown()` closes all active streams before the process exits.** Both stream generators race each `__anext__` against a module-level `asyncio.Event` set lazily at first access. The event is installed as a fresh instance per test by the `sse_shutdown_event_isolation` autouse fixture (via `set_shutdown_event_for_tests()`). When `shutdown()` sets the event, every waiting generator emits a final `retry: 1000\n: server closing\n\n` frame (instructs the browser to reconnect in ~1 s) and returns — the `StreamingResponse` completes cleanly instead of hanging on a dead socket until the browser's TCP timeout. Registered with the web shutdown registry only (SSE is web-presence).
 
 ## Gotchas
 
-- **The bus lives in `core/redis`** — `publish`/`subscribe`/`subscriber_count` are imported from there. This module only names channels and shapes events.
+- **The bus lives in `core/cache`** — event transport and process-local subscriber diagnostics are provided there. This module only names channels and shapes events.
 - **Workspace-activity events are normalized before publish** — `core/agent_gateway` calls `parse_activity_line` on the raw stream-json line and publishes a `{kind, ts, message, detail}` frame on the channel; `core/sse` delivers that frame verbatim to subscribers.
 - **`/api/sse` prefix is `ORG_SCOPED`** in `core/auth/types.py` — all routes under `web.py` are auth-enforced without extra work.
 - **Subscriber lifecycle hooks** — `register_activity_subscriber_lifecycle(on_attach, on_heartbeat, on_detach)` registers three async callbacks invoked by `_workspace_activity_stream` (on connect, on heartbeat, on disconnect). Used by `core/agent_gateway` to signal the backend's `SubscriberRegistry` via lifecycle events (track/heartbeat/untrack). Avoids an import cycle between `core/sse` and `core/agent_gateway`.
 
 ## Data owned
 
-None. Transport only — Redis is the substrate.
+None. Channel/event shaping only — the cache module owns transport.
 
 ## `GeneralEventKind` values
 
@@ -39,13 +40,13 @@ None. Transport only — Redis is the substrate.
 
 ## How it's tested
 
-`test/test_general_publish_service.py` — rollback discards events; commit delivers with correct shape; org isolation. Uses `db_session` + `redis_or_skip`.
+`test/test_general_publish_service.py` — rollback discards events even when the same session later commits; savepoint rollback preserves outer events, and savepoint commit cannot publish before outer commit; commit delivers with correct shape; org isolation. Uses `db_session` + `redis_or_skip`.
 `test/test_sse_publish_spawn_span.py` — after a run state transition the `spawn:sse.publish_general` span shares the calling span's trace_id.
 `test/test_workspace_activity_publish_service.py` — cross-org and cross-wfx isolation.
 `test/test_general_endpoint_service.py` — HTTP auth gate (401/400/403); connect prelude is the first frame; cross-org isolation on `_general_stream` directly.
-`test/test_workspace_activity_endpoint_service.py` — non-owned wfx yields empty stream (channel-key isolation); happy-path streaming via `_workspace_activity_stream`.
+`test/test_workspace_activity_endpoint_service.py` — channel isolation; live delivery after the ready prelude; subscription startup failure, cancellation before readiness, and close at the prelude release resources.
 `test/test_serialize_for_sse_service.py` — `data: <json>\n\n` shape.
 `test/test_shutdown_service.py` — `shutdown()` on a live general stream and a live workspace-activity stream each emit the final frame and raise `StopAsyncIteration`; idle shutdown doesn't raise. Test isolation is structural: the `sse_shutdown_event_isolation` autouse fixture binds a fresh event per test.
 `test/test_activity_lifecycle_service.py` — `register_activity_subscriber_lifecycle` hooks: missing route returns `None` (on_detach not called); found route returns token (on_detach called with token).
 
-The pub/sub transport itself (round-trip, fan-out, subscriber bookkeeping, singleton lifecycle, shutdown) is tested in [`core/redis`](core_redis.md).
+The pub/sub transport itself (round-trip, fan-out, subscriber bookkeeping, provider isolation, shutdown) is tested in [`core/cache`](core_cache.md).

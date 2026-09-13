@@ -2,7 +2,7 @@
 
 Exposes `GET /health` returning 200 when:
   - `database.ping()` succeeds
-  - `redis.ping()` succeeds
+  - `cache.is_healthy()` succeeds
   - the liveness heartbeat is fresh (last_tick within the stale threshold)
 
 Returns 503 when any condition fails.  The body shape mirrors
@@ -32,7 +32,7 @@ Test usage::
     app = build_worker_health_app(
         heartbeat=heartbeat,
         db_ping=lambda: ...,
-        redis_ping=lambda: ...,
+        cache_health=lambda: ...,
     )
 """
 
@@ -46,8 +46,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+import app.core.cache as cache
 import app.core.database as database
-import app.core.redis as redis_client
 
 # How long (seconds) the health ticker is allowed to go without a tick before
 # the heartbeat is considered stale.  Two ticker intervals (10 s) gives one
@@ -86,19 +86,21 @@ def build_worker_health_app(
     *,
     heartbeat: WorkerHeartbeat,
     db_ping: Callable[[], Awaitable[bool]] | None = None,
-    redis_ping: Callable[[], Awaitable[bool]] | None = None,
+    cache_health: Callable[[], Awaitable[bool]] | None = None,
 ) -> Starlette:
     """Return a minimal single-route Starlette ASGI app for the worker health check.
 
-    The `db_ping` and `redis_ping` callables default to the real ping helpers
-    from `core/database` and `core/redis` so production callers pass only
-    `heartbeat=`.  Tests inject lightweight stubs to avoid real DB/Redis.
+    The `db_ping` and `cache_health` callables default to the infrastructure
+    health helpers so production callers pass only `heartbeat=`. Tests inject
+    lightweight stubs. The `redis_ok` wire field remains operationally stable.
     """
     _db_ping: Callable[[], Awaitable[bool]] = db_ping if db_ping is not None else database.ping
-    _redis_ping: Callable[[], Awaitable[bool]] = redis_ping if redis_ping is not None else redis_client.ping
+    _cache_health: Callable[[], Awaitable[bool]] = (
+        cache_health if cache_health is not None else cache.is_healthy
+    )
 
     async def health(request: Request) -> JSONResponse:
-        db_ok, redis_ok = await _db_ping(), await _redis_ping()
+        db_ok, redis_ok = await _db_ping(), await _cache_health()
         heartbeat_ok = heartbeat.is_fresh()
         healthy = db_ok and redis_ok and heartbeat_ok
         body = {

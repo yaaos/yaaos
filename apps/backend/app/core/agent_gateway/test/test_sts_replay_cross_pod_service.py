@@ -1,16 +1,6 @@
-"""STS replay protection — cross-pod Redis gate.
+"""STS replay rejection across independent default cache-provider contexts.
 
-Verifies that `verify_identity` rejects a replayed signed envelope on any
-pod — the nonce lives in shared Redis, not in process-local memory.
-
-Simulates two pods by running two `verify_identity` calls in the same
-process, both hitting the same Redis instance.  The first call writes the
-nonce and returns a `VerifiedIdentity`; the second call finds the key and
-raises `InvalidSignedRequestError(REPLAY_DETECTED)`.
-
-Requires live Redis (fixture `redis_or_skip`).  No mocks — real Redis
-`SET NX EX` is the substrate under test.  The STS replay itself uses an
-`httpx.MockTransport` so no actual AWS call is made.
+The real shared provider protects the nonce; only outbound AWS HTTP is stubbed.
 """
 
 from __future__ import annotations
@@ -30,6 +20,7 @@ from app.core.agent_gateway.sts_verifier import (
     VerifiedIdentity,
     verify_identity,
 )
+from app.core.cache import CacheError, set_cache_for_tests, shutdown
 
 pytestmark = pytest.mark.usefixtures("redis_or_skip")
 
@@ -53,7 +44,7 @@ def _sts_mock_handler(request: httpx.Request) -> httpx.Response:
 
 def _unique_signed_request() -> str:
     """Build a well-formed signed STS request JSON string with a unique
-    per-call Signature to ensure the Redis nonce key is fresh each test run.
+    per-call Signature to ensure the nonce key is fresh each test run.
     """
     unique_sig = secrets.token_hex(32)
     return json.dumps(
@@ -96,20 +87,36 @@ async def _mock_sts_replay() -> AsyncIterator[None]:
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_mock_sts_replay")
 async def test_cross_pod_replay_is_rejected() -> None:
-    """Same signed envelope presented to two verify_identity calls (simulating
-    two backend pods sharing Redis) — first call succeeds; second is rejected
-    as a replay."""
-    # Unique per test run so the Redis nonce key is always fresh.
+    """Closing one provider context cannot clear a nonce seen by another pod."""
     envelope = _unique_signed_request()
 
-    # First "pod": nonce is absent in Redis → insert succeeds → identity returned.
-    result = await verify_identity(envelope)
-    assert isinstance(result, VerifiedIdentity)
-    assert result.canonical_arn == "arn:aws:iam::123456789012:role/yaaos-agent"
-    assert result.region == "us-east-1"
+    with set_cache_for_tests() as first_provider:
+        try:
+            result = await verify_identity(envelope)
+            assert isinstance(result, VerifiedIdentity)
+            assert result.canonical_arn == "arn:aws:iam::123456789012:role/yaaos-agent"
+            assert result.region == "us-east-1"
+        finally:
+            await shutdown()
 
-    # Second "pod": same envelope → nonce already in Redis → replay rejected.
-    with pytest.raises(InvalidSignedRequestError) as exc_info:
-        await verify_identity(envelope)
+    with set_cache_for_tests() as second_provider:
+        assert second_provider is not first_provider
+        try:
+            with pytest.raises(InvalidSignedRequestError) as exc_info:
+                await verify_identity(envelope)
+            assert exc_info.value.category == FailureCategory.REPLAY_DETECTED
+        finally:
+            await shutdown()
 
-    assert exc_info.value.category == FailureCategory.REPLAY_DETECTED
+
+@pytest.mark.service
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_mock_sts_replay")
+async def test_nonce_storage_failure_does_not_authenticate() -> None:
+    async def unavailable(key: str, *, ttl_seconds: int) -> bool:
+        raise CacheError("unavailable")
+
+    with set_cache_for_tests(scenario="memory") as provider:
+        provider.claim_once = unavailable
+        with pytest.raises(CacheError):
+            await verify_identity(_unique_signed_request())

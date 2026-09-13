@@ -54,14 +54,14 @@ os.environ.setdefault("YAAOS_PUBLIC_ORIGIN", "https://app.yaaos.dev")
 
 # Re-export autouse isolation fixtures so pytest auto-discovers them. The import
 # is deferred until after env vars are set because app.testing.isolation triggers
-# app.core.redis → app.core.config at import time.
+# app.core.cache → app.core.config at import time.
 from app.testing.isolation import (  # noqa: E402, F401
     actions_registry_isolation,
     bearer_verify_isolation,
+    cache_isolation,
     email_inbox_isolation,
     intake_registry_isolation,
     plugin_registries_isolation,
-    pubsub_isolation,
     scheduler_registry_isolation,
     sse_shutdown_event_isolation,
     sts_verify_isolation,
@@ -109,20 +109,13 @@ async def _redis_reachable() -> bool:
     subscribe via `core/sse` use `redis_or_skip` (below) to skip
     cleanly when Redis is unavailable — local dev workflows without a
     Redis container aren't blocked."""
-    from redis.asyncio import from_url  # noqa: PLC0415
-    from redis.exceptions import RedisError  # noqa: PLC0415
+    from app.core.cache import is_healthy, set_cache_for_tests, shutdown  # noqa: PLC0415
 
-    from app.core.config import get_settings  # noqa: PLC0415
-
-    try:
-        client = from_url(get_settings().redis_url, decode_responses=True)
+    with set_cache_for_tests():
         try:
-            await client.ping()
-            return True
+            return await is_healthy()
         finally:
-            await client.aclose()
-    except RedisError, OSError:
-        return False
+            await shutdown()
 
 
 @pytest.fixture

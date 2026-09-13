@@ -15,6 +15,7 @@
 - Copy `.env.sample` to `.env`.
 - Generate the at-rest encryption key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` → paste into `.env` as `YAAOS_ENCRYPTION_KEY`. Persist out-of-band — losing it forces every operator to re-enter credentials via the Settings UI.
 - Leave `DATABASE_URL` at the default; compose provisions Postgres with matching credentials.
+- Keep `REDIS_URL` configured for the shared [`core/cache`](../apps/backend/docs/core_cache.md) provider and independent Taskiq broker. In-memory cache substitution is test-only, not a deployment fallback.
 - Optional: set `YAAOS_DASH0_ENDPOINT` + `YAAOS_DASH0_DATASET` + `YAAOS_BACKEND_DASH0_BEARER_TOKEN` for OTLP export. Any missing → exporters skipped (OTel providers still active).
 
 Full env-var reference: [`apps/backend/docs/core_config.md`](../apps/backend/docs/core_config.md).
@@ -154,6 +155,7 @@ bin/dev-rebuild                  # builds image + starts stack
 ## Local dev — fully native (no Docker for app/web)
 
 - **Postgres:** `docker compose -f docker/docker-compose.dev.yml --env-file .env up -d postgres` or native install.
+- **Redis:** run the compose Redis service or a native instance; point `REDIS_URL` at it. Backend distributed-contract tests require it and report reachability skips if absent.
 - **Backend:** `cd apps/backend && uv sync && uv run uvicorn app.web:app --reload --port 8080`
 - **Frontend:** `cd apps/web && pnpm install && pnpm dev` (Vite on `:5173`, proxies `/api/*` to `:8080`)
 - **Claude Code CLI:** runs inside the WorkspaceAgent container, not the backend. Set `YAAOS_CODING_AGENT_STUB=1` for deterministic stub responses without a running agent.

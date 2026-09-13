@@ -12,17 +12,19 @@ import pytest_asyncio
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def pubsub_isolation():
-    """Bind a fresh RedisPubsub instance for each test.
+async def cache_isolation():
+    """Scope the entire cache provider per test; the default uses real shared storage.
 
-    Autouse so every test in the backend suite gets an isolated pubsub
-    without importing or calling anything. Tests that depend on Redis
-    still use the `redis_or_skip` fixture to gate on reachability.
+    In-memory substitution is opt-in. Tests needing the deployment provider
+    still use `redis_or_skip` to check reachability.
     """
-    from app.core.redis import set_pubsub_for_tests  # noqa: PLC0415
+    from app.core.cache import set_cache_for_tests, shutdown  # noqa: PLC0415
 
-    with set_pubsub_for_tests():
-        yield
+    with set_cache_for_tests():
+        try:
+            yield
+        finally:
+            await shutdown()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -184,10 +186,10 @@ async def workspace_providers_isolation():
 __all__ = [
     "actions_registry_isolation",
     "bearer_verify_isolation",
+    "cache_isolation",
     "email_inbox_isolation",
     "intake_registry_isolation",
     "plugin_registries_isolation",
-    "pubsub_isolation",
     "scheduler_registry_isolation",
     "sse_shutdown_event_isolation",
     "sts_verify_isolation",

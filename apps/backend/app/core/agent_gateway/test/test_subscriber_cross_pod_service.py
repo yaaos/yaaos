@@ -1,11 +1,4 @@
-"""Cross-pod subscribe/unsubscribe routing via Redis pub/sub.
-
-Two `SubscriberRegistry` instances in one test process represent two backend
-pods sharing the same Redis store. `track` on pod B triggers a subscribe
-message delivered to the WS sender registered on pod A; `untrack` on pod B
-triggers the corresponding unsubscribe. This directly satisfies C1's
-requirements success-signal.
-"""
+"""Cross-pod subscribe/unsubscribe routing through independent cache contexts."""
 
 from __future__ import annotations
 
@@ -15,6 +8,7 @@ from uuid import uuid4, uuid7
 import pytest
 
 from app.core.agent_gateway.subscribers import SubscriberRegistry
+from app.core.cache import set_cache_for_tests, shutdown
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
@@ -24,9 +18,7 @@ pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 async def test_cross_pod_track_delivers_subscribe_to_remote_sender(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
     """track() on pod_b delivers {type:subscribe} to the sender on pod_a.
 
-    Proves the Redis pub/sub control channel correctly routes across pod
-    boundaries: the only shared state is Redis; process-local `_senders`
-    are private to each registry instance.
+    The real provider shares state across contexts; sender handles stay local.
     """
     agent_id = uuid4()
     run_id = uuid4()
@@ -42,15 +34,17 @@ async def test_cross_pod_track_delivers_subscribe_to_remote_sender(redis_or_skip
         sent.append(msg)
         received.set()
 
-    # Pod A: register the WS sender (the agent's WebSocket terminates here).
-    await reg_pod_a.register_sender(agent_id, _fake_sender)
+    # The subscriber task inherits pod A's provider context.
+    with set_cache_for_tests() as provider_a:
+        await reg_pod_a.register_sender(agent_id, _fake_sender)
 
-    # Pod B: an SSE handler tracks a new UI subscriber for the same agent.
-    conn = await reg_pod_b.track(
-        run_id=run_id,
-        workspace_id=workspace_id,
-        agent_id=agent_id,
-    )
+    with set_cache_for_tests() as provider_b:
+        assert provider_b is not provider_a
+        conn = await reg_pod_b.track(
+            run_id=run_id,
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+        )
 
     # The pub/sub consumer on pod_a should deliver the subscribe envelope.
     await asyncio.wait_for(received.wait(), timeout=2.0)
@@ -69,9 +63,11 @@ async def test_cross_pod_track_delivers_subscribe_to_remote_sender(redis_or_skip
             unsub_received.set()
 
     reg_pod_a.unregister_sender(agent_id)
-    await reg_pod_a.register_sender(agent_id, _fake_sender_2)
+    with set_cache_for_tests(provider=provider_a):
+        await reg_pod_a.register_sender(agent_id, _fake_sender_2)
 
-    await reg_pod_b.untrack(run_id=run_id, conn_id=conn)
+    with set_cache_for_tests(provider=provider_b):
+        await reg_pod_b.untrack(run_id=run_id, conn_id=conn)
     await asyncio.wait_for(unsub_received.wait(), timeout=2.0)
 
     unsubs = [m for m in sent if m.get("type") == "unsubscribe"]
@@ -79,8 +75,12 @@ async def test_cross_pod_track_delivers_subscribe_to_remote_sender(redis_or_skip
     assert unsubs[0]["workspace_id"] == str(workspace_id)
     assert unsubs[0]["run_id"] == str(run_id)
 
-    # Cleanup.
+    # Cleanup both independent connection lifecycles.
     reg_pod_a.unregister_sender(agent_id)
+    with set_cache_for_tests(provider=provider_a):
+        await shutdown()
+    with set_cache_for_tests(provider=provider_b):
+        await shutdown()
 
 
 @pytest.mark.asyncio
@@ -88,7 +88,7 @@ async def test_cross_pod_track_delivers_subscribe_to_remote_sender(redis_or_skip
 async def test_cross_pod_track_no_leakage_between_agents(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
     """track() for agent_b does not deliver to agent_a's sender.
 
-    Pub/sub channels are keyed by agent_id; SADD writes to agent_b's SET.
+    Pub/sub channels and route memberships are keyed by agent_id.
     Sender for agent_a must receive nothing.
     """
     agent_a = uuid4()

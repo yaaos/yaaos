@@ -5,7 +5,7 @@ Hits the framework `/api/health` carve-out through the real ASGI app.
 Contract:
 - Both pings OK → 200, status="ok"
 - DB ping fails → 503, status="degraded"
-- Redis ping fails → 503, status="degraded"
+- Cache health fails → 503, status="degraded"
 - Body always carries {status, db_ok, redis_ok, version}
 - version reflects settings.service_version
 
@@ -51,24 +51,24 @@ def _required_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.service
 def test_health_both_ok_returns_200() -> None:
-    """Both pings healthy → 200 with status='ok'."""
-    from app.core.webserver.health import _db_ping, _redis_ping  # noqa: PLC0415
+    """Both dependencies healthy → 200 with status='ok'."""
+    from app.core.webserver.health import _cache_health, _db_ping  # noqa: PLC0415
     from app.web import app  # noqa: PLC0415
 
     async def db_ok() -> bool:
         return True
 
-    async def redis_ok() -> bool:
+    async def cache_ok() -> bool:
         return True
 
     app.dependency_overrides[_db_ping] = db_ok
-    app.dependency_overrides[_redis_ping] = redis_ok
+    app.dependency_overrides[_cache_health] = cache_ok
     try:
         with TestClient(app) as client:
             r = client.get("/api/health")
     finally:
         app.dependency_overrides.pop(_db_ping, None)
-        app.dependency_overrides.pop(_redis_ping, None)
+        app.dependency_overrides.pop(_cache_health, None)
 
     assert r.status_code == 200
     body = r.json()
@@ -83,23 +83,23 @@ def test_health_both_ok_returns_200() -> None:
 @pytest.mark.service
 def test_health_db_failing_returns_503() -> None:
     """DB ping fails → 503 with status='degraded'; body shape unchanged."""
-    from app.core.webserver.health import _db_ping, _redis_ping  # noqa: PLC0415
+    from app.core.webserver.health import _cache_health, _db_ping  # noqa: PLC0415
     from app.web import app  # noqa: PLC0415
 
     async def db_fail() -> bool:
         return False
 
-    async def redis_ok() -> bool:
+    async def cache_ok() -> bool:
         return True
 
     app.dependency_overrides[_db_ping] = db_fail
-    app.dependency_overrides[_redis_ping] = redis_ok
+    app.dependency_overrides[_cache_health] = cache_ok
     try:
         with TestClient(app) as client:
             r = client.get("/api/health")
     finally:
         app.dependency_overrides.pop(_db_ping, None)
-        app.dependency_overrides.pop(_redis_ping, None)
+        app.dependency_overrides.pop(_cache_health, None)
 
     assert r.status_code == 503
     body = r.json()
@@ -110,25 +110,25 @@ def test_health_db_failing_returns_503() -> None:
 
 
 @pytest.mark.service
-def test_health_redis_failing_returns_503() -> None:
-    """Redis ping fails → 503 with status='degraded'; body shape unchanged."""
-    from app.core.webserver.health import _db_ping, _redis_ping  # noqa: PLC0415
+def test_health_cache_failing_returns_503() -> None:
+    """Cache health fails → 503 with status='degraded'; body shape unchanged."""
+    from app.core.webserver.health import _cache_health, _db_ping  # noqa: PLC0415
     from app.web import app  # noqa: PLC0415
 
     async def db_ok() -> bool:
         return True
 
-    async def redis_fail() -> bool:
+    async def cache_fail() -> bool:
         return False
 
     app.dependency_overrides[_db_ping] = db_ok
-    app.dependency_overrides[_redis_ping] = redis_fail
+    app.dependency_overrides[_cache_health] = cache_fail
     try:
         with TestClient(app) as client:
             r = client.get("/api/health")
     finally:
         app.dependency_overrides.pop(_db_ping, None)
-        app.dependency_overrides.pop(_redis_ping, None)
+        app.dependency_overrides.pop(_cache_health, None)
 
     assert r.status_code == 503
     body = r.json()
@@ -145,23 +145,23 @@ def test_health_version_reflects_settings(monkeypatch: pytest.MonkeyPatch) -> No
 
     get_settings.cache_clear()
 
-    from app.core.webserver.health import _db_ping, _redis_ping  # noqa: PLC0415
+    from app.core.webserver.health import _cache_health, _db_ping  # noqa: PLC0415
     from app.web import app  # noqa: PLC0415
 
     async def db_ok() -> bool:
         return True
 
-    async def redis_ok() -> bool:
+    async def cache_ok() -> bool:
         return True
 
     app.dependency_overrides[_db_ping] = db_ok
-    app.dependency_overrides[_redis_ping] = redis_ok
+    app.dependency_overrides[_cache_health] = cache_ok
     try:
         with TestClient(app) as client:
             r = client.get("/api/health")
     finally:
         app.dependency_overrides.pop(_db_ping, None)
-        app.dependency_overrides.pop(_redis_ping, None)
+        app.dependency_overrides.pop(_cache_health, None)
 
     assert r.status_code == 200
     assert r.json()["version"] == "1.2.3-test"

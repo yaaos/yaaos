@@ -1,7 +1,7 @@
 """Service-tier test for SubscriberRegistry.heartbeat().
 
-heartbeat() re-stamps the two ZSET entries (run_subscribers and
-agent_routes) so the sweeper doesn't evict healthy long-lived subscribers.
+heartbeat() refreshes last-seen times for run subscribers and agent routes
+so the sweeper doesn't evict healthy long-lived subscribers.
 """
 
 from __future__ import annotations
@@ -18,7 +18,13 @@ from app.core.agent_gateway.subscribers import (
     _agent_routes_key,
     _run_subscribers_key,
 )
-from app.core.redis import zset_add_member, zset_card, zset_remove_by_score, zset_remove_member
+from app.core.cache import (
+    count_members,
+    list_members,
+    prune_members,
+    remove_member,
+    touch_member,
+)
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 
@@ -26,24 +32,18 @@ pytestmark = [pytest.mark.service, pytest.mark.asyncio]
 @pytest.mark.asyncio
 @pytest.mark.service
 async def test_heartbeat_prevents_stale_eviction(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """heartbeat() re-stamps both ZSET scores so a stale-threshold sweep
-    does NOT evict a healthy subscriber.
-
-    Proof:
-    1. Track a subscription — ZSET members written with score=now.
-    2. Artificially mark both members as stale (replace scores with a past timestamp).
-    3. Call heartbeat() — should update scores back to ~now.
-    4. Run a score-bounded removal at the past cutoff — member must survive.
-    """
+    """Heartbeat refreshes both memberships without adding members or publishing."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
     run_id = uuid4()
     workspace_id = uuid7()
 
     sent: list[dict] = []
+    received = asyncio.Event()
 
     async def _sender(msg: dict) -> None:
         sent.append(msg)
+        received.set()
 
     await reg.register_sender(agent_id, _sender)
 
@@ -57,46 +57,34 @@ async def test_heartbeat_prevents_stale_eviction(redis_or_skip) -> None:  # type
     routes_key = _agent_routes_key(agent_id)
     pod_member = f"{reg._pod_id}:{conn_id}"
 
-    # Artificially backdate both members so they look stale.
-    stale_ts = time.time() - _SUBSCRIBER_STALE_THRESHOLD_SECONDS - 30
-    await zset_add_member(run_key, pod_member, stale_ts)
-    await zset_add_member(routes_key, str(run_id), stale_ts)
+    await asyncio.wait_for(received.wait(), timeout=2.0)
+    assert len(sent) == 1
 
-    # Verify they would be swept at the stale cutoff.
+    # The inclusive stale cutoff removes exactly the backdated membership.
     cutoff = time.time() - _SUBSCRIBER_STALE_THRESHOLD_SECONDS
-    removed = await zset_remove_by_score(run_key, 0, cutoff)
-    assert removed == 0 or True  # might have been swept already; restore for test body
+    for key, member in ((run_key, pod_member), (routes_key, str(run_id))):
+        await touch_member(key, member, last_seen=cutoff)
+        memberships = await list_members(key)
+        assert [(entry.member, entry.last_seen) for entry in memberships] == [(member, cutoff)]
+        assert await prune_members(key, cutoff=cutoff - 1) == 0
+        assert await prune_members(key, cutoff=cutoff) == 1
+        assert await count_members(key) == 0
+        await touch_member(key, member, last_seen=cutoff)
 
-    # Re-add them as stale so the heartbeat test is deterministic.
-    await zset_add_member(run_key, pod_member, stale_ts)
-    await zset_add_member(routes_key, str(run_id), stale_ts)
+    before = time.time()
+    await reg.heartbeat(run_id=run_id, conn_id=conn_id, agent_id=agent_id)
+    after = time.time()
 
-    # Call heartbeat — should update scores to now.
-    await reg.heartbeat(
-        run_id=run_id,
-        conn_id=conn_id,
-        agent_id=agent_id,
-    )
+    for key, member in ((run_key, pod_member), (routes_key, str(run_id))):
+        memberships = await list_members(key)
+        assert len(memberships) == 1
+        assert memberships[0].member == member
+        assert before <= memberships[0].last_seen <= after
+        assert await prune_members(key, cutoff=cutoff) == 0
+        assert await count_members(key) == 1
 
-    # After heartbeat, applying the stale-cutoff removal should NOT evict the member.
-    cutoff_after = time.time() - _SUBSCRIBER_STALE_THRESHOLD_SECONDS
-    await zset_remove_by_score(run_key, 0, cutoff_after)
-    await zset_remove_by_score(routes_key, 0, cutoff_after)
-
-    assert await zset_card(run_key) == 1, (
-        "subscriber member should survive after heartbeat re-stamps the score"
-    )
-    assert await zset_card(routes_key) >= 1, (
-        "agent_routes member should survive after heartbeat re-stamps the score"
-    )
-
-    # heartbeat does NOT publish to the control channel — only track() does.
-    send_count = len(sent)
     await asyncio.sleep(0.05)
-    assert len(sent) == send_count, "heartbeat must not publish to the agent control channel"
-
-    # No new member added — ZCARD is exactly 1 for the subscriber key.
-    assert await zset_card(run_key) == 1
+    assert len(sent) == 1, "heartbeat must not publish to the agent control channel"
 
     # Cleanup.
     reg.unregister_sender(agent_id)
@@ -105,9 +93,8 @@ async def test_heartbeat_prevents_stale_eviction(redis_or_skip) -> None:  # type
 
 @pytest.mark.asyncio
 @pytest.mark.service
-async def test_heartbeat_upserts_both_zsets(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
-    """heartbeat() upserts both ZSETs — no new member is added when the
-    member already exists, and ZCARD stays stable."""
+async def test_heartbeat_refreshes_both_memberships(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
+    """Refreshing an existing membership leaves both counts unchanged."""
     reg = SubscriberRegistry()
     agent_id = uuid4()
     run_id = uuid4()
@@ -127,15 +114,15 @@ async def test_heartbeat_upserts_both_zsets(redis_or_skip) -> None:  # type: ign
     run_key = _run_subscribers_key(run_id)
     routes_key = _agent_routes_key(agent_id)
 
-    card_before_run = await zset_card(run_key)
-    card_before_routes = await zset_card(routes_key)
+    assert await count_members(run_key) == 1
+    assert await count_members(routes_key) == 1
 
     # Call heartbeat multiple times — cardinality must not grow.
     await reg.heartbeat(run_id=run_id, conn_id=conn_id, agent_id=agent_id)
     await reg.heartbeat(run_id=run_id, conn_id=conn_id, agent_id=agent_id)
 
-    assert await zset_card(run_key) == card_before_run
-    assert await zset_card(routes_key) == card_before_routes
+    assert await count_members(run_key) == 1
+    assert await count_members(routes_key) == 1
 
     # Cleanup.
     reg.unregister_sender(agent_id)
@@ -147,7 +134,7 @@ async def test_heartbeat_upserts_both_zsets(redis_or_skip) -> None:  # type: ign
 async def test_heartbeat_with_no_prior_track_does_not_raise(redis_or_skip) -> None:  # type: ignore[no-untyped-def]
     """heartbeat() with a conn_id that was never tracked does not raise.
 
-    ZADD is idempotent — calling it on a nonexistent member creates it.
+    Touching a nonexistent member creates it.
     The sweeper will later evict the phantom entry.
     """
     reg = SubscriberRegistry()
@@ -162,5 +149,5 @@ async def test_heartbeat_with_no_prior_track_does_not_raise(redis_or_skip) -> No
         agent_id=agent_id,
     )
     # Clean up phantom entries.
-    await zset_remove_member(_run_subscribers_key(run_id), f"{reg._pod_id}:{phantom_conn}")
-    await zset_remove_member(_agent_routes_key(agent_id), str(run_id))
+    await remove_member(_run_subscribers_key(run_id), f"{reg._pod_id}:{phantom_conn}")
+    await remove_member(_agent_routes_key(agent_id), str(run_id))

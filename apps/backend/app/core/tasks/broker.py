@@ -26,8 +26,8 @@ def get_broker() -> AsyncBroker:
     the worker entrypoint).
 
     taskiq-redis builds its own connection pool from a URL, independent of
-    `core/redis`'s client, so the broker reads `settings.redis_url` directly
-    rather than going through `core/redis`.
+    `core/cache`'s provider, so the broker reads `settings.redis_url` directly
+    rather than going through `core/cache`.
     """
     global _broker
     if _broker is None:

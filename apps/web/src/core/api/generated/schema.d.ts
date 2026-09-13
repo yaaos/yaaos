@@ -1376,7 +1376,7 @@ export interface paths {
          *     Returns `text/event-stream`; closes when the client disconnects. Each
          *     frame is `data: <json>\n\n` carrying a `GeneralEventKind`-typed payload.
          *     Only events published to the caller's resolved org reach this stream —
-         *     cross-org isolation is enforced by the per-org Redis channel shape.
+         *     cross-org isolation is enforced by the per-org channel shape.
          */
         get: operations["stream_general_api_sse_general_get"];
         put?: never;

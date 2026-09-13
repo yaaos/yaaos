@@ -7,7 +7,7 @@ forbid_circular_dependencies = true
 
 [[modules]]
 path = "app.core.agent_gateway"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.cache", "app.core.config", "app.core.database", "app.core.observability", "app.core.shutdown_registry", "app.core.sse", "app.core.tasks", "app.core.tenancy", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.api_keys"
@@ -20,6 +20,10 @@ depends_on = ["app.core.database"]
 [[modules]]
 path = "app.core.auth"
 depends_on = ["app.core.audit_log", "app.core.config"]
+
+[[modules]]
+path = "app.core.cache"
+depends_on = ["app.core.config", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.coding_agent"
@@ -58,10 +62,6 @@ path = "app.core.observability"
 depends_on = ["app.core.auth", "app.core.config", "app.core.shutdown_registry"]
 
 [[modules]]
-path = "app.core.redis"
-depends_on = ["app.core.config", "app.core.shutdown_registry"]
-
-[[modules]]
 path = "app.core.saml"
 depends_on = ["app.core.secrets"]
 
@@ -75,11 +75,11 @@ depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.cor
 
 [[modules]]
 path = "app.core.sse"
-depends_on = ["app.core.auth", "app.core.observability", "app.core.redis", "app.core.sessions", "app.core.shutdown_registry", "app.core.webserver"]
+depends_on = ["app.core.auth", "app.core.cache", "app.core.observability", "app.core.sessions", "app.core.shutdown_registry", "app.core.webserver"]
 
 [[modules]]
 path = "app.core.tasks"
-depends_on = ["app.core.audit_log", "app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry"]
+depends_on = ["app.core.audit_log", "app.core.auth", "app.core.cache", "app.core.config", "app.core.database", "app.core.observability", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.tenancy"
@@ -91,7 +91,7 @@ depends_on = []
 
 [[modules]]
 path = "app.core.webserver"
-depends_on = ["app.core.auth", "app.core.config", "app.core.database", "app.core.observability", "app.core.redis", "app.core.shutdown_registry"]
+depends_on = ["app.core.auth", "app.core.cache", "app.core.config", "app.core.database", "app.core.observability", "app.core.shutdown_registry"]
 
 [[modules]]
 path = "app.core.workspace"
@@ -395,6 +395,32 @@ from = ["app.core.auth"]
 
 [[interfaces]]
 expose = [
+  "CacheError",
+  "CacheValidationError",
+  "Membership",
+  "allow_hit",
+  "claim_once",
+  "clear_prefix",
+  "count_members",
+  "delete_record",
+  "is_healthy",
+  "list_keys",
+  "list_members",
+  "prune_members",
+  "publish",
+  "read_record",
+  "remove_member",
+  "set_cache_for_tests",
+  "shutdown",
+  "subscribe",
+  "subscriber_count",
+  "touch_member",
+  "update_record",
+]
+from = ["app.core.cache"]
+
+[[interfaces]]
+expose = [
   "ACTIVITY_EVENT_KINDS",
   "ActivityEvent",
   "ActivityEventKind",
@@ -600,32 +626,6 @@ expose = [
   "with_remote_parent_span",
 ]
 from = ["app.core.observability"]
-
-[[interfaces]]
-expose = [
-  "delete_keys_with_prefix",
-  "hash_delete",
-  "hash_get_all",
-  "hash_set",
-  "ping",
-  "publish",
-  "scan_keys",
-  "set_add",
-  "set_if_absent",
-  "set_members",
-  "set_pubsub_for_tests",
-  "set_remove",
-  "shutdown",
-  "sliding_window_hit",
-  "subscribe",
-  "subscriber_count",
-  "zset_add_member",
-  "zset_card",
-  "zset_members",
-  "zset_remove_by_score",
-  "zset_remove_member",
-]
-from = ["app.core.redis"]
 
 [[interfaces]]
 expose = [
